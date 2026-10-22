@@ -258,7 +258,8 @@ func TestLoginRejectedOnFirstStep(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".claude-accounts", "other@example.com", "sessions"), 0o755)
 	o, err := r.d.Open("T4", drive.Step{Line: "onboard this"}, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work")})
 	var f *drive.Failed
-	if !errors.As(err, &f) || !f.Login || !strings.Contains(f.Error(), "Login expired") || !strings.Contains(f.Next, "--account other@example.com") {
+	if !errors.As(err, &f) || !f.Login || !strings.Contains(f.Error(), "Login expired") || !strings.Contains(f.Next, "--account other@example.com") ||
+		!strings.Contains(f.Next, "--dir "+filepath.Join(r.w.Root, "work")) {
 		t.Fatalf("a rejected login is a login failure with the relaunch to run, got %v", err)
 	}
 	if o == nil || o.Label != "T4" {
@@ -603,4 +604,62 @@ type recordingTerm struct {
 func (r *recordingTerm) Run(o rex.Open) (string, error) {
 	r.run(o.Command)
 	return r.World.Run(o)
+}
+
+func TestHoldWaitersAreListedAndTheRefusalSaysHowBack(t *testing.T) {
+	r := newRig(t, "webhook")
+	a, b := r.w.Add("A"), r.w.Add("B")
+	done(a, "x", "y")
+	done(b, "x", "y")
+	for label, c := range map[string]*testkit.Claude{"T5s": a, "T3s": b} {
+		if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "land it"}, drive.SendOptions{Label: label}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} })
+	if _, err := r.d.Send(r.view("T5s"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.d.Send(r.view("T3s"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"})
+	if !isRefused(err) || !strings.Contains(err.Error(), "T5s's wake comes when its turn ends") {
+		t.Fatalf("a chat driver is told the holder's wake brings it back: %v", err)
+	}
+	st, _ := r.d.Status(false)
+	if len(st.Holds) != 1 || !strings.Contains(st.Holds[0], "held by T5s") || !strings.Contains(st.Holds[0], "waiting for it: T3s") {
+		t.Fatalf("status names the holder and who waits: %q", st.Holds)
+	}
+	a.Done("released")
+	st, _ = r.d.Status(false)
+	if len(st.Holds) != 1 || !strings.HasPrefix(st.Holds[0], "release: free; waiting for it: T3s") {
+		t.Fatalf("once free, the waiter is still listed until it is sent: %q", st.Holds)
+	}
+	if _, err := r.d.Send(r.view("T3s"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = r.d.Status(false)
+	for _, h := range st.Holds {
+		if strings.Contains(h, "waiting for it: T3s") {
+			t.Fatalf("a sent waiter is no longer listed: %q", st.Holds)
+		}
+	}
+}
+
+func TestAStuckWatchIsFlaggedAndRestarted(t *testing.T) {
+	r := newRig(t, "webhook")
+	r.d.Cfg.Webhook = config.Webhook{URL: "http://127.0.0.1:1/none"}
+	c := r.w.Add("T4")
+	done(c, "onboard", "analysis")
+	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "review"}, drive.SendOptions{Label: "T4"}); err != nil {
+		t.Fatal(err)
+	}
+	c.Ask("pnpm install")
+	r.w.Clock.Sleep(time.Hour) // the watch never posted
+	st, _ := r.d.Status(false)
+	if !strings.Contains(st.Rows[0].Watch, "stuck") {
+		t.Fatalf("a watch alive an hour after the turn ended is flagged: %q", st.Rows[0].Watch)
+	}
+	w, err := r.d.Watch("T4")
+	if err != nil || !w.Restarted {
+		t.Fatalf("watch restarts it: %+v %v", w, err)
+	}
 }

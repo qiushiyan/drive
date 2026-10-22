@@ -267,6 +267,7 @@ func (d *Driver) relaunchHint(o *Observation) string {
 	if others := d.otherAccounts(o.Session.Account); len(others) > 0 {
 		acct = others[0]
 	}
-	return fmt.Sprintf("relaunch it on another account: drive close %s && drive open %s --resume %s --account %s, then send its step again",
-		o.View, o.Label, o.Session.ID, acct)
+	// Claude Code finds a session to resume under its working directory's project.
+	return fmt.Sprintf("relaunch it on another account: drive close %s && drive open %s --dir %s --resume %s --account %s, then send its step again",
+		o.View, o.Label, shellQuote(o.Session.Dir), o.Session.ID, acct)
 }

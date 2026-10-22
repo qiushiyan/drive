@@ -55,9 +55,15 @@ func prText(r drive.Row) string {
 			s += " draft"
 		}
 		if pr.State == "OPEN" {
-			s += fmt.Sprintf(" checks %d/%d/%d", pr.Passed, pr.Failed, pr.Pending)
+			s += fmt.Sprintf(": %d pass", pr.Passed)
+			if pr.Failed > 0 {
+				s += fmt.Sprintf(", %d fail", pr.Failed)
+			}
+			if pr.Pending > 0 {
+				s += fmt.Sprintf(", %d pending", pr.Pending)
+			}
 			if pr.Merge != "" {
-				s += " " + strings.ToLower(pr.Merge)
+				s += ", " + strings.ToLower(pr.Merge)
 			}
 		}
 		return s
@@ -148,6 +154,12 @@ func cmdStatus(d *drive.Driver, argv []string) int {
 	}
 	for _, h := range st.Holds {
 		fmt.Println("hold " + h)
+	}
+	for _, r := range st.Rows {
+		if strings.HasPrefix(r.Watch, "ended without a wake") && st.Batch != nil {
+			fmt.Printf("what each watch printed: %s\n", st.Dir+"/watches.log")
+			break
+		}
 	}
 	for _, p := range st.InFlight {
 		fmt.Printf("in flight: %s to %s since %s (%s)\n", p.Kind, p.Session, clock(p.At, st.Zone, now), clip(p.Text, 60))

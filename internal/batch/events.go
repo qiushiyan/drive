@@ -192,6 +192,34 @@ func Holds(evs []Event) []Hold {
 	return out
 }
 
+// Waiting lists the sessions a send was refused for because another held
+// what it needed, and that have been sent nothing since.
+func Waiting(evs []Event) []Hold {
+	refused := map[string]Hold{}
+	var order []string
+	for _, e := range evs {
+		switch {
+		case e.Kind == KindRefused && e.Hold != "":
+			if _, ok := refused[e.Session]; !ok {
+				order = append(order, e.Session)
+			}
+			if _, ok := refused[e.Session]; !ok || refused[e.Session].Name != e.Hold {
+				refused[e.Session] = Hold{Name: e.Hold, Session: e.Session, Since: e.At}
+			}
+		case e.Kind == KindSend && e.Outcome != "":
+			delete(refused, e.Session)
+		}
+	}
+	var out []Hold
+	for _, s := range order {
+		if h, ok := refused[s]; ok {
+			out = append(out, h)
+			delete(refused, s)
+		}
+	}
+	return out
+}
+
 // Ask is a question put to the owner, with its answer once given.
 type Ask struct {
 	Event

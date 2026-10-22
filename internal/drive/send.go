@@ -130,9 +130,23 @@ func since(now, t time.Time) string {
 	return strings.TrimSuffix(d.String(), "0s")
 }
 
+// holdRefused is a send refused because another session holds what it needs.
+type holdRefused struct {
+	Refused
+	hold string
+}
+
 func (d *Driver) refuse(b *batch.Batch, o *Observation, err error) error {
+	if b == nil {
+		return err
+	}
+	var h *holdRefused
+	if errors.As(err, &h) {
+		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindRefused, Session: o.Label, Reason: h.Reason, Hold: h.hold})
+		return &h.Refused
+	}
 	var r *Refused
-	if b != nil && errors.As(err, &r) {
+	if errors.As(err, &r) {
 		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindRefused, Session: o.Label, Reason: r.Reason})
 	}
 	return err
@@ -231,8 +245,13 @@ func (d *Driver) send(b *batch.Batch, o *Observation, step Step, opt SendOptions
 		}
 		if opt.Hold != "" {
 			if h, held := d.holder(evs, members, opt.Hold, o.Label); held {
-				return &Refused{Reason: fmt.Sprintf("%s is held by %s since %s, whose turn is still running", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04")),
-					Next: fmt.Sprintf("send this once %s's turn ends: drive wait %s", h.Session, h.Session)}
+				next := fmt.Sprintf("send this once %s's turn ends: drive wait %s", h.Session, h.Session)
+				if b.Meta.Wake == "webhook" {
+					next = fmt.Sprintf("%s's wake comes when its turn ends; send this to %s then (drive status lists %s as waiting for %s)",
+						h.Session, o.Label, o.Label, opt.Hold)
+				}
+				return &holdRefused{Refused{Reason: fmt.Sprintf("%s is held by %s since %s, whose turn is still running", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04")),
+					Next: next}, opt.Hold}
 			}
 		}
 		notice = m == nil || m.Sends == 0

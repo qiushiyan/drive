@@ -2,6 +2,7 @@ package drive
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -117,6 +118,7 @@ type Row struct {
 // Status is the batch at a glance.
 type Status struct {
 	Batch    *batch.Meta
+	Dir      string // the batch's directory
 	Zone     *time.Location
 	Rows     []Row
 	Others   []Row // Claude sessions in Rex outside the batch
@@ -135,7 +137,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 	}
 	out := &Status{Zone: time.Local}
 	if b != nil {
-		out.Batch, out.Zone = &b.Meta, b.Zone()
+		out.Batch, out.Zone, out.Dir = &b.Meta, b.Zone(), b.Dir
 	}
 	session := ""
 	if b != nil {
@@ -176,6 +178,9 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 				r.Unhandled = m.Woken.After(m.LastAction)
 			case d.Watches != nil && d.Watches.Alive(watchName(m.Block)):
 				r.Watch = "armed"
+				if stuck(r) {
+					r.Watch = fmt.Sprintf("armed, but its turn ended %s ago: stuck (drive watch %s restarts it)", ago(r.For), m.Label)
+				}
 			case !m.Watched.IsZero():
 				r.Watch = "ended without a wake (watches.log says why)"
 			default:
@@ -197,10 +202,30 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 	}
 	wg.Wait()
 	if b != nil {
+		names := map[string]bool{}
 		for _, h := range batch.Holds(evs) {
-			if hh, held := d.holder(evs, members, h.Name, ""); held {
-				out.Holds = append(out.Holds, fmt.Sprintf("%s: held by %s since %s", hh.Name, hh.Session, hh.Since.In(out.Zone).Format("15:04")))
+			names[h.Name] = true
+		}
+		for _, w := range batch.Waiting(evs) {
+			names[w.Name] = true
+		}
+		for _, name := range sortedKeys(names) {
+			line := name + ": free"
+			if hh, held := d.holder(evs, members, name, ""); held {
+				line = fmt.Sprintf("%s: held by %s since %s", name, hh.Session, hh.Since.In(out.Zone).Format("15:04"))
 			}
+			var waiting []string
+			for _, w := range batch.Waiting(evs) {
+				if w.Name == name {
+					waiting = append(waiting, fmt.Sprintf("%s (refused it at %s)", w.Session, w.Since.In(out.Zone).Format("15:04")))
+				}
+			}
+			if len(waiting) > 0 {
+				line += "; waiting for it: " + strings.Join(waiting, ", ")
+			} else if strings.HasSuffix(line, ": free") {
+				continue
+			}
+			out.Holds = append(out.Holds, line)
 		}
 		grants, asks, _ := batch.Records(evs)
 		out.Grants = grants
@@ -216,6 +241,30 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 		}
 	}
 	return out, nil
+}
+
+// stuck says a watch still runs long after the turn it waits on ended: a
+// wait returns a minute after a turn ends, or ten after one that left its
+// own background jobs running.
+func stuck(r Row) bool {
+	ended := r.State == "done" || r.State == "error" || strings.HasPrefix(r.State, "blocked")
+	return ended && r.For > 15*time.Minute
+}
+
+func ago(d time.Duration) string {
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func stateWord(st *rex.Status) string {

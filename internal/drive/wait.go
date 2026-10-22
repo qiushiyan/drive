@@ -214,8 +214,9 @@ func (d *Driver) arm(b *batch.Batch, label, block string) error {
 
 // Watched reports a watch.
 type Watched struct {
-	Label   string
-	Already bool
+	Label     string
+	Already   bool
+	Restarted bool // the watch ran long after the turn ended and was started again
 }
 
 // Watch arms the wake for a session in a batch that wakes its driver by webhook.
@@ -239,8 +240,16 @@ func (d *Driver) Watch(ref string) (*Watched, error) {
 	if err != nil {
 		return nil, err
 	}
-	if d.Watches.Alive(watchName(o.Session.Block)) {
-		return &Watched{Label: o.Label, Already: true}, nil
+	name := watchName(o.Session.Block)
+	if d.Watches.Alive(name) {
+		r := Row{State: o.State(), For: d.now().Sub(o.Session.Status.UpdatedAt)}
+		if !stuck(r) {
+			return &Watched{Label: o.Label, Already: true}, nil
+		}
+		if err := d.Watches.Stop(name); err != nil {
+			return nil, err
+		}
+		return &Watched{Label: o.Label, Restarted: true}, d.arm(b, o.Label, o.Session.Block)
 	}
 	return &Watched{Label: o.Label}, d.arm(b, o.Label, o.Session.Block)
 }

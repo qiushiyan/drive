@@ -59,6 +59,12 @@ The first step a session gets in a batch carries the notice ahead of it.
 a resource only one session may use at a time (a release, a closeout into one
 checkout) until the turn this step starts has ended.
 
+status reads, per session: STATE (working, done, blocked:permission|question|
+auth, error); INPUT (empty; suggestion, Claude Code's dimmed guess, which
+typing replaces; typed, a line someone left unsent); WAKE (armed; woken HH:MM,
+with "(nothing sent since)" when no driver acted after it; ended without a
+wake; parked: why; stuck). A wake also comes when a session stops on a prompt.
+
 SESSION is a label in the batch (T1) or a block id (its last six characters).
 --batch NAME acts in that batch instead of the current one.
 
@@ -305,7 +311,9 @@ func cmdWatch(d *drive.Driver, argv []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	if w.Already {
+	if w.Restarted {
+		fmt.Printf("%s's watch was stuck long after its turn ended; started it again\n", w.Label)
+	} else if w.Already {
 		fmt.Printf("%s is already watched\n", w.Label)
 	} else {
 		fmt.Printf("watching %s: the driver is woken when its turn ends\n", w.Label)
