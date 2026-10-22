@@ -56,7 +56,7 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 			return nil, err
 		}
 		st := o.Session.Status
-		key := st.State + st.UpdatedAt.String()
+		key := o.State() + o.Session.Since().String()
 		if key != last {
 			last, stable = key, d.now()
 		}
@@ -216,7 +216,7 @@ func (d *Driver) Watch(ref string) (*Watched, error) {
 	}
 	name := watchName(o.Session.Block)
 	if d.Watches.Alive(name) {
-		r := Row{State: o.State(), For: d.now().Sub(o.Session.Status.UpdatedAt)}
+		r := Row{State: o.State(), For: d.now().Sub(o.Session.Since())}
 		if !stuck(r) {
 			return &Watched{Label: o.Label, Already: true}, nil
 		}
@@ -386,7 +386,7 @@ func (d *Driver) holder(evs []batch.Event, members []*batch.Member, name, label 
 		if err != nil {
 			return h, true
 		}
-		if state := turnState(s.Status, f); state == "working" || strings.HasPrefix(state, "blocked") && state != "blocked:auth" {
+		if state := turnState(s, f); state == "working" || strings.HasPrefix(state, "blocked") && state != "blocked:auth" {
 			return h, true
 		}
 		if p := f.Newest(); p == nil || p.At.Before(h.Since) {

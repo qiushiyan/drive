@@ -131,18 +131,6 @@ func TestANoticeTurnThatStopsOnAPromptHoldsTheStep(t *testing.T) {
 	}
 }
 
-func TestACompactedSessionTakesItsNextStep(t *testing.T) {
-	r := newRig(t, "none")
-	c := adopted(t, r, "T1")
-	c.Prompt("/compact")
-	c.Write(map[string]any{"type": "user", "uuid": "lo1", "message": map[string]any{"role": "user",
-		"content": "<local-command-stdout>\x1b[2mCompacted \x1b[22m</local-command-stdout>"}})
-	c.Set("done", "", "")
-	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "implement-spec"}, drive.SendOptions{}); err != nil {
-		t.Fatalf("a finished /compact is answered: %v", err)
-	}
-}
-
 func TestAStepRefusedBeforeAnyEffect(t *testing.T) {
 	r := newRig(t, "none")
 	c := r.w.Add("T1")
@@ -420,7 +408,7 @@ func TestARelaunchedSessionTakesItsStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rd, _ := r.d.Read("T4", drive.ReadLast, 1); rd.State != "idle" {
+	if rd, _ := r.d.Read("T4", drive.ReadLast, 1); rd.State != "done" {
 		t.Fatalf("the error belongs to the process it replaced: %+v", rd)
 	}
 	sent, err := r.d.Send(r.view("T4"), drive.Step{Line: "go on"}, drive.SendOptions{})

@@ -85,7 +85,7 @@ func (d *Driver) Respond(view, action string) (*Responded, error) {
 		if err != nil {
 			continue
 		}
-		out.After = turnState(s.Status, f)
+		out.After = turnState(s, f)
 		moved = out.After != before || turn.ViewOf(o.Label, s.ID, f) != o.View
 	}
 	if b != nil {

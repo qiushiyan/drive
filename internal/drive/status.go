@@ -202,16 +202,32 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 			out.Rows[i] = r
 		}(i, m)
 	}
-	for _, bl := range blocks {
+	// Other Claude sessions are read the same way, each into its own slot.
+	others := make([]*Row, len(blocks))
+	for i, bl := range blocks {
 		if seen[bl.ID] {
 			continue
 		}
-		if st, err := d.Term.Status(bl.ID); err == nil && st != nil {
-			out.Others = append(out.Others, Row{Label: rex.Short(bl.ID), Block: bl.ID, Window: bl.Window, State: stateWord(st),
-				For: d.now().Sub(st.UpdatedAt), Name: bl.Label})
-		}
+		wg.Add(1)
+		go func(i int, bl rex.Block) {
+			defer wg.Done()
+			if st, err := d.Term.Status(bl.ID); err != nil || st == nil {
+				return
+			}
+			r := d.row(nil, bl.ID, false)
+			if r.Error != "" {
+				return
+			}
+			r.Label, r.Window, r.Name = rex.Short(bl.ID), bl.Window, bl.Label
+			others[i] = &r
+		}(i, bl)
 	}
 	wg.Wait()
+	for _, r := range others {
+		if r != nil {
+			out.Others = append(out.Others, *r)
+		}
+	}
 	if b != nil {
 		names := map[string]bool{}
 		for _, h := range batch.Holds(evs) {
@@ -287,13 +303,6 @@ func sortedKeys(m map[string]bool) []string {
 	return out
 }
 
-func stateWord(st *rex.Status) string {
-	if st.State == "blocked" && st.Kind != "" {
-		return "blocked:" + st.Kind
-	}
-	return st.State
-}
-
 func sentLabel(e *batch.Event) string {
 	switch {
 	case e.Key != "":
@@ -312,8 +321,7 @@ func (d *Driver) row(members []*batch.Member, label string, withProgress bool) R
 		r.State, r.Error = "gone", firstLine(err.Error())
 		return r
 	}
-	st := o.Session.Status
-	r.Block, r.SID, r.State, r.For, r.Account = o.Session.Block, o.Session.ID, o.State(), d.now().Sub(st.UpdatedAt), o.Session.Account
+	r.Block, r.SID, r.State, r.For, r.Account = o.Session.Block, o.Session.ID, o.State(), d.now().Sub(o.Session.Since()), o.Session.Account
 	r.Input, r.Typed, r.View = o.Input, o.Typed, o.View
 	if withProgress && d.Progress != nil && o.Session.ID != "" {
 		if s, err := d.Progress.Steps(o.Session.ID); err == nil {

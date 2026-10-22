@@ -1,8 +1,14 @@
 // Package testkit is a fake world for drive's tests: blocks in a fake Rex
 // whose Claude Code sessions write real transcript files in a temporary
-// directory, and behave as the real ones were seen to — a slash command
-// typed while busy is queued without its text, an expired login answers
-// with an API error and no Stop, typing can lose a line's head.
+// directory and keep a registry status, and behave as the real ones were
+// seen to. The registry moves the moment the session does; Rex moves only
+// when a hook would fire, so it lags a permission prompt by seconds, reads
+// blocked through an approved command until its PostToolUse, reads done
+// through a queued turn, hears nothing of a /compact, a deny or an
+// interrupt, and can be told of a held message the session does not show.
+// A slash command typed while busy is queued without its text, one behind
+// spaces is words, an expired login answers with an API error and no Stop,
+// typing can lose a line's head.
 package testkit
 
 import (
@@ -16,6 +22,7 @@ import (
 	"time"
 
 	"github.com/qiushiyan/drive/internal/rex"
+	"github.com/qiushiyan/drive/internal/session"
 )
 
 // World is the fake Rex and the fake machine under it.
@@ -58,6 +65,12 @@ type Claude struct {
 	Msg     string
 	Updated time.Time
 	Running bool
+	// What Claude Code's own registry says: idle, busy or waiting. It moves
+	// the moment the session does; Rex moves only when a hook fires.
+	Activity   string
+	WaitingFor string
+	ActivityAt time.Time
+	ProcStart  string // as ps prints lstart in UTC
 
 	Input      string // typed into the box, not sent
 	Suggestion string // Claude Code's dimmed guess
@@ -67,8 +80,16 @@ type Claude struct {
 	TypeGate chan struct{}
 	Shells   []time.Time
 
-	tool  string // the tool call a permission prompt asks about
-	stale bool   // the turn ended without a hook firing, so Rex's record is old
+	tool  string   // the tool call a permission prompt asks about
+	stale bool     // the turn ended without a hook firing, so Rex's record is old
+	queue []string // prompts typed while busy, oldest first; "" for a slash command
+	// SlowTool keeps an approved tool call running until ToolDone: Rex
+	// hears nothing until its PostToolUse, so it reads blocked meanwhile.
+	SlowTool bool
+	running  bool // an approved slow tool call runs
+	// SlowCompact leaves a typed /compact running until Compacted.
+	SlowCompact bool
+	crashed     bool // the process is gone; Rex was never told
 
 	// Reply decides what a taken prompt does. The default answers "ok" and ends the turn.
 	Reply func(c *Claude, prompt string)
@@ -93,7 +114,8 @@ func (w *World) add(label, cwd, account string) *Claude {
 	id := fmt.Sprintf("block:00000000-0000-0000-0000-%012x", 0xa00000+w.seq)
 	c := &Claude{w: w, Block: id, Label: label, PID: w.nextPID, SID: fmt.Sprintf("sid-%d", w.seq),
 		Config: filepath.Join(w.Root, "accounts", account), Cwd: cwd,
-		State: "idle", Updated: w.now(), Running: true}
+		State: "idle", Updated: w.now(), Running: true,
+		Activity: "idle", ActivityAt: w.now(), ProcStart: w.now().UTC().Format("Mon Jan _2 15:04:05 2006")}
 	_ = os.MkdirAll(cwd, 0o755)
 	_ = os.MkdirAll(filepath.Join(c.Config, "sessions"), 0o755)
 	_ = os.MkdirAll(filepath.Join(w.Root, "projects", "proj"), 0o755)
@@ -146,12 +168,15 @@ func uuid() string {
 	return fmt.Sprintf("u-%06d", uuidN)
 }
 
+// command says whether Claude Code runs a typed line as a slash command:
+// only one typed at the line's start. Behind spaces it is words.
+func command(text string) bool { return strings.HasPrefix(text, "/") }
+
 // Prompt records a typed prompt; a slash command as Claude Code marks it up.
 func (c *Claude) Prompt(text string) {
 	content := text
-	if strings.HasPrefix(strings.TrimLeft(text, " "), "/") {
-		t := strings.TrimLeft(text, " ")
-		name, args, _ := strings.Cut(t, " ")
+	if command(text) {
+		name, args, _ := strings.Cut(text, " ")
 		content = fmt.Sprintf("<command-message>%s</command-message>\n<command-name>%s</command-name>\n<command-args>%s</command-args>",
 			strings.TrimPrefix(name, "/"), name, args)
 	}
@@ -175,15 +200,72 @@ func (c *Claude) Ask(command string) {
 	c.Set("blocked", "permission", "Claude needs your permission to use Bash")
 }
 
+// AskQuietly opens the permission prompt as Claude Code does: its registry
+// reads waiting at once, and Rex hears of it only from the Notification
+// hook some six seconds later, reading working until then.
+func (c *Claude) AskQuietly(command string) {
+	id := "toolu_" + uuid()
+	c.Write(map[string]any{"type": "assistant", "uuid": uuid(), "message": map[string]any{"role": "assistant",
+		"content": []map[string]any{{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{"command": command}}}}})
+	c.w.mu.Lock()
+	defer c.w.mu.Unlock()
+	c.tool = id
+	c.activity("waiting", "permission prompt")
+}
+
+// ToolDone ends an approved slow tool call: its result lands and its
+// PostToolUse tells Rex the session works again.
+func (c *Claude) ToolDone() {
+	c.w.mu.Lock()
+	defer c.w.mu.Unlock()
+	if !c.running {
+		return
+	}
+	c.running = false
+	c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user",
+		"content": []map[string]any{{"type": "tool_result", "tool_use_id": c.tool, "content": "done"}}}})
+	c.set("working", "", "")
+}
+
+// HoldMessage is a message from another session waiting for approval: Rex
+// is told the session is blocked on a permission prompt, while the session
+// itself sits idle at its input box.
+func (c *Claude) HoldMessage() {
+	c.RexOnly("blocked", "permission", "A message from another session needs your approval")
+}
+
 // Fail records an API error ending the turn, as an expired login does: no
-// Stop follows, so Rex keeps whatever it last heard unless told otherwise.
+// Stop follows, so Rex keeps whatever it last heard unless told otherwise;
+// the session itself is idle again.
 func (c *Claude) Fail(kind, text string) {
 	c.Write(map[string]any{"type": "assistant", "uuid": uuid(), "isApiErrorMessage": true, "error": kind,
 		"message": map[string]any{"role": "assistant", "content": []map[string]any{{"type": "text", "text": text}}}})
+	c.w.mu.Lock()
+	defer c.w.mu.Unlock()
+	c.activity("idle", "")
 }
 
-// Set changes what the session publishes to Rex.
+// Set changes what the session publishes to Rex, and its own registry with
+// it, as when a hook reports a change the session made.
 func (c *Claude) Set(state, kind, msg string) {
+	c.w.mu.Lock()
+	defer c.w.mu.Unlock()
+	c.set(state, kind, msg)
+	switch {
+	case state == "working":
+		c.activity("busy", "")
+	case state == "blocked" && kind == "permission":
+		c.activity("waiting", "permission prompt")
+	case state == "blocked" && kind == "question":
+		c.activity("waiting", "question")
+	default:
+		c.activity("idle", "")
+	}
+}
+
+// RexOnly changes what Rex reads and nothing else: a hook told Rex of
+// something the session itself does not show.
+func (c *Claude) RexOnly(state, kind, msg string) {
 	c.w.mu.Lock()
 	defer c.w.mu.Unlock()
 	c.set(state, kind, msg)
@@ -193,16 +275,57 @@ func (c *Claude) set(state, kind, msg string) {
 	c.State, c.Kind, c.Msg, c.Updated, c.stale = state, kind, msg, c.w.now(), false
 }
 
+func (c *Claude) activity(a, waitingFor string) {
+	c.Activity, c.WaitingFor, c.ActivityAt = a, waitingFor, c.w.now()
+}
+
 // Busy puts the session mid-turn on a prompt.
 func (c *Claude) Busy(prompt string) {
 	c.Prompt(prompt)
 	c.Set("working", "", "")
 }
 
-// Done ends the turn with a reply.
+// Done ends the turn with a reply. A prompt typed while it ran is taken
+// next: its prompt hook fired when it was queued, so Rex keeps reading the
+// done this turn's Stop reported while the session works on it.
 func (c *Claude) Done(reply string) {
 	c.Say(reply)
 	c.Set("done", "", "")
+	c.takeQueued()
+}
+
+func (c *Claude) takeQueued() {
+	c.w.mu.Lock()
+	if len(c.queue) == 0 {
+		c.w.mu.Unlock()
+		return
+	}
+	text := c.queue[0]
+	c.queue = c.queue[1:]
+	c.activity("busy", "")
+	reply := c.Reply
+	c.w.mu.Unlock()
+	c.Write(map[string]any{"type": "queue-operation", "operation": "dequeue"})
+	c.Prompt(text)
+	if reply != nil {
+		reply(c, text)
+	} else {
+		c.Done("ok")
+	}
+}
+
+// Compacted ends a /compact: the summary and the command's output land,
+// and the session is idle. No hook tells Rex any of it.
+func (c *Claude) Compacted() {
+	c.Write(map[string]any{"type": "system", "subtype": "compact_boundary", "uuid": uuid()},
+		map[string]any{"type": "user", "uuid": uuid(), "isCompactSummary": true, "message": map[string]any{"role": "user",
+			"content": "This session is being continued from a previous conversation."}})
+	c.Prompt("/compact")
+	c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user",
+		"content": "<local-command-stdout>Compacted </local-command-stdout>"}})
+	c.w.mu.Lock()
+	defer c.w.mu.Unlock()
+	c.activity("idle", "")
 }
 
 // Edit changes the session's fields under the world's lock.
@@ -303,6 +426,7 @@ func (w *World) Key(block string, keys ...string) error {
 		return fmt.Errorf("no block")
 	}
 	var taken []string
+	compact, interrupted := false, false
 	for _, k := range keys {
 		c.Keys = append(c.Keys, k)
 		switch k {
@@ -310,7 +434,14 @@ func (w *World) Key(block string, keys ...string) error {
 			if c.LoseEnter {
 				continue
 			}
-			if c.State == "blocked" && c.Kind == "permission" && !c.stale {
+			if c.Activity == "waiting" {
+				// Enter approves; whatever was typed into the prompt is gone.
+				c.Input = ""
+				c.activity("busy", "")
+				if c.SlowTool {
+					c.running = true // Rex reads blocked until the tool's PostToolUse
+					continue
+				}
 				c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user",
 					"content": []map[string]any{{"type": "tool_result", "tool_use_id": c.tool, "content": "approved"}}}})
 				c.set("working", "", "") // PostToolUse, once the command ran
@@ -321,38 +452,54 @@ func (w *World) Key(block string, keys ...string) error {
 			if text == "" {
 				continue
 			}
-			if c.State == "working" && !c.stale {
+			if c.Activity == "busy" {
+				// Queued: a slash command without its text. Its prompt hook fires now.
 				op := map[string]any{"type": "queue-operation", "operation": "enqueue"}
-				if !strings.HasPrefix(strings.TrimLeft(text, " "), "/") {
+				if !command(text) {
 					op["content"] = text
 				}
 				c.Write(op)
+				c.queue = append(c.queue, text)
+				c.set("working", "", "")
+				continue
+			}
+			if text == "/compact" || strings.HasPrefix(text, "/compact ") {
+				// No prompt hook and no Stop: Rex keeps what it last heard. The
+				// line is recorded as typed at once, the rest once it ends.
+				c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user", "content": text}})
+				c.activity("busy", "")
+				compact = true
 				continue
 			}
 			c.Prompt(text)
+			c.activity("busy", "")
 			c.set("working", "", "")
 			taken = append(taken, text)
 		// No hook fires when a turn is interrupted, a denied prompt included:
-		// the transcript records it and Rex keeps what it last heard.
+		// the transcript records it and Rex keeps what it last heard. The
+		// session itself is idle at once.
 		case "escape":
-			if c.State == "blocked" && !c.stale {
+			if c.Activity == "waiting" || c.running {
 				c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user",
 					"content": []map[string]any{{"type": "tool_result", "tool_use_id": c.tool, "is_error": true,
 						"content": "The user doesn't want to proceed with this tool use."}}}},
 					map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user",
 						"content": []map[string]any{{"type": "text", "text": "[Request interrupted by user for tool use]"}}}})
-				c.stale = true
+				c.activity("idle", "")
+				c.running, c.stale = false, true
 			}
 		case "ctrl+c":
-			if c.State == "working" && !c.stale {
+			if c.Activity == "busy" {
 				c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user", "content": "[Request interrupted by user]"}})
-				c.stale = true
+				c.activity("idle", "")
+				c.running, c.stale = false, true
+				interrupted = true
 			}
 		case "ctrl+u":
 			c.Input = ""
 		}
 	}
-	reply := c.Reply
+	reply, slow := c.Reply, c.SlowCompact
 	w.mu.Unlock()
 	for _, text := range taken {
 		if reply != nil {
@@ -360,6 +507,12 @@ func (w *World) Key(block string, keys ...string) error {
 		} else {
 			c.Done("ok")
 		}
+	}
+	if compact && !slow {
+		c.Compacted()
+	}
+	if interrupted {
+		c.takeQueued() // an interrupt takes the prompt queued behind it
 	}
 	return nil
 }
@@ -397,15 +550,34 @@ func (w *World) Close(block string) error {
 
 // --- session.Host ---
 
-func (w *World) Registry(pid int) (string, string, error) {
+func (w *World) Registry(pid int) (session.Registration, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for _, c := range w.blocks {
 		if c.PID == pid {
-			return c.SID, c.Config, nil
+			return session.Registration{ID: c.SID, Config: c.Config, Status: c.Activity, WaitingFor: c.WaitingFor,
+				StatusAt: c.ActivityAt, ProcStart: c.ProcStart}, nil
 		}
 	}
-	return "", "", fmt.Errorf("no registry for %d", pid)
+	return session.Registration{}, fmt.Errorf("no registry for %d", pid)
+}
+
+func (w *World) Started(pid int) string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, c := range w.blocks {
+		if c.PID == pid && c.Running && !c.crashed {
+			return c.ProcStart
+		}
+	}
+	return ""
+}
+
+// Crash ends the process with no SessionEnd: Rex keeps its record.
+func (c *Claude) Crash() {
+	c.w.mu.Lock()
+	defer c.w.mu.Unlock()
+	c.crashed = true
 }
 
 func (w *World) Cwd(pid int) string {

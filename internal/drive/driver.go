@@ -122,17 +122,47 @@ type Observation struct {
 }
 
 // State is where the session's turn stands, in one word.
-func (o *Observation) State() string { return turnState(o.Session.Status, o.Frontier) }
+func (o *Observation) State() string { return turnState(o.Session, o.Frontier) }
 
 // turnState is where a session's turn stands, the one answer every action
 // reads: working; done or idle; interrupted; error; blocked:permission,
-// blocked:question or blocked:auth; gone. Rex hears of most changes from
-// Claude Code's hooks. The transcript covers what no hook reports: a turn
-// interrupted or a prompt denied, after which Rex keeps reading working or
-// blocked, and an API error in a session started before the StopFailure hook.
-func turnState(st rex.Status, f turn.Frontier) string {
+// blocked:question or blocked:auth. Claude Code's own registry says what
+// the session is doing the moment it changes: busy through a queued turn, a
+// compaction and an approved command, waiting on a prompt the moment it
+// opens, idle once a turn is over however it ended. The transcript then says
+// how it ended, and Rex what kind of prompt it waits on. Rex alone hears
+// only what a hook reports, which misses all of those; it decides only for a
+// Claude Code that keeps no such record.
+func turnState(s *session.Session, f turn.Frontier) string {
+	st := s.Status
+	switch s.Activity {
+	case "busy":
+		return "working"
+	case "waiting":
+		if st.State == "blocked" && st.Kind != "" && st.Kind != "auth" {
+			return "blocked:" + st.Kind
+		}
+		if strings.Contains(s.WaitingFor, "permission") {
+			return "blocked:permission"
+		}
+		return "blocked:question"
+	case "idle":
+		e := liveError(s, f)
+		switch {
+		case e != nil && e.Kind == "authentication_failed", st.State == "blocked" && st.Kind == "auth":
+			return "blocked:auth"
+		case e != nil:
+			return "error"
+		case f.Interrupted:
+			return "interrupted"
+		case f.Newest() == nil:
+			return "idle"
+		}
+		return "done"
+	}
+	// No registry status: fold what no hook reports into Rex's record.
 	open := st.State == "working" || st.State == "blocked" && st.Kind != "auth"
-	e := liveError(st, f)
+	e := liveError(s, f)
 	switch {
 	case e != nil && e.Kind == "authentication_failed":
 		return "blocked:auth"
@@ -149,12 +179,20 @@ func turnState(st rex.Status, f turn.Frontier) string {
 // liveError is the API error that ended the newest prompt's turn, unless it
 // ended an earlier process: accounts share one transcript directory, so a
 // session resumed on another account reads the error that ended the one it
-// replaced, and Rex has heard the new one start since.
-func liveError(st rex.Status, f turn.Frontier) *turn.APIError {
-	if e := f.Error; e != nil && !(st.State == "idle" && st.UpdatedAt.After(e.At)) {
-		return e
+// replaced, written before this process started.
+func liveError(s *session.Session, f turn.Frontier) *turn.APIError {
+	e := f.Error
+	switch {
+	case e == nil:
+		return nil
+	case !s.Started.IsZero():
+		if e.At.Before(s.Started) {
+			return nil
+		}
+	case s.Status.State == "idle" && s.Status.UpdatedAt.After(e.At):
+		return nil // Rex has heard the new process start since
 	}
-	return nil
+	return e
 }
 
 // LoginRejected says whether the session's login was refused.
@@ -207,7 +245,7 @@ func (d *Driver) observe(members []*batch.Member, ref string) (*Observation, err
 	if o.Frontier, err = s.Frontier(); err != nil {
 		return nil, fmt.Errorf("reading %s's transcript: %w", o.Label, err)
 	}
-	o.Frontier.Error = liveError(s.Status, o.Frontier)
+	o.Frontier.Error = liveError(s, o.Frontier)
 	o.View = turn.ViewOf(o.Label, s.ID, o.Frontier)
 	if screen, err := d.Term.Capture(block, true); err == nil {
 		o.Input, o.Typed = turn.InputBox(screen)

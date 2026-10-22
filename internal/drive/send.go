@@ -143,7 +143,7 @@ func (d *Driver) settle(b *batch.Batch, label, block string) error {
 // working session take a step mid-turn; nothing lets a step through a
 // prompt, where Enter would answer it.
 func (d *Driver) ready(o *Observation, queue bool) error {
-	st, state := o.Session.Status, o.State()
+	state := o.State()
 	switch {
 	case state == "blocked:auth":
 		msg := ""
@@ -160,7 +160,7 @@ func (d *Driver) ready(o *Observation, queue bool) error {
 		return &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt%s", o.Label, strings.TrimPrefix(state, "blocked:"), call),
 			Next: fmt.Sprintf("answer it first: drive respond %s approve|deny", o.View)}
 	case state == "working" && !queue:
-		return &Refused{Reason: fmt.Sprintf("%s is working (for %s)", o.Label, since(d.now(), st.UpdatedAt)),
+		return &Refused{Reason: fmt.Sprintf("%s is working (for %s)", o.Label, since(d.now(), o.Session.Since())),
 			Next: fmt.Sprintf("wait for its turn to end (drive wait %s), or add --queue to have it take this mid-turn", o.Label)}
 	case !queue && !o.Frontier.Answered():
 		p := o.Frontier.Newest()
@@ -452,7 +452,7 @@ func (d *Driver) awaitTurn(o *Observation, limit time.Duration) error {
 		if err != nil {
 			continue
 		}
-		if state := turnState(s.Status, f); state != "working" && (f.Answered() || strings.HasPrefix(state, "blocked")) {
+		if state := turnState(s, f); state != "working" && (f.Answered() || strings.HasPrefix(state, "blocked")) {
 			return nil
 		}
 	}
@@ -525,7 +525,7 @@ func (d *Driver) typeAndConfirm(o *Observation, line string) (string, *turn.Prom
 	want := strings.TrimLeft(line, " ")
 	limit := time.Minute
 	if strings.HasPrefix(want, "/compact") {
-		limit = 10 * time.Minute // it records itself only once compaction ends
+		limit = 10 * time.Minute // a Claude Code older than 2.1.308 may record it only once compaction ends
 	}
 	for end := d.now().Add(limit); d.now().Before(end); {
 		d.sleep(d.poll())
