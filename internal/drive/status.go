@@ -61,7 +61,7 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 			if p.Queued {
 				q = " (queued)"
 			}
-			fmt.Fprintf(&b, "--- %s%s\n%s\n\n", p.At.Local().Format("01-02 15:04"), q, promptText(p))
+			fmt.Fprintf(&b, "--- %s%s\n%s\n\n", p.At.In(d.zone()).Format("01-02 15:04"), q, promptText(p))
 		}
 		r.Text = strings.TrimRight(b.String(), "\n")
 	case ReadPending:

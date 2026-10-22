@@ -44,12 +44,12 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (*Opened, error)
 	err = b.Locked(func(evs []batch.Event) error {
 		if m := batch.Find(batch.Members(evs), label); m != nil && !m.Closed {
 			if st, err := d.Term.Status(m.Block); err == nil && st != nil {
-				return &Refused{Reason: fmt.Sprintf("%s is already open as block %s (since %s)", label, rex.Short(m.Block), m.Joined.Local().Format("15:04")),
+				return &Refused{Reason: fmt.Sprintf("%s is already open as block %s (since %s)", label, rex.Short(m.Block), m.Joined.In(b.Zone()).Format("15:04")),
 					Next: fmt.Sprintf("send to it instead: drive read %s", label)}
 			}
 		}
 		if p := batch.Pending(evs, label); p != nil && d.now().Sub(p.At) < batch.InFlight {
-			return &Refused{Reason: fmt.Sprintf("another driver is opening %s (since %s)", label, p.At.Local().Format("15:04:05")),
+			return &Refused{Reason: fmt.Sprintf("another driver is opening %s (since %s)", label, p.At.In(b.Zone()).Format("15:04:05")),
 				Next: "let it finish; drive status shows the session once it is up"}
 		}
 		return b.Append(batch.Event{At: d.now(), Kind: batch.KindOpenIntent, Session: label, Intent: intent, Dir: opt.Dir, Text: clip(stepSummary(step), 200)})

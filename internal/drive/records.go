@@ -97,6 +97,7 @@ func (d *Driver) Log(since time.Time) (*batch.Batch, []batch.Event, error) {
 // Metrics is how a batch went, in the measures the steward comparison uses.
 type Metrics struct {
 	Batch string
+	Zone  *time.Location `json:"-"`
 	From  time.Time
 	To    time.Time
 
@@ -146,7 +147,7 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 		return nil, err
 	}
 	now := d.now()
-	m := &Metrics{Batch: b.Meta.Name, From: b.Meta.Started, To: now, Took: map[string]int{}, ByKey: map[string]int{}, Refusals: map[string]int{}}
+	m := &Metrics{Batch: b.Meta.Name, Zone: b.Zone(), From: b.Meta.Started, To: now, Took: map[string]int{}, ByKey: map[string]int{}, Refusals: map[string]int{}}
 	if n := len(evs); n > 0 {
 		m.To = evs[n-1].At
 	}

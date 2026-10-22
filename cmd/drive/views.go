@@ -356,6 +356,9 @@ func describe(e batch.Event) string {
 		if e.Key != "" {
 			s = e.Outcome + ": snippet " + e.Key
 		}
+		if e.Notice {
+			s += " (the notice first)"
+		}
 		if e.Hold != "" {
 			s += " (holds " + e.Hold + ")"
 		}
@@ -406,7 +409,7 @@ func cmdMetrics(d *drive.Driver, argv []string) int {
 		printJSON(m)
 		return 0
 	}
-	fmt.Printf("batch %s, %s → %s, %d sessions\n", m.Batch, m.From.Local().Format("01-02 15:04"), m.To.Local().Format("01-02 15:04"), m.Sessions)
+	fmt.Printf("batch %s, %s → %s, %d sessions\n", m.Batch, m.From.In(m.Zone).Format("01-02 15:04"), m.To.In(m.Zone).Format("01-02 15:04 MST"), m.Sessions)
 	fmt.Printf("asks: %d (%d answered, %d open); took the recommendation %d, amended %d, delegated %d, moot %d; needed explaining %d\n",
 		m.Asks, m.Answered, m.Unanswered, m.Took["recommended"], m.Took["amended"], m.Took["delegated"], m.Took["moot"], m.Explained)
 	fmt.Printf("owner wait: %s in all, median answer %s", m.OwnerWait.Round(time.Minute), m.MedianAnswer.Round(time.Minute))

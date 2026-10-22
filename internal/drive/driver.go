@@ -92,6 +92,14 @@ func (d *Driver) poll() time.Duration {
 	return 2 * time.Second
 }
 
+// zone is where times are shown: the batch's zone, else this machine's.
+func (d *Driver) zone() *time.Location {
+	if b, err := d.Batch(); err == nil {
+		return b.Zone()
+	}
+	return time.Local
+}
+
 // Batch is the batch actions work in.
 func (d *Driver) Batch() (*batch.Batch, error) {
 	if d.BatchName != "" {
@@ -203,7 +211,7 @@ func (d *Driver) members() (*batch.Batch, []batch.Event, []*batch.Member, error)
 
 // checkView refuses an action decided on a view the session has moved past.
 // Queued sends only need the session to have received nothing since.
-func checkView(o *Observation, v turn.View, promptOnly bool) error {
+func checkView(o *Observation, v turn.View, promptOnly bool, zone *time.Location) error {
 	cur := o.View
 	if v.Prompt == cur.Prompt && (promptOnly || v.Reply == cur.Reply) {
 		return nil
@@ -212,7 +220,7 @@ func checkView(o *Observation, v turn.View, promptOnly bool) error {
 	if v.Prompt != cur.Prompt {
 		what = "it has received another prompt since"
 		if p := o.Frontier.Newest(); p != nil {
-			what += fmt.Sprintf(" (%s: %s)", p.At.Local().Format("15:04"), clip(promptText(*p), 80))
+			what += fmt.Sprintf(" (%s: %s)", p.At.In(zone).Format("15:04"), clip(promptText(*p), 80))
 		}
 	}
 	return &Refused{Reason: fmt.Sprintf("%s has moved past view %s: %s", o.Label, v, what),

@@ -34,7 +34,7 @@ func (d *Driver) Respond(view, action string) (*Responded, error) {
 		return nil, err
 	}
 	_ = evs
-	if err := checkView(o, v, action == "interrupt"); err != nil {
+	if err := checkView(o, v, action == "interrupt", d.zone()); err != nil {
 		return nil, d.refuse(b, o, err)
 	}
 	st := o.Session.Status
@@ -136,7 +136,7 @@ func (d *Driver) Close(view string) error {
 	if err != nil {
 		return err
 	}
-	if err := checkView(o, v, false); err != nil {
+	if err := checkView(o, v, false, d.zone()); err != nil {
 		return d.refuse(b, o, err)
 	}
 	st := o.Session.Status

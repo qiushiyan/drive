@@ -71,7 +71,7 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (*Sent, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkView(o, v, opt.Queue); err != nil {
+	if err := checkView(o, v, opt.Queue, b.Zone()); err != nil {
 		return nil, d.refuse(b, o, err)
 	}
 	if err := d.ready(o, opt.Queue); err != nil {
@@ -103,7 +103,7 @@ func (d *Driver) ready(o *Observation, queue bool) error {
 			Next: fmt.Sprintf("wait for its turn to end (drive wait %s), or add --queue to have it take this mid-turn", o.Label)}
 	case !queue && !o.Frontier.Answered():
 		p := o.Frontier.Newest()
-		return &Refused{Reason: fmt.Sprintf("%s has a prompt it has not answered yet (%s: %s)", o.Label, p.At.Local().Format("15:04"), clip(promptText(*p), 80)),
+		return &Refused{Reason: fmt.Sprintf("%s has a prompt it has not answered yet (%s: %s)", o.Label, p.At.In(d.zone()).Format("15:04"), clip(promptText(*p), 80)),
 			Next: fmt.Sprintf("someone already sent its next step; drive wait %s", o.Label)}
 	case o.Input == turn.InputTyped:
 		return &Refused{Reason: fmt.Sprintf("%s's input box holds typed text nobody sent: %q; it may be the owner's", o.Label, clip(o.Typed, 80)),
@@ -226,12 +226,12 @@ func (d *Driver) send(b *batch.Batch, o *Observation, step Step, opt SendOptions
 		members := batch.Members(evs)
 		m := batch.Find(members, o.Label)
 		if p := batch.Pending(evs, o.Label); p != nil && d.now().Sub(p.At) < batch.InFlight {
-			return &Refused{Reason: fmt.Sprintf("another driver is sending to %s (since %s): %s", o.Label, p.At.Local().Format("15:04:05"), clip(p.Text, 80)),
+			return &Refused{Reason: fmt.Sprintf("another driver is sending to %s (since %s): %s", o.Label, p.At.In(b.Zone()).Format("15:04:05"), clip(p.Text, 80)),
 				Next: fmt.Sprintf("let it finish; drive status shows how it went, then drive read %s", o.Label)}
 		}
 		if opt.Hold != "" {
 			if h, held := d.holder(evs, members, opt.Hold, o.Label); held {
-				return &Refused{Reason: fmt.Sprintf("%s is held by %s since %s, whose turn is still running", opt.Hold, h.Session, h.Since.Local().Format("15:04")),
+				return &Refused{Reason: fmt.Sprintf("%s is held by %s since %s, whose turn is still running", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04")),
 					Next: fmt.Sprintf("send this once %s's turn ends: drive wait %s", h.Session, h.Session)}
 			}
 		}
