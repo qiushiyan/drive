@@ -495,3 +495,19 @@ func TestADetachedWatchRunsAndStops(t *testing.T) {
 	}
 	_ = w.Stop("drive-test")
 }
+
+// A queued line that lost its start waits behind the session's own turn:
+// Ctrl+C would stop that turn, a build or a merge, so drive leaves it.
+func TestAGarbledQueuedLineInterruptsNothing(t *testing.T) {
+	r := newRig(t, "none")
+	c := adopted(t, r, "T1")
+	c.Busy("pnpm build")
+	c.Edit(func(c *testkit.Claude) { c.DropHead = 3 })
+	sent, err := r.d.Send(r.view("T1"), drive.Step{Line: "also update the changelog"}, drive.SendOptions{Queue: true})
+	if err == nil || sent == nil || sent.Outcome != "garbled" {
+		t.Fatalf("reported, not retyped: %+v %v", sent, err)
+	}
+	if _, keys := c.Seen(); contains(keys, "ctrl+c") {
+		t.Fatalf("the running turn is left alone: %q", keys)
+	}
+}
