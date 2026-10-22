@@ -119,18 +119,19 @@ func (d *Driver) settle(b *batch.Batch, label, block string) error {
 	if len(orphans) == 0 {
 		return nil
 	}
-	var newest *turn.Prompt
+	var f turn.Frontier
 	if s, err := session.Locate(d.Term, d.Host, block); err == nil {
-		if f, err := s.Frontier(); err == nil {
-			newest = f.Newest()
-		}
+		f, _ = s.Frontier()
 	}
 	for _, p := range orphans {
 		e := batch.Event{At: d.now(), Session: label, Intent: p.Intent, Hold: p.Hold, View: p.View, Key: p.Key,
 			Text: p.Text, Path: p.Path, Mode: p.Mode, Notice: p.Notice}
-		if newest != nil && !newest.At.Before(p.At) {
-			e.Kind, e.Outcome, e.Note = batch.KindSend, "arrived", "settled: its driver ended before confirming it"
-		} else {
+		switch outcome, instead := arrival(f, p); {
+		case outcome != "":
+			e.Kind, e.Outcome, e.Note = batch.KindSend, outcome, "settled: its driver ended before confirming it"
+		case instead != "":
+			e.Kind, e.Reason = batch.KindFailure, fmt.Sprintf("settled: its driver ended before the step reached the session, which received %q instead", clip(instead, 120))
+		default:
 			e.Kind, e.Reason = batch.KindFailure, "settled: its driver ended before the step reached the session"
 		}
 		if err := b.Append(e); err != nil {
@@ -139,6 +140,46 @@ func (d *Driver) settle(b *batch.Batch, label, block string) error {
 	}
 	return nil
 }
+
+// arrival looks for an intent's line among the prompts the session received
+// since the intent was recorded: arrived, queued, or garbled (its tail) when
+// one is the line; else the newest prompt that came instead, such as the
+// owner's own words.
+func arrival(f turn.Frontier, intent batch.Event) (outcome, instead string) {
+	want := asTyped(intent.Text)
+	ps := f.Prompts
+	if f.Queued != nil {
+		ps = append(append([]turn.Prompt{}, ps...), *f.Queued)
+	}
+	for _, p := range ps {
+		if p.At.Before(intent.At) {
+			continue
+		}
+		if !p.Known {
+			// Claude Code queues a slash command typed while busy without its text.
+			if skill.Command(want) != "" {
+				return "queued", ""
+			}
+			continue
+		}
+		switch got := asTyped(p.Text); {
+		case got == want && p.Queued:
+			return "queued", ""
+		case got == want:
+			return "arrived", ""
+		case got != "" && strings.HasSuffix(want, got):
+			return "garbled", ""
+		default:
+			instead = got
+		}
+	}
+	return "", instead
+}
+
+// asTyped is a line as it was typed, a slash command's markup undone and
+// the whitespace around it, a retype's padding or a lost head's line break,
+// trimmed.
+func asTyped(s string) string { return strings.TrimSpace(turn.AsTyped(s)) }
 
 // ready refuses a send the session cannot take as it stands. --queue lets a
 // working session take a step mid-turn; nothing lets a step through a

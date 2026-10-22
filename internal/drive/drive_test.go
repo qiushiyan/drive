@@ -437,14 +437,24 @@ func TestAnIntentLeftByAGoneDriverIsSettled(t *testing.T) {
 	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "z"}, drive.SendOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	got := map[string]string{}
+	// The owner's own words after an intent are not its arrival.
+	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindSendIntent, Session: "T1", Intent: "overtaken", Text: "implement-spec"})
+	r.w.Clock.Sleep(time.Second)
+	done(c, "hold off", "holding")
+	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "w"}, drive.SendOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, why := map[string]string{}, map[string]string{}
 	for _, e := range append(r.events(batch.KindSend), r.events(batch.KindFailure)...) {
-		if e.Intent == "lost" || e.Intent == "arrived" {
-			got[e.Intent] = e.Kind + " " + e.Outcome
+		if e.Intent == "lost" || e.Intent == "arrived" || e.Intent == "overtaken" {
+			got[e.Intent], why[e.Intent] = e.Kind+" "+e.Outcome, e.Reason
 		}
 	}
-	if got["lost"] != "failure " || got["arrived"] != "send arrived" {
+	if got["lost"] != "failure " || got["arrived"] != "send arrived" || got["overtaken"] != "failure " {
 		t.Fatalf("settled from the transcript: %v", got)
+	}
+	if !strings.Contains(why["overtaken"], "hold off") {
+		t.Fatalf("a step overtaken by another prompt says what arrived instead: %q", why["overtaken"])
 	}
 	if st, _ := r.d.Status(false); len(st.InFlight) != 0 {
 		t.Fatalf("nothing is left in flight: %+v", st.InFlight)
