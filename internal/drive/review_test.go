@@ -313,6 +313,9 @@ func TestALineReceivedOtherwiseReachedTheSession(t *testing.T) {
 	if _, err := r.d.Send(vb, drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); !isRefused(err) || !strings.Contains(err.Error(), "held by T5") {
 		t.Fatalf("the hold stands while that turn runs: %v", err)
 	}
+	if m, _ := r.d.Metrics(""); m.Other != 1 {
+		t.Fatalf("metrics count the line received as something else: %d", m.Other)
+	}
 }
 
 func TestStatusReadsManySessions(t *testing.T) {

@@ -13,6 +13,7 @@ const (
 	InputSuggestion InputKind = "suggestion" // Claude Code's dimmed guess at the next prompt; typing replaces it
 	InputTyped      InputKind = "typed"      // text someone typed and did not send
 	InputUnknown    InputKind = "unknown"    // no prompt line on screen
+	InputPrompt     InputKind = "prompt"     // a prompt's options, such as "❯ 1. Yes", where the box would be
 )
 
 var sgr = regexp.MustCompile(`\x1b\[[0-9;]*m`)

@@ -34,6 +34,9 @@ func TestAnApprovedCommandThatRunsLongReadsWorking(t *testing.T) {
 	c.Busy("build it")
 	c.Edit(func(c *testkit.Claude) { c.SlowTool = true })
 	c.Ask("make build")
+	if st, _ := r.d.Status(false); st.Rows[0].Input != "prompt" {
+		t.Fatalf("the prompt's options are not typed text: %+v", st.Rows[0])
+	}
 	res, err := r.d.Respond(r.view("T1"), "approve")
 	if err != nil || res.After != "working" {
 		t.Fatalf("an approve is confirmed by the session going to work: %+v %v", res, err)

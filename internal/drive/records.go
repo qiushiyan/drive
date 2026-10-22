@@ -127,6 +127,7 @@ type Metrics struct {
 	Unknown   int // sends whose delivery is unknown
 	Recovered int // lines retyped after their start was lost
 	Garbled   int // lines that arrived without their start and stayed so
+	Other     int // lines the session received as something other than what was typed
 	Wakes     int // a session's wakes posted
 	Timers    int // a timer's wakes posted
 	WakeFails int // wakes, a session's or a timer's, whose post failed
@@ -224,6 +225,8 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 				m.Recovered++
 			case "garbled":
 				m.Garbled++
+			case "other":
+				m.Other++
 			case "unknown":
 				m.Unknown++
 			}
