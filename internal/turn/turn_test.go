@@ -125,6 +125,65 @@ func TestAPromptTypedWhileIdleEmptiesTheQueue(t *testing.T) {
 	}
 }
 
+// Another session's message held for approval, then released: 2.1.306
+// enqueues it without its text, as it does a slash command, and the running
+// turn absorbs it (remove with its text, then a queued_command attachment
+// from a peer). 2.1.291 enqueued it with its text. Nobody typed it, so it is
+// never a queued prompt.
+func TestAReleasedPeerMessageLeavesNothingQueued(t *testing.T) {
+	const nudge = "[Nudge — automated, not from your user] Updates are waiting for you (T-1): a comment from Harbor."
+	rows := []string{
+		`{"type":"user","uuid":"p1","timestamp":"2026-10-21T11:05:00.000Z","origin":{"kind":"human"},"message":{"role":"user","content":"Read /x/T3-4.md and do what it asks."}}`,
+		`{"type":"assistant","uuid":"a1","timestamp":"2026-10-21T11:09:57.637Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"psql -c 'select 1'"}}]}}`,
+		`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-21T11:10:09.486Z"}`,
+		`{"type":"system","subtype":"informational","content":"Released 1 held cross-session message to Claude's queue (you approved it).","isMeta":false,"timestamp":"2026-10-21T11:10:09.487Z","uuid":"i1","level":"warning"}`,
+		`{"type":"user","uuid":"r1","timestamp":"2026-10-21T11:10:13.877Z","message":{"role":"user","content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"ok","is_error":false}]}}`,
+		`{"type":"queue-operation","operation":"remove","timestamp":"2026-10-21T11:10:13.912Z","content":"` + nudge + `","reason":"absorbed_mid_turn","commandUuid":"c1","deliveryId":"d1"}`,
+		`{"attachment":{"type":"queued_command","prompt":"` + nudge + `","source_uuid":"c1","delivery_id":"d1","commandMode":"prompt","origin":{"kind":"peer","from":"unknown","verifiedPeerPid":15658},"isMeta":true},"type":"attachment","uuid":"c2","timestamp":"2026-10-21T11:10:09.486Z"}`,
+		`{"type":"assistant","uuid":"a2","timestamp":"2026-10-21T11:10:17.107Z","message":{"role":"assistant","content":[{"type":"text","text":"Read the nudge; carrying on."}]}}`,
+	}
+	for _, n := range []int{4, 6, len(rows)} {
+		if f := read(t, rows[:n]...); f.Queued != nil || f.Newest().ID != "p1" {
+			t.Fatalf("after %d rows the released message is queued as a prompt: %+v", n, f.Queued)
+		}
+	}
+	if !read(t, rows...).Answered() {
+		t.Fatal("the turn answered; nothing waits")
+	}
+	// Without the release row, the remove still finds the message it absorbed.
+	unannounced := append(append([]string{}, rows[:3]...), rows[4:]...)
+	if f := read(t, unannounced...); f.Queued != nil {
+		t.Fatalf("the absorbed message no longer waits: %+v", f.Queued)
+	}
+	// A slash command queued before it, or after it was released, still
+	// waits for the turn to end.
+	before := `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-21T11:10:01.000Z"}`
+	after := `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-21T11:10:11.000Z"}`
+	insert := func(rs []string, at int, row string) []string {
+		return append(append(append([]string{}, rs[:at]...), row), rs[at:]...)
+	}
+	for _, c := range []struct {
+		id   string
+		rows []string
+	}{
+		{"queued:2026-10-21T11:10:01.000Z", insert(rows, 2, before)},
+		{"queued:2026-10-21T11:10:01.000Z", insert(unannounced, 2, before)},
+		{"queued:2026-10-21T11:10:11.000Z", insert(rows, 5, after)},
+	} {
+		if f := read(t, c.rows...); f.Queued == nil || f.Queued.ID != c.id {
+			t.Fatalf("the slash command %s still waits: %+v", c.id, f.Queued)
+		}
+	}
+	// 2.1.291: the same release, enqueued with the message's text.
+	old := append([]string{}, rows...)
+	old[2] = `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-21T11:10:09.486Z","content":"` + nudge + `"}`
+	for _, n := range []int{4, len(rows)} {
+		if f := read(t, old[:n]...); f.Queued != nil {
+			t.Fatalf("after %d rows the released message is queued as a prompt: %+v", n, f.Queued)
+		}
+	}
+}
+
 func TestTaskNotificationsAreNotPrompts(t *testing.T) {
 	note := `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-21T12:33:28Z","content":"<task-notification>\n<task-id>b7</task-id>"}`
 	harness := `{"type":"user","uuid":"h","timestamp":"2026-10-21T12:34:00Z","origin":{"kind":"task-notification"},"message":{"role":"user","content":"done"}}`

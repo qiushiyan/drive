@@ -1,5 +1,11 @@
 package turn
 
+import (
+	"regexp"
+	"strconv"
+	"time"
+)
+
 // queue is what Claude Code holds back while a turn runs, as its
 // queue-operation rows record it: lines typed meanwhile, task notifications,
 // other sessions' messages. Its log is incomplete (a task notification can
@@ -17,7 +23,21 @@ type queue struct {
 type waiting struct {
 	Prompt
 	content *string // as enqueued; nil when Claude Code recorded none
-	prompt  bool    // someone typed it: a task notification is not a prompt
+	prompt  bool    // someone typed it: a task notification or another session's message is not a prompt
+}
+
+// released is the row Claude Code writes when the owner approves held
+// messages from other sessions, right after it enqueues them.
+var released = regexp.MustCompile(`^Released (\d+) held cross-session message`)
+
+// releasedRow reads that row: how many messages it released.
+func releasedRow(text string) int {
+	m := released.FindStringSubmatch(text)
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
 }
 
 func (q *queue) enqueue(e row) {
@@ -42,11 +62,32 @@ func (q *queue) dequeue() {
 }
 
 // remove takes out the item a running turn absorbed, or Claude Code
-// delivered to a subagent, by its text.
+// delivered to a subagent, by its text. Claude Code 2.1.306 enqueues a
+// released peer message without its text and removes it with it, so text
+// that matches nothing takes the newest item without text, a released
+// message's first: a slash command typed while busy is never absorbed, it
+// waits for the turn to end.
 func (q *queue) remove(content string, absorbed bool) {
-	q.drop(q.index(func(w waiting) bool { return w.content != nil && *w.content == content }))
+	i := q.index(func(w waiting) bool { return w.content != nil && *w.content == content })
+	if i < 0 && typed(content) {
+		if i = q.last(func(w waiting) bool { return w.content == nil && !w.prompt }); i < 0 {
+			i = q.last(func(w waiting) bool { return w.content == nil })
+		}
+	}
+	q.drop(i)
 	if absorbed {
 		q.taking++ // its row, a queued_command attachment, follows
+	}
+}
+
+// release marks the newest n items, enqueued within a second of at, as
+// other sessions' messages the owner approved: nobody typed them.
+func (q *queue) release(n int, at time.Time) {
+	for i := len(q.items) - 1; i >= 0 && n > 0; i-- {
+		if w := &q.items[i]; w.prompt && w.At.Sub(at).Abs() <= time.Second {
+			w.prompt = false
+			n--
+		}
 	}
 }
 
@@ -88,6 +129,15 @@ func (q *queue) newest() *Prompt {
 func (q *queue) index(match func(waiting) bool) int {
 	for i, w := range q.items {
 		if match(w) {
+			return i
+		}
+	}
+	return -1
+}
+
+func (q *queue) last(match func(waiting) bool) int {
+	for i := len(q.items) - 1; i >= 0; i-- {
+		if match(q.items[i]) {
 			return i
 		}
 	}

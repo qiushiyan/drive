@@ -261,6 +261,10 @@ func Read(r io.Reader) (Frontier, error) {
 				}
 			case "scheduled_task_fire":
 				q.started() // a /loop or scheduled prompt starts a turn
+			case "informational":
+				if n := releasedRow(text); n > 0 {
+					q.release(n, e.at())
+				}
 			}
 		case "queue-operation":
 			content, _ := e.text()
