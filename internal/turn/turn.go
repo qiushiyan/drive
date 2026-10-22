@@ -98,6 +98,7 @@ func AsTyped(text string) string {
 
 type row struct {
 	Type             string                 `json:"type"`
+	Subtype          string                 `json:"subtype"`
 	UUID             string                 `json:"uuid"`
 	Timestamp        string                 `json:"timestamp"`
 	IsMeta           bool                   `json:"isMeta"`
@@ -109,7 +110,7 @@ type row struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 	Operation  string          `json:"operation"`
-	Content    *string         `json:"content"`
+	Content    json.RawMessage `json:"content"`
 	Attachment json.RawMessage `json:"attachment"`
 }
 
@@ -125,6 +126,15 @@ type block struct {
 func (r row) at() time.Time {
 	t, _ := time.Parse(time.RFC3339Nano, r.Timestamp)
 	return t
+}
+
+// text is a queue operation's or a system row's own content; ok is false
+// when it has none.
+func (r row) text() (s string, ok bool) {
+	if len(r.Content) == 0 || string(r.Content) == "null" {
+		return "", false
+	}
+	return s, json.Unmarshal(r.Content, &s) == nil
 }
 
 func (r row) human() bool { return r.Origin == nil || r.Origin.Kind == "" || r.Origin.Kind == "human" }
@@ -233,19 +243,32 @@ func Read(r io.Reader) (Frontier, error) {
 			if e.human() && !e.IsMeta && !e.IsCompactSummary && typed(text) {
 				f.take(Prompt{ID: e.UUID, At: e.at(), Text: AsTyped(text), Known: true})
 			}
+		case "system":
+			text, _ := e.text()
+			if e.Subtype == "local_command" {
+				// Some local commands record themselves and their output as
+				// system rows: /clear's output, a refused /compact's, and /cd
+				// or /wt whole.
+				if strings.HasPrefix(strings.TrimLeft(text, " \t\n"), "<command-name>") {
+					f.take(Prompt{ID: e.UUID, At: e.at(), Text: AsTyped(text), Known: true})
+				} else {
+					f.Last = &Entry{ID: e.UUID, At: e.at(), Text: text}
+				}
+			}
 		case "queue-operation":
+			content, ok := e.text()
 			switch e.Operation {
 			case "enqueue":
-				if e.Content == nil {
+				if !ok {
 					// A slash command typed while busy is enqueued without its text.
 					f.Queued = &Prompt{ID: "queued:" + e.Timestamp, At: e.at(), Queued: true}
-				} else if typed(*e.Content) {
-					f.Queued = &Prompt{ID: "queued:" + e.Timestamp, At: e.at(), Text: *e.Content, Known: true, Queued: true}
+				} else if typed(content) {
+					f.Queued = &Prompt{ID: "queued:" + e.Timestamp, At: e.at(), Text: content, Known: true, Queued: true}
 				}
 			case "dequeue":
 				f.Queued = nil
 			case "remove":
-				if f.Queued != nil && e.Content != nil && f.Queued.Known && f.Queued.Text == *e.Content {
+				if f.Queued != nil && ok && f.Queued.Known && f.Queued.Text == content {
 					f.Queued = nil
 				}
 			}

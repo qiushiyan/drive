@@ -138,3 +138,39 @@ func TestATurnEndsWithoutAnAssistantEntry(t *testing.T) {
 		t.Fatal("an answer after the interrupt means the session moved on")
 	}
 }
+
+// Rows cut from Claude Code 2.1.308 transcripts on this machine (a probe
+// session, and a /cd in a working one), ids shortened, paths invented.
+const pong = `{"type":"user","uuid":"p0","timestamp":"2026-10-22T15:41:46.248Z","origin":{"kind":"human"},"promptSource":"typed","message":{"role":"user","content":"Reply with the single word: pong"}}
+{"type":"assistant","uuid":"a0","timestamp":"2026-10-22T15:41:47.305Z","message":{"role":"assistant","content":[{"type":"text","text":"pong"}]}}
+{"type":"system","subtype":"stop_hook_summary","uuid":"s0","timestamp":"2026-10-22T15:41:47.369Z"}
+{"type":"system","subtype":"turn_duration","durationMs":1137,"messageCount":16,"uuid":"d0","timestamp":"2026-10-22T15:41:47.370Z","isMeta":false}`
+
+// Some local commands answer with a system row, not a user row: a /compact
+// with nothing to compact, /clear (the first rows of the new session's
+// transcript), and /cd or /wt, which record the command itself as one too.
+func TestALocalCommandAnswersWithASystemRow(t *testing.T) {
+	refused := read(t, pong,
+		`{"type":"user","message":{"role":"user","content":"/compact"},"uuid":"c1","timestamp":"2026-10-22T15:43:14.824Z"}`,
+		`{"type":"user","message":{"role":"user","content":"<local-command-caveat>The command below was run directly in Claude Code, not sent to you as a request, and its output goes straight to the user. It's recorded here as context for later messages.</local-command-caveat>"},"isMeta":true,"uuid":"c2","timestamp":"2026-10-22T15:43:14.867Z"}`,
+		`{"type":"user","message":{"role":"user","content":"<command-name>/compact</command-name>\n            <command-message>compact</command-message>\n            <command-args></command-args>"},"uuid":"c3","timestamp":"2026-10-22T15:43:14.840Z"}`,
+		`{"type":"system","subtype":"local_command","content":"<local-command-stdout>Not enough messages to compact.</local-command-stdout>","level":"info","timestamp":"2026-10-22T15:43:14.866Z","uuid":"c4","isMeta":false,"commandRun":{"command":"compact","args":""}}`)
+	if p := refused.Newest(); p == nil || p.ID != "c3" || !refused.Answered() {
+		t.Fatalf("the refused /compact is one prompt, answered: newest %+v last %+v", p, refused.Last)
+	}
+	cleared := read(t,
+		`{"type":"mode","mode":"normal"}`,
+		`{"type":"user","message":{"role":"user","content":"<local-command-caveat>The command below was run directly in Claude Code, not sent to you as a request, and its output goes straight to the user. It's recorded here as context for later messages.</local-command-caveat>"},"isMeta":true,"uuid":"k1","timestamp":"2026-10-22T15:45:12.114Z"}`,
+		`{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>\n            <command-message>clear</command-message>\n            <command-args></command-args>"},"uuid":"k2","timestamp":"2026-10-22T15:45:12.071Z"}`,
+		`{"type":"system","subtype":"local_command","content":"<local-command-stdout></local-command-stdout>","level":"info","timestamp":"2026-10-22T15:45:12.113Z","uuid":"k3","isMeta":false,"commandRun":{"command":"clear","args":""}}`)
+	if p := cleared.Newest(); len(cleared.Prompts) != 1 || p.Text != "/clear" || !cleared.Answered() {
+		t.Fatalf("/clear is the new session's one prompt, answered: %+v last %+v", cleared.Prompts, cleared.Last)
+	}
+	moved := read(t, pong,
+		`{"type":"system","subtype":"local_command","content":"<command-name>/cd</command-name>\n            <command-message>cd</command-message>\n            <command-args>/x/drive/</command-args>","level":"info","timestamp":"2026-10-22T15:46:02.822Z","uuid":"m1","isMeta":false}`,
+		`{"type":"system","subtype":"local_command","content":"<local-command-stdout>Moved to \u001b[1m/x/drive\u001b[22m</local-command-stdout>","level":"info","timestamp":"2026-10-22T15:46:02.822Z","uuid":"m2","isMeta":false,"commandRun":{"command":"cd","args":"/x/drive/"}}`,
+		`{"type":"user","message":{"role":"user","content":"<system-reminder>\nThe session's working directory has changed to /x/drive (via /cd)."},"isMeta":true,"uuid":"m3","timestamp":"2026-10-22T15:46:02.822Z"}`)
+	if p := moved.Newest(); p == nil || p.Text != "/cd /x/drive/" || !moved.Answered() {
+		t.Fatalf("a /cd recorded as system rows is a prompt, answered: newest %+v last %+v", p, moved.Last)
+	}
+}
