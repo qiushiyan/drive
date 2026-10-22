@@ -263,19 +263,69 @@ func TestADriverGoneAfterTheNoticeLeavesItsStepToSettle(t *testing.T) {
 	}
 }
 
+// A line Claude Code would not record as typed is refused before anything,
+// the notice included, reaches the session.
 func TestAStepRefusedBeforeAnyEffect(t *testing.T) {
+	for _, line := range []string{
+		strings.Repeat("x", 600), // Claude Code keeps only the end
+		"run the suite\tthen merge",
+		"merge it\rnow",
+		"!rm -rf build",   // a shell command
+		"# always rebase", // a memory
+	} {
+		t.Run(clipName(line), func(t *testing.T) {
+			r := newRig(t, "none")
+			c := r.w.Add("T1")
+			done(c, "onboard", "analysis")
+			_, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: line}, drive.SendOptions{Label: "T1"})
+			if !isRefused(err) {
+				t.Fatalf("refused: %v", err)
+			}
+			if typed, _ := c.Seen(); len(typed) != 0 {
+				t.Fatalf("refused means nothing was sent, the notice included: %q", typed)
+			}
+			if len(r.events(batch.KindFailure)) != 0 {
+				t.Fatalf("a refusal is not a failure: %+v", r.events(batch.KindFailure))
+			}
+		})
+	}
+}
+
+func clipName(s string) string {
+	if len(s) > 20 {
+		return s[:20]
+	}
+	return s
+}
+
+// The owner typing into the box as drive types: the session receives a
+// line that is neither the step nor its tail. It reached the session, so
+// the hold its step took stands, and the message says to read it before
+// interrupting anything.
+func TestALineReceivedOtherwiseReachedTheSession(t *testing.T) {
 	r := newRig(t, "none")
-	c := r.w.Add("T1")
-	done(c, "onboard", "analysis")
-	_, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: strings.Repeat("x", 600)}, drive.SendOptions{Label: "T1"})
-	if !isRefused(err) {
-		t.Fatalf("an over-long line is refused: %v", err)
+	a := adopted(t, r, "T5")
+	adopted(t, r, "T3")
+	a.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} }) // the release runs on
+	va, vb := r.view("T5"), r.view("T3")
+	owner := true
+	r.d.Sleep = func(d time.Duration) {
+		if owner {
+			owner = false
+			a.Edit(func(c *testkit.Claude) { c.Input += " and the changelog" })
+		}
+		r.w.Clock.Sleep(d)
 	}
-	if typed, _ := c.Seen(); len(typed) != 0 {
-		t.Fatalf("refused means nothing was sent, the notice included: %q", typed)
+	sent, err := r.d.Send(va, drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"})
+	var f *drive.Failed
+	if !errors.As(err, &f) || sent == nil || sent.Outcome != "other" {
+		t.Fatalf("a line received as something else is a send that reached the session: %+v %v", sent, err)
 	}
-	if len(r.events(batch.KindFailure)) != 0 {
-		t.Fatalf("a refusal is not a failure: %+v", r.events(batch.KindFailure))
+	if !strings.Contains(f.Next, "drive read T5") || !strings.Contains(f.Next, "drive respond T5@") {
+		t.Fatalf("it says to read before interrupting, with the view to interrupt on: %q", f.Next)
+	}
+	if _, err := r.d.Send(vb, drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); !isRefused(err) || !strings.Contains(err.Error(), "held by T5") {
+		t.Fatalf("the hold stands while that turn runs: %v", err)
 	}
 }
 

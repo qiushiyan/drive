@@ -13,7 +13,7 @@ const (
 	KindOpen       = "open"        // it opened: its block, account, directory
 	KindAdopt      = "adopt"       // a session drive did not open joined the batch
 	KindSendIntent = "send-intent" // recorded before typing, so a crash leaves a trace
-	KindSend       = "send"        // how a send ended: Outcome arrived, queued or unknown
+	KindSend       = "send"        // a send that reached its session, or may have: Outcome arrived, queued, recovered, garbled, other (something else came) or unknown
 	KindRespond    = "respond"     // approve, deny or interrupt
 	KindWatch      = "watch"       // a wake was armed
 	KindPosting    = "posting"     // a watch began posting its wake

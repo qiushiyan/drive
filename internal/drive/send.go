@@ -295,11 +295,11 @@ func (d *Driver) plan(dir, config string, view turn.View, step Step, notice bool
 	p := &plan{step: step, notice: notice}
 	switch {
 	case step.Line != "":
-		if strings.Contains(step.Line, "\n") || len(step.Line) > maxLine {
-			return nil, &Refused{Reason: "a typed step is one short line: Claude Code keeps only the end of long typing",
-				Next: "write it to a file and send it with --file"}
+		line := strings.TrimSpace(step.Line)
+		if err := typable(line); err != nil {
+			return nil, err
 		}
-		p.typed = step.Line
+		p.typed = line
 	case step.Key != "":
 		sn, err := snippet.Expand(d.Cfg.Home, dir, step.Key, step.Text)
 		if err != nil {
@@ -343,6 +343,26 @@ func (d *Driver) plan(dir, config string, view turn.View, step Step, notice bool
 		}
 	}
 	return p, nil
+}
+
+// typable refuses a typed step Claude Code would record as something other
+// than what was typed: more than one short line, which it keeps only the end
+// of; a control character, which is a key press; a leading ! or #, which
+// switch its input box to a shell command or a memory.
+func typable(line string) error {
+	toFile := "write it to a file and send it with --file"
+	switch {
+	case line == "":
+		return &Refused{Reason: "the typed step is empty"}
+	case strings.Contains(line, "\n") || len(line) > maxLine:
+		return &Refused{Reason: "a typed step is one short line: Claude Code keeps only the end of long typing", Next: toFile}
+	case strings.IndexFunc(line, unicode.IsControl) >= 0:
+		c := line[strings.IndexFunc(line, unicode.IsControl):][:1]
+		return &Refused{Reason: fmt.Sprintf("a typed step holds a control character (%q): typed into Claude Code it is a key press, not text", c), Next: toFile}
+	case line[0] == '!' || line[0] == '#':
+		return &Refused{Reason: fmt.Sprintf("a typed step starting with %q is not a prompt: Claude Code takes ! as a shell command and # as a memory", line[:1]), Next: toFile}
+	}
+	return nil
 }
 
 func firstLine(s string) string {
@@ -630,8 +650,11 @@ func (d *Driver) typeAndConfirm(o *Observation, line string) (string, *turn.Prom
 		case got != "" && strings.HasSuffix(want, got):
 			return "", p, nil
 		default:
-			return "", nil, &Failed{What: fmt.Sprintf("%s received %q instead of what was typed", o.Label, clip(got, 120)),
-				Next: fmt.Sprintf("it is working on that now; read it (drive read %s), then interrupt it with the view that prints: drive respond VIEW interrupt", o.Label)}
+			// Something reached the session, the line among it or not: a send
+			// that reached it, so a hold it took stands while that turn runs.
+			return "other", nil, &Failed{What: fmt.Sprintf("%s received %q where %q was typed", o.Label, clip(got, 120), clip(want, 120)),
+				Next: fmt.Sprintf("read what it made of it before interrupting anything: drive read %s; only if it works on the wrong thing, interrupt it: drive respond %s interrupt",
+					o.Label, viewNow(o))}
 		}
 	}
 	what := fmt.Sprintf("nothing new reached %s's transcript within %s; the send is recorded as unknown", o.Label, limit)
@@ -642,6 +665,15 @@ func (d *Driver) typeAndConfirm(o *Observation, line string) (string, *turn.Prom
 	}
 	return "unknown", nil, &Failed{What: what,
 		Next: fmt.Sprintf("drive read %s: if the line sits in its input box, clear it (drive respond VIEW clear) and send again", o.Label)}
+}
+
+// viewNow is the session's view as it stands when a message is built, for
+// the command the message prints.
+func viewNow(o *Observation) string {
+	if f, err := o.Session.Frontier(); err == nil {
+		return turn.ViewOf(o.Label, o.Session.ID, f).String()
+	}
+	return o.View.String()
 }
 
 // checkAnswer watches the first seconds of the turn a prompt started for an
