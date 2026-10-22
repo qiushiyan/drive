@@ -16,7 +16,8 @@ type Steps struct {
 	Stage   string    // the label whose latest step is newest, such as "review"
 	StageAt time.Time // when that step happened
 	Branch  string
-	PR      *PRRef // the newest pull request the session opened or named
+	PR      *PRRef  // the newest pull request the session opened or named
+	PRs     []PRRef // every one it opened or named, each once, in the order first named
 }
 
 // PRRef names a pull request.
@@ -90,10 +91,18 @@ func (Tools) Steps(id string) (Steps, error) {
 		}
 	}
 	var newest time.Time
+	seen := map[PRRef]bool{}
 	for _, p := range v.PullRequests {
-		if p.Number > 0 && !p.At.Before(newest) {
-			newest = p.At
-			s.PR = &PRRef{Repo: p.Repo, Number: p.Number, URL: p.URL}
+		if p.Number <= 0 {
+			continue
+		}
+		ref := PRRef{Repo: p.Repo, Number: p.Number, URL: p.URL}
+		if !p.At.Before(newest) {
+			newest, s.PR = p.At, &ref
+		}
+		if key := (PRRef{Repo: p.Repo, Number: p.Number}); !seen[key] {
+			seen[key] = true
+			s.PRs = append(s.PRs, ref)
 		}
 	}
 	return s, nil

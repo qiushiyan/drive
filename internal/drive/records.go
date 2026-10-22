@@ -112,7 +112,7 @@ type Metrics struct {
 	MedianAnswer time.Duration
 
 	Sessions int
-	Merged   []MergedPR
+	Merged   []MergedPR    // every pull request a session named that merged since the batch started
 	Unread   int           // sessions whose progress could not be read: Merged may be short
 	PerMerge time.Duration // OwnerWait over merged changes
 
@@ -258,7 +258,8 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 			m.Unwatched += n
 		}
 	}
-	merged := map[string]int{} // repo#number to its index in m.Merged
+	merged := map[string]int{}   // repo#number to its index in m.Merged
+	looked := map[string]error{} // repo#number to how its lookup went: each is looked up once
 	for _, mem := range batch.Members(evs) {
 		m.Sessions++
 		if d.Progress == nil || mem.SID == "" {
@@ -269,22 +270,29 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 			m.Unread++
 			continue
 		}
-		if s.PR == nil {
-			continue
+		unread := false
+		for _, ref := range s.PRs {
+			key := fmt.Sprintf("%s#%d", ref.Repo, ref.Number)
+			if i, ok := merged[key]; ok {
+				m.Merged[i].Sessions = append(m.Merged[i].Sessions, mem.Label)
+				continue
+			}
+			if err, ok := looked[key]; ok {
+				unread = unread || err != nil
+				continue
+			}
+			pr, err := d.Progress.PR(ref)
+			if looked[key] = err; err != nil {
+				unread = true
+				continue
+			}
+			if pr.State == "MERGED" && !pr.MergedAt.Before(b.Meta.Started) {
+				m.Merged = append(m.Merged, MergedPR{Repo: ref.Repo, Number: pr.Number, At: pr.MergedAt, Sessions: []string{mem.Label}})
+				merged[key] = len(m.Merged) - 1
+			}
 		}
-		key := fmt.Sprintf("%s#%d", s.PR.Repo, s.PR.Number)
-		if i, ok := merged[key]; ok {
-			m.Merged[i].Sessions = append(m.Merged[i].Sessions, mem.Label)
-			continue
-		}
-		pr, err := d.Progress.PR(*s.PR)
-		if err != nil {
+		if unread {
 			m.Unread++
-			continue
-		}
-		if pr.State == "MERGED" && !pr.MergedAt.Before(b.Meta.Started) {
-			m.Merged = append(m.Merged, MergedPR{Repo: s.PR.Repo, Number: pr.Number, At: pr.MergedAt, Sessions: []string{mem.Label}})
-			merged[key] = len(m.Merged) - 1
 		}
 	}
 	if len(m.Merged) > 0 {

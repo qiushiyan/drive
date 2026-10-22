@@ -176,19 +176,25 @@ func (p prs) PR(ref progress.PRRef) (progress.PR, error) {
 	return progress.PR{Number: ref.Number, State: "MERGED", MergedAt: time.Now().Add(time.Hour)}, nil
 }
 
-// The builder and its strategic reviewer name the same pull request.
+// The builder and its strategic reviewer name the same pull request, and
+// the builder an earlier one it landed first.
 func TestMetricsCountAMergedChangeOnce(t *testing.T) {
 	r := newRig(t, "none")
 	b, s := adopted(t, r, "T1"), adopted(t, r, "sr-9531")
 	adopted(t, r, "T2")
-	ref := &progress.PRRef{Repo: "planlab-ai/main", Number: 9531}
-	r.d.Progress = prs{b.SID: {PR: ref}, s.SID: {PR: ref}}
+	first, ref := progress.PRRef{Repo: "planlab-ai/main", Number: 9520}, progress.PRRef{Repo: "planlab-ai/main", Number: 9531}
+	r.d.Progress = prs{b.SID: {PR: &ref, PRs: []progress.PRRef{first, ref}}, s.SID: {PR: &ref, PRs: []progress.PRRef{ref}}}
 	m, err := r.d.Metrics("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(m.Merged) != 1 {
-		t.Fatalf("one merged change, not one per session naming it: %+v", m.Merged)
+	if len(m.Merged) != 2 {
+		t.Fatalf("every pull request a session linked counts, each once however many sessions name it: %+v", m.Merged)
+	}
+	for _, p := range m.Merged {
+		if want := map[int]int{9520: 1, 9531: 2}[p.Number]; len(p.Sessions) != want {
+			t.Fatalf("#%d is named by %d sessions: %+v", p.Number, want, p.Sessions)
+		}
 	}
 	if m.Unread != 1 {
 		t.Fatalf("a session whose progress could not be read is counted, so the measure says it is incomplete: %+v", m.Unread)
