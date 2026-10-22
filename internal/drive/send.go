@@ -466,7 +466,7 @@ func (d *Driver) awaitTurn(o *Observation, limit time.Duration) error {
 		if err != nil {
 			continue
 		}
-		if state := turnState(s, f); state != "working" && (f.Answered() || strings.HasPrefix(state, "blocked")) {
+		if d.turnOf(s, f, time.Time{}).Over {
 			return nil
 		}
 	}

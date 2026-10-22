@@ -180,6 +180,42 @@ func turnState(s *session.Session, f turn.Frontier) string {
 	return st.State
 }
 
+// Turn is where the turn a session's newest prompt started stands: the one
+// answer to whether it is over, which a wait waits for, a hold lasts
+// through, and the notice's turn reaches before its step goes.
+type Turn struct {
+	State   string
+	Over    bool // it ended: answered, on a prompt, an API error, an interrupt
+	Shells  int  // background shells started since the turn began, still running
+	Orphans int  // older background shells, left over and not waited on
+}
+
+// turnOf reads a session's turn; shells started before since are not its.
+func (d *Driver) turnOf(s *session.Session, f turn.Frontier, since time.Time) Turn {
+	t := Turn{State: turnState(s, f)}
+	switch t.State {
+	case "working", "idle":
+	case "done":
+		t.Over = f.Answered()
+	default:
+		t.Over = true
+	}
+	for _, at := range d.Host.Shells(s.Status.PID) {
+		if !since.IsZero() && at.Before(since) {
+			t.Orphans++
+		} else {
+			t.Shells++
+		}
+	}
+	return t
+}
+
+// waiting says the turn stopped on a prompt someone has to answer, a
+// rejected login aside, which only a relaunch moves.
+func (t Turn) waiting() bool {
+	return strings.HasPrefix(t.State, "blocked") && t.State != "blocked:auth"
+}
+
 // liveError is the API error that ended the newest prompt's turn, unless it
 // ended an earlier process: accounts share one transcript directory, so a
 // session resumed on another account reads the error that ended the one it

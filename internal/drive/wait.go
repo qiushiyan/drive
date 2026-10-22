@@ -76,29 +76,21 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 		if p := o.Frontier.Newest(); p != nil {
 			promptAt = p.At
 		}
-		shells, orphans := 0, 0
-		for _, at := range d.Host.Shells(st.PID) {
-			if !promptAt.IsZero() && at.Before(promptAt) {
-				orphans++
-			} else {
-				shells++
-			}
-		}
-		state := o.State()
+		t := d.turnOf(o.Session, o.Frontier, promptAt)
+		state := t.State
 		ended := false
 		switch {
+		case !t.Over:
 		case state == "blocked:auth" || state == "error" || state == "interrupted":
 			ended = true // nothing will happen until someone acts
-		case strings.HasPrefix(state, "blocked"):
+		case t.waiting() || t.Shells == 0:
 			ended = held >= quiet
-		case state == "done" && shells == 0:
-			ended = held >= quiet
-		case state == "done":
+		default:
 			ended = held >= bgCap
 		}
 		if ended {
 			e := &Ending{Label: o.Label, Block: o.Session.Block, State: state, Msg: st.Msg, Error: o.Frontier.Error,
-				Shells: shells, Orphans: orphans, Capped: shells > 0, Pending: o.Frontier.Pending, View: o.View,
+				Shells: t.Shells, Orphans: t.Orphans, Capped: t.Shells > 0, Pending: o.Frontier.Pending, View: o.View,
 				Account: o.Session.Account}
 			if o.Frontier.Reply != nil {
 				e.Reply = tail(o.Frontier.Reply.Text, 2500)
@@ -553,23 +545,16 @@ func (d *Driver) holder(evs []batch.Event, members []*batch.Member, name, label 
 		if err != nil {
 			return h, true
 		}
-		if state := turnState(s, f); state == "working" || strings.HasPrefix(state, "blocked") && state != "blocked:auth" {
+		t := d.turnOf(s, f, h.Since)
+		if t.State == "working" || t.waiting() {
 			return h, true
 		}
 		if p := f.Newest(); p == nil || p.At.Before(h.Since) {
 			return h, false // the send never reached it
 		}
-		if !f.Answered() {
-			return h, true
-		}
 		// A turn that ended while a shell it started runs, such as a wait on
 		// checks before a merge, resumes when the shell ends.
-		for _, at := range d.Host.Shells(s.Status.PID) {
-			if !at.Before(h.Since) {
-				return h, true
-			}
-		}
-		return h, false
+		return h, !t.Over || t.Shells > 0
 	}
 	return batch.Hold{}, false
 }
