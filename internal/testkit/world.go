@@ -8,7 +8,8 @@
 // interrupt, and can be told of a held message the session does not show.
 // A slash command typed while busy is queued without its text, one behind
 // spaces is words, an expired login answers with an API error and no Stop,
-// typing can lose a line's head, which comes back as a line break.
+// typing can lose a line's head, which comes back as a line break, and a
+// prompt draws its options behind the ❯ the input box uses.
 package testkit
 
 import (

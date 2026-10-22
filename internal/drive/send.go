@@ -40,7 +40,7 @@ type SendOptions struct {
 // Sent reports a send.
 type Sent struct {
 	Label   string
-	Outcome string // arrived, queued, recovered
+	Outcome string // arrived, queued, recovered; beside a failure, garbled, other or unknown
 	Typed   string // what went into the input box
 	Path    string // the file sent, for a file step
 	Notice  bool

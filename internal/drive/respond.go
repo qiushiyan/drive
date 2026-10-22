@@ -207,7 +207,8 @@ func (d *Driver) ownView(v turn.View, what string, promptOnly bool, again string
 }
 
 // Close closes a session's block once its last step has run, decided on
-// view: refused while it works, runs a background shell, or holds typed text.
+// view: refused while it works, waits on a prompt, runs a background shell,
+// or holds typed text.
 func (d *Driver) Close(view string) error {
 	v, err := turn.ParseView(view)
 	if err != nil {
