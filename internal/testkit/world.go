@@ -42,6 +42,9 @@ type World struct {
 	// OnCapture runs once, the next time a screen is captured: another
 	// driver acting between a driver's read and its action.
 	OnCapture func()
+	// StatusFails makes the next reads of Rex's records fail, as a busy
+	// Rex server sometimes does.
+	StatusFails int
 }
 
 // New makes a world under a temporary directory.
@@ -350,6 +353,10 @@ func (w *World) Status(block string) (*rex.Status, error) {
 	c, ok := w.blocks[block]
 	if !ok {
 		return nil, fmt.Errorf("rex block call: no block %s", block)
+	}
+	if w.StatusFails > 0 {
+		w.StatusFails--
+		return nil, fmt.Errorf("rex block call: connection refused")
 	}
 	if !c.Running {
 		return nil, nil

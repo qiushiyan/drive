@@ -16,6 +16,7 @@ const (
 	KindSend       = "send"        // how a send ended: Outcome arrived, queued or unknown
 	KindRespond    = "respond"     // approve, deny or interrupt
 	KindWatch      = "watch"       // a wake was armed
+	KindPosting    = "posting"     // a watch began posting its wake
 	KindWake       = "wake"        // a wake was posted (HTTP set) or failed (Reason set)
 	KindPark       = "park"
 	KindClose      = "close"
@@ -80,7 +81,11 @@ type Member struct {
 	LastSend   *Event
 	Sends      int
 	Watched    time.Time // when its wake was last armed
+	Posting    time.Time // when a watch last began posting
 	Woken      time.Time // when its wake was last posted
+	WokenView  string    // the view that wake carried
+	PrevView   string    // the view the wake before it carried
+	WakeFailed time.Time // when a watch last ended without a wake
 }
 
 // Members derives the batch's sessions, in the order they joined.
@@ -121,9 +126,21 @@ func Members(evs []Event) []*Member {
 			if m != nil {
 				m.Watched = e.At
 			}
+		case KindPosting:
+			if m != nil {
+				m.Posting = e.At
+			}
 		case KindWake:
-			if m != nil && e.HTTP != 0 {
-				m.Woken = e.At
+			switch {
+			case m == nil:
+			case e.HTTP != 0:
+				m.Woken, m.PrevView, m.WokenView = e.At, m.WokenView, e.View
+			default:
+				m.WakeFailed = e.At
+			}
+		case KindFailure:
+			if m != nil && strings.HasPrefix(e.Reason, "watch ended without a wake") {
+				m.WakeFailed = e.At
 			}
 		}
 	}
@@ -187,6 +204,33 @@ type Hold struct {
 	Intent  string
 	Pending bool   // that send has no outcome yet
 	Step    string // for a session waiting for the hold: the step it was refused
+	Key     string // that step's snippet, when it was one
+	Path    string // that step's file, when it was one
+}
+
+// Command is the refused step as drive send takes it.
+func (h Hold) Command() string {
+	switch {
+	case h.Key != "":
+		return strings.TrimSpace("--snippet " + h.Key + " " + shellWords(h.Step))
+	case h.Path != "":
+		return "--file " + shellQuote(h.Path)
+	}
+	return shellQuote(h.Step)
+}
+
+func shellWords(s string) string {
+	if s == "" {
+		return ""
+	}
+	return shellQuote(s)
+}
+
+func shellQuote(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@._-/=") == "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // Holds lists the newest taking of each hold. A send that failed before it
@@ -229,7 +273,7 @@ func Waiting(evs []Event) []Hold {
 				order = append(order, e.Session)
 			}
 			if _, ok := refused[e.Session]; !ok || refused[e.Session].Name != e.Hold {
-				refused[e.Session] = Hold{Name: e.Hold, Session: e.Session, Since: e.At, Step: e.Text}
+				refused[e.Session] = Hold{Name: e.Hold, Session: e.Session, Since: e.At, Step: e.Text, Key: e.Key, Path: e.Path}
 			}
 		case e.Kind == KindSend && e.Outcome != "":
 			delete(refused, e.Session)

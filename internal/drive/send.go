@@ -54,7 +54,7 @@ func pointer(path string) string { return "Read " + path + " and do what it asks
 const maxLine = 500
 
 // Send sends a session its next step, decided on view.
-func (d *Driver) Send(view string, step Step, opt SendOptions) (*Sent, error) {
+func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err error) {
 	v, err := turn.ParseView(view)
 	if err != nil {
 		return nil, &Refused{Reason: err.Error()}
@@ -71,11 +71,12 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (*Sent, error) {
 	if err != nil {
 		return nil, err
 	}
-	release, err := d.own(label, block, fmt.Sprintf("sending %s %q", label, clip(stepSummary(step), 60)))
+	l, err := d.own(label, block, fmt.Sprintf("sending %s %q", label, clip(stepSummary(step), 60)))
 	if err != nil {
 		return nil, d.refuse(b, label, err)
 	}
-	defer release()
+	l.noWake = opt.NoWatch
+	defer func() { sent, err = endSend(l, sent, err) }()
 	if err := d.settle(b, label, block); err != nil {
 		return nil, err
 	}
@@ -204,8 +205,12 @@ func (d *Driver) refuse(b *batch.Batch, label string, err error) error {
 	}
 	var h *holdRefused
 	if errors.As(err, &h) {
+		text := h.step.Line
+		if h.step.Key != "" {
+			text = h.step.Text
+		}
 		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindRefused, Session: label, Reason: h.Reason, Hold: h.hold,
-			Key: h.step.Key, Text: clip(stepSummary(h.step), 200)})
+			Key: h.step.Key, Text: text, Path: h.step.File})
 		return &h.Refused
 	}
 	var r *Refused
@@ -418,14 +423,23 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 		failed(err)
 		return sent, err
 	}
-	if !opt.NoWatch && b.Meta.Wake == "webhook" {
-		if werr := d.arm(b, o.Label, o.Session.Block); werr != nil {
-			return sent, &Failed{What: fmt.Sprintf("the step went to %s, but its wake did not start: %v", o.Label, werr),
-				Next: fmt.Sprintf("start it: drive watch %s", o.Label)}
-		}
-		sent.Watched = true
-	}
 	return sent, nil
+}
+
+// endSend ends a send's lease and says whether its wake is armed.
+func endSend(l *lease, sent *Sent, err error) (*Sent, error) {
+	watched, werr := l.end()
+	if sent != nil {
+		sent.Watched = watched
+	}
+	if werr != nil && err == nil {
+		label := ""
+		if sent != nil {
+			label = sent.Label
+		}
+		return sent, wakeFailed(label, werr)
+	}
+	return sent, err
 }
 
 func stepSummary(s Step) string {
@@ -480,7 +494,7 @@ func (d *Driver) deliver(o *Observation, line string) (string, error) {
 		return "garbled", &Failed{What: fmt.Sprintf("%s received the line without its start (%q), and that turn is not one drive can take back", o.Label, clip(got.Text, 120)),
 			Next: fmt.Sprintf("read what it made of it (drive read %s) before sending the step again", o.Label)}
 	}
-	_ = d.Term.Key(block, "ctrl+c")
+	_ = d.press(block, "ctrl+c")
 	d.sleep(d.poll())
 	for i := 0; i < 5; i++ {
 		screen, err := d.Term.Capture(block, true)
@@ -490,7 +504,7 @@ func (d *Driver) deliver(o *Observation, line string) (string, error) {
 		if k, _ := turn.InputBox(screen); k != turn.InputTyped {
 			break
 		}
-		_ = d.Term.Key(block, "ctrl+u")
+		_ = d.press(block, "ctrl+u")
 	}
 	outcome, got, err = d.typeAndConfirm(o, pad+line)
 	if err != nil {
@@ -515,11 +529,11 @@ func (d *Driver) typeAndConfirm(o *Observation, line string) (string, *turn.Prom
 			before = p.ID
 		}
 	}
-	if err := d.Term.Type(block, line); err != nil {
+	if err := d.typeInto(block, line); err != nil {
 		return "", nil, err
 	}
 	d.sleep(time.Second)
-	if err := d.Term.Key(block, "enter"); err != nil {
+	if err := d.press(block, "enter"); err != nil {
 		return "", nil, err
 	}
 	want := strings.TrimLeft(line, " ")

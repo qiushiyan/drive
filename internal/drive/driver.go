@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qiushiyan/drive/internal/batch"
@@ -40,6 +41,9 @@ type Driver struct {
 	// BatchName pins the batch an action works in; "" is the current one.
 	// A watch carries it, so a wake from an old batch never acts in a new one.
 	BatchName string
+
+	mu      sync.Mutex
+	touched map[string]bool // blocks this run typed or pressed into
 }
 
 // Refused is an action drive would not take in the state the session is in.
@@ -214,14 +218,87 @@ func (d *Driver) target(members []*batch.Member, ref string) (label, block strin
 // own takes a session for one action, from the read it is decided against
 // to the record of how it went. A second driver acting on the same session
 // meanwhile is refused, never queued behind the first.
-func (d *Driver) own(label, key, what string) (func(), error) {
+func (d *Driver) own(label, key, what string) (*lease, error) {
 	release, err := d.Store.Own(key, what)
 	var busy *batch.Busy
 	if errors.As(err, &busy) {
 		return nil, &Refused{Reason: fmt.Sprintf("another driver is %s (pid %d, since %s)", busy.What, busy.PID, busy.Since.In(d.zone()).Format("15:04:05")),
 			Next: fmt.Sprintf("leave %s to it; once it is done, drive read %s shows where it stands", label, label)}
 	}
-	return release, err
+	if err != nil {
+		return nil, err
+	}
+	return &lease{d: d, block: key, release: release}, nil
+}
+
+// lease is one action's hold on a session. In a batch that wakes its
+// driver, an action that typed or pressed anything into the session leaves
+// it watched when the lease ends, whatever came of it: a turn it started, a
+// prompt it answered, a line it lost, each ends in a wake. A session the
+// action never touched is the driver's to act on or park, as the action's
+// message says.
+type lease struct {
+	d       *Driver
+	block   string
+	release func()
+	noWake  bool
+}
+
+// end releases the session, arming its wake first where the action touched
+// it. It says whether the session is watched; an error is a wake that did
+// not start.
+func (l *lease) end() (watched bool, err error) {
+	defer l.release()
+	d := l.d
+	d.mu.Lock()
+	touched := d.touched[l.block]
+	delete(d.touched, l.block)
+	d.mu.Unlock()
+	if !touched || l.noWake {
+		return false, nil
+	}
+	b, err := d.Batch()
+	if err != nil || b.Meta.Wake != "webhook" {
+		return false, nil
+	}
+	evs, err := b.Events()
+	if err != nil {
+		return false, err
+	}
+	m := batch.Find(batch.Members(evs), l.block)
+	if m == nil {
+		return false, nil // not the batch's to wake for
+	}
+	if err := d.arm(b, m.Label, m.Block); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// touch notes that this run typed or pressed into a block.
+func (d *Driver) touch(block string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.touched == nil {
+		d.touched = map[string]bool{}
+	}
+	d.touched[block] = true
+}
+
+// typeInto and press are how an action reaches a session's keyboard.
+func (d *Driver) typeInto(block, text string) error {
+	d.touch(block)
+	return d.Term.Type(block, text)
+}
+
+func (d *Driver) press(block string, keys ...string) error {
+	d.touch(block)
+	return d.Term.Key(block, keys...)
+}
+
+// wakeFailed is an action that did what it was asked whose wake did not start.
+func wakeFailed(label string, err error) *Failed {
+	return &Failed{What: fmt.Sprintf("%s's wake did not start: %v", label, err), Next: fmt.Sprintf("start it: drive watch %s", label)}
 }
 
 // observe reads one session. ref is a label in the batch or a block id.

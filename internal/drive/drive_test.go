@@ -508,7 +508,7 @@ func TestSendArmsTheWakeInAWebhookBatch(t *testing.T) {
 	if err != nil || !sent.Watched {
 		t.Fatalf("a send arms the wake: %+v %v", sent, err)
 	}
-	argv := r.watches.Running["drive-"+c.Block[len(c.Block)-6:]]
+	argv := r.watches.Running["drive-b1-"+c.Block[len(c.Block)-6:]]
 	if strings.Join(argv, " ") != "/bin/drive --batch b1 wait T1 --notify" {
 		t.Fatalf("the wake is pinned to its batch: %q", argv)
 	}
@@ -590,6 +590,7 @@ func TestWakeRecordsEveryPost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	r.watches.Retire("drive-b1-" + c.Block[len(c.Block)-6:]) // as a watch does before it posts
 	if err := r.d.Wake("T1", e, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -674,7 +675,8 @@ func TestHoldWaitersAreListedAndTheRefusalSaysHowBack(t *testing.T) {
 	a.Done("released")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		body, _ := io.ReadAll(req.Body)
-		if !strings.Contains(string(body), "waiting for release, which T5s held: T3s, refused release") {
+		if !strings.Contains(string(body), "which T5s held: T3s") || !strings.Contains(string(body), "drive send T3s@") ||
+			!strings.Contains(string(body), " release --hold release") {
 			t.Errorf("the holder's wake names who waits for what it held: %s", body)
 		}
 		w.WriteHeader(204)

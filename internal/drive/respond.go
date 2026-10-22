@@ -12,25 +12,34 @@ import (
 
 // Responded reports an answer to a prompt.
 type Responded struct {
-	Label  string
-	Action string
-	Call   string // the tool call the prompt asked about
-	After  string // the state the session reached
+	Label   string
+	Action  string
+	Call    string // the tool call the prompt asked about
+	After   string // the state the session reached
+	Watched bool   // its wake is armed
 }
 
 // Respond answers what a session waits on, decided on view: approve or deny
 // a permission prompt (or a held message), interrupt a working turn, or
 // clear text left in the input box.
-func (d *Driver) Respond(view, action string) (*Responded, error) {
+func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 	v, err := turn.ParseView(view)
 	if err != nil {
 		return nil, &Refused{Reason: err.Error()}
 	}
-	b, release, o, err := d.ownView(v, action+" "+v.Session, action == "interrupt")
+	b, l, o, err := d.ownView(v, action+" "+v.Session, action == "interrupt")
 	if err != nil {
 		return nil, err
 	}
-	defer release()
+	defer func() {
+		watched, werr := l.end()
+		if res != nil {
+			res.Watched = watched
+		}
+		if werr != nil && err == nil {
+			err = wakeFailed(o.Label, werr)
+		}
+	}()
 	before := o.State()
 	block := o.Session.Block
 	call := ""
@@ -58,7 +67,7 @@ func (d *Driver) Respond(view, action string) (*Responded, error) {
 	}
 	if action == "clear" {
 		for i := 0; i < 5; i++ {
-			if err := d.Term.Key(block, "ctrl+u"); err != nil {
+			if err := d.press(block, "ctrl+u"); err != nil {
 				return nil, err
 			}
 			d.sleep(d.poll() / 4)
@@ -68,7 +77,7 @@ func (d *Driver) Respond(view, action string) (*Responded, error) {
 				}
 			}
 		}
-	} else if err := d.Term.Key(block, keys...); err != nil {
+	} else if err := d.press(block, keys...); err != nil {
 		return nil, err
 	}
 	// Rex hears nothing of a deny or an interrupt, so the session's own record
@@ -115,16 +124,16 @@ func (d *Driver) Park(view, reason string) error {
 	if strings.TrimSpace(reason) == "" {
 		return &Refused{Reason: "say why it is parked; the report and the next driver read it"}
 	}
-	b, release, o, err := d.ownView(v, "parking "+v.Session, true)
+	b, l, o, err := d.ownView(v, "parking "+v.Session, true)
 	if err != nil {
 		return err
 	}
-	defer release()
+	defer l.end()
 	if b == nil || o.Member == nil {
 		return &Refused{Reason: fmt.Sprintf("%s is not in the batch", o.Label)}
 	}
 	if d.Watches != nil {
-		_ = d.Watches.Stop(watchName(o.Session.Block))
+		_ = d.Watches.Stop(watchName(b, o.Session.Block))
 	}
 	return b.Append(batch.Event{At: d.now(), Kind: batch.KindPark, Session: o.Label, Reason: reason, View: v.String()})
 }
@@ -132,7 +141,7 @@ func (d *Driver) Park(view, reason string) error {
 // ownView owns the session a view names and reads it under that ownership,
 // refusing the view once the session has moved past it. promptOnly accepts a
 // view whose reply has grown since, as long as no prompt came.
-func (d *Driver) ownView(v turn.View, what string, promptOnly bool) (*batch.Batch, func(), *Observation, error) {
+func (d *Driver) ownView(v turn.View, what string, promptOnly bool) (*batch.Batch, *lease, *Observation, error) {
 	b, _, members, err := d.members()
 	if err != nil {
 		return nil, nil, nil, err
@@ -141,7 +150,7 @@ func (d *Driver) ownView(v turn.View, what string, promptOnly bool) (*batch.Batc
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	release, err := d.own(label, block, what)
+	l, err := d.own(label, block, what)
 	if err != nil {
 		return nil, nil, nil, d.refuse(b, label, err)
 	}
@@ -159,10 +168,10 @@ func (d *Driver) ownView(v turn.View, what string, promptOnly bool) (*batch.Batc
 		}
 	}
 	if err != nil {
-		release()
+		l.release()
 		return nil, nil, nil, err
 	}
-	return b, release, o, nil
+	return b, l, o, nil
 }
 
 // Close closes a session's block once its last step has run, decided on
@@ -172,11 +181,11 @@ func (d *Driver) Close(view string) error {
 	if err != nil {
 		return &Refused{Reason: err.Error()}
 	}
-	b, release, o, err := d.ownView(v, "closing "+v.Session, false)
+	b, l, o, err := d.ownView(v, "closing "+v.Session, false)
 	if err != nil {
 		return err
 	}
-	defer release()
+	defer l.end()
 	st := o.Session.Status
 	switch {
 	case o.State() == "working":
@@ -188,8 +197,8 @@ func (d *Driver) Close(view string) error {
 		return d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s still runs a background shell", o.Label),
 			Next: "leave the block and name it in the report, or wait for the job"})
 	}
-	if d.Watches != nil {
-		_ = d.Watches.Stop(watchName(o.Session.Block))
+	if d.Watches != nil && b != nil {
+		_ = d.Watches.Stop(watchName(b, o.Session.Block))
 	}
 	if err := d.Term.Close(o.Session.Block); err != nil {
 		return err

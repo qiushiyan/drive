@@ -321,7 +321,7 @@ func TestASendDuringAWakeArmsAFreshWatch(t *testing.T) {
 	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "go"}, drive.SendOptions{Label: "T1"}); err != nil {
 		t.Fatal(err)
 	}
-	name := "drive-" + c.Block[len(c.Block)-6:]
+	name := "drive-b1-" + c.Block[len(c.Block)-6:]
 	if !r.watches.Alive(name) {
 		t.Fatalf("armed as %s: %v", name, r.watches.Running)
 	}

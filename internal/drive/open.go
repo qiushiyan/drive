@@ -35,7 +35,7 @@ type Opened struct {
 // step, the notice ahead of it. A label already open in the batch is refused,
 // so two drivers deciding at once open one session, not two. The step is
 // checked before anything opens: a refusal means no block was opened.
-func (d *Driver) Open(label string, step Step, opt OpenOptions) (*Opened, error) {
+func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, err error) {
 	b, err := d.Batch()
 	if err != nil {
 		return nil, &Refused{Reason: err.Error()}
@@ -43,11 +43,11 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (*Opened, error)
 	if label == "" || strings.ContainsAny(label, " @/") {
 		return nil, &Refused{Reason: fmt.Sprintf("label %q: use a short name without spaces, '@' or '/', such as T1", label)}
 	}
-	release, err := d.own(label, "open:"+label, "opening "+label)
+	opening, err := d.own(label, "open:"+label, "opening "+label)
 	if err != nil {
 		return nil, d.refuse(b, label, err)
 	}
-	defer release()
+	defer opening.release()
 	if !step.empty() {
 		// The account is the launcher's choice, so skills are read from the default one.
 		if _, err := d.plan(opt.Dir, filepath.Join(d.Cfg.Home, ".claude"), turn.View{Session: label}, step, opt.Resume == ""); err != nil {
@@ -96,20 +96,24 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (*Opened, error)
 		SID: s.ID, Account: s.Account, Dir: s.Dir, Ref: opt.Resume}); err != nil {
 		return nil, err
 	}
-	out := &Opened{Label: label, Block: block, Account: s.Account, Session: s.ID}
-	if step.empty() {
-		if b.Meta.Wake == "webhook" {
-			if err := d.arm(b, label, block); err != nil {
-				return out, &Failed{What: fmt.Sprintf("opened %s, but its wake did not start: %v", label, err), Next: "start it: drive watch " + label}
-			}
-		}
-		return out, nil
-	}
-	own, err := d.own(label, block, fmt.Sprintf("sending %s its first step", label))
+	out = &Opened{Label: label, Block: block, Account: s.Account, Session: s.ID}
+	l, err := d.own(label, block, fmt.Sprintf("sending %s its first step", label))
 	if err != nil {
 		return out, err
 	}
-	defer own()
+	d.touch(block) // a session drive started is watched like one it typed into
+	defer func() {
+		watched, werr := l.end()
+		if out.Sent != nil {
+			out.Sent.Watched = watched
+		}
+		if werr != nil && err == nil {
+			err = wakeFailed(label, werr)
+		}
+	}()
+	if step.empty() {
+		return out, nil
+	}
 	f, _ := s.Frontier()
 	o := &Observation{Label: label, Session: s, Frontier: f, View: turn.ViewOf(label, s.ID, f)}
 	// A resumed session read the notice in the conversation it resumes.

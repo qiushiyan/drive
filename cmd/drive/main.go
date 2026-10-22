@@ -37,9 +37,11 @@ acts on a session at a time; a second is refused while the first acts.
   drive send VIEW STEP [--queue] [--hold NAME] [--as LABEL]
   drive open LABEL [STEP] [--dir DIR] [--resume ID] [--account NAME] [--model M] [--hold NAME]
   drive respond VIEW approve|deny|interrupt|clear
-  drive watch SESSION | drive watch --sleep SECONDS NOTE
+  drive watch SESSION | drive watch --due | drive watch --sleep SECONDS NOTE
                                            a webhook batch: wake the driver when the turn
-                                           ends (send and open arm this themselves)
+                                           ends; --due arms every session that needs it.
+                                           Any action that types or presses into a session
+                                           arms its wake itself
   drive park VIEW REASON…                  stop waking for it; the reason is kept
   drive close VIEW                         close its block after its last step
   drive record grant --source WORDS --scope WHAT
@@ -68,12 +70,14 @@ background shells that turn started included.
 status reads, per session: STATE (working; done; idle; interrupted, its turn
 stopped by an interrupt or a denied prompt; error; blocked:permission|
 question|auth); INPUT (empty; suggestion, Claude Code's dimmed guess, which
-typing replaces; typed, a line someone left unsent); WAKE (none; armed, its
-wake comes about a minute after the turn ends; woken HH:MM, with "(nothing
-sent since)" when no driver acted after it; ended without a wake; parked:
-why; stuck). Hold lines name who holds each and who waits for it with the
-step it was refused. A wake also comes when a session stops on a prompt, and
-ends with what to do next when the ending decides it.
+typing replaces; typed, a line someone left unsent); WAKE (armed, its wake
+comes about a minute after the turn ends; stuck; posting, a wake on its
+way; woken HH:MM (nothing done since), a wake that still wants a decision:
+act on it or park it; none, or ended without a wake: no wake will come
+until drive watch --due arms one; parked: why). Hold lines name who holds
+each and who waits for it with the step it was refused. A wake also comes
+when a session stops on a prompt, and ends with what to do next when the
+ending decides it.
 
 SESSION is a label in the batch (T1) or a block id (its last six characters).
 --batch NAME acts in that batch instead of the current one.
@@ -305,9 +309,25 @@ func cmdRespond(d *drive.Driver, argv []string) int {
 }
 
 func cmdWatch(d *drive.Driver, argv []string) int {
-	a, code := parseOr(argv, []string{"sleep"}, nil)
+	a, code := parseOr(argv, []string{"sleep"}, []string{"due"})
 	if a == nil {
 		return code
+	}
+	if a.on("due") {
+		armed, err := d.Due()
+		for _, r := range armed {
+			fmt.Printf("watching %s: %s\n", r.Label, r.Why)
+			if r.Failures >= 2 {
+				fmt.Printf("  %s's watch has ended without a wake %d times this batch; watches.log in the batch directory says why\n", r.Label, r.Failures)
+			}
+		}
+		if err != nil {
+			return fail(err)
+		}
+		if len(armed) == 0 {
+			fmt.Println("no session needs its wake armed")
+		}
+		return 0
 	}
 	if s := a.str("sleep"); s != "" {
 		after, err := seconds(s, 0)
@@ -321,7 +341,7 @@ func cmdWatch(d *drive.Driver, argv []string) int {
 		return 0
 	}
 	if len(a.pos) != 1 {
-		return bad("watch needs a SESSION, or --sleep SECONDS NOTE")
+		return bad("watch needs a SESSION, --due, or --sleep SECONDS NOTE")
 	}
 	w, err := d.Watch(a.pos[0])
 	if err != nil {

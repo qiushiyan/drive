@@ -115,6 +115,7 @@ type Row struct {
 	Name      string // the block's Rex label, for sessions outside the batch
 	Error     string // what kept the row from being read
 	Unhandled bool   // a wake was posted after the driver last acted on it
+	Due       string // why the watchdog should arm its wake; "" when nothing is due
 }
 
 // Status is the batch at a glance.
@@ -182,23 +183,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 			if m.LastSend != nil {
 				r.LastSent, r.SentAt = sentLabel(m.LastSend), m.LastSend.At
 			}
-			// The log says what happened; the process table only whether a watch still runs.
-			switch {
-			case m.Parked != "":
-				r.Watch = "parked: " + m.Parked
-			case !m.Woken.IsZero() && !m.Woken.Before(m.Watched):
-				r.Watch = "woken " + m.Woken.In(out.Zone).Format("15:04")
-				r.Unhandled = m.Woken.After(m.LastAction)
-			case d.Watches != nil && d.Watches.Alive(watchName(m.Block)):
-				r.Watch = "armed"
-				if stuck(r) {
-					r.Watch = fmt.Sprintf("armed, but its turn ended %s ago: stuck (drive watch %s restarts it)", ago(r.For), m.Label)
-				}
-			case !m.Watched.IsZero():
-				r.Watch = "ended without a wake (watches.log says why)"
-			default:
-				r.Watch = "none"
-			}
+			r.Watch, r.Unhandled, r.Due = d.wakeOf(b, m, r, out.Zone)
 			out.Rows[i] = r
 		}(i, m)
 	}
@@ -238,13 +223,21 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 		}
 		for _, name := range sortedKeys(names) {
 			line := name + ": free"
-			if hh, held := d.holder(evs, members, name, ""); held {
+			hh, held := d.holder(evs, members, name, "")
+			if held {
 				line = fmt.Sprintf("%s: held by %s since %s", name, hh.Session, hh.Since.In(out.Zone).Format("15:04"))
 			}
 			var waiting []string
 			for _, w := range batch.Waiting(evs) {
-				if w.Name == name {
-					waiting = append(waiting, fmt.Sprintf("%s (refused %s at %s)", w.Session, clip(w.Step, 60), w.Since.In(out.Zone).Format("15:04")))
+				if w.Name != name {
+					continue
+				}
+				waiting = append(waiting, fmt.Sprintf("%s (refused %s at %s)", w.Session, clip(w.Command(), 60), w.Since.In(out.Zone).Format("15:04")))
+				// A parked waiter whose hold is free wakes no one unless its watch is armed again.
+				for i := range out.Rows {
+					if r := &out.Rows[i]; !held && r.Label == w.Session && strings.HasPrefix(r.Watch, "parked") {
+						r.Due = "waits for " + name + ", which is free"
+					}
 				}
 			}
 			if len(waiting) > 0 {
@@ -279,12 +272,47 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 	return out, nil
 }
 
+// wakeOf says how a member's wake stands, first whether a watch runs and
+// then what the log says came of the last one, and why the watchdog should
+// arm it again ("" when nothing is due).
+func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, zone *time.Location) (word string, unhandled bool, due string) {
+	alive := d.Watches != nil && b != nil && d.Watches.Alive(watchName(b, m.Block))
+	woken := !m.Woken.IsZero() && !m.Woken.Before(m.Watched)
+	switch {
+	case m.Parked != "":
+		return "parked: " + m.Parked, false, ""
+	case alive && stuck(r.State, d.now().Add(-r.For), m.Watched, d.now()):
+		return fmt.Sprintf("armed, but its turn ended %s ago: stuck (drive watch %s restarts it)", ago(r.For), m.Label), false, "stuck"
+	case alive:
+		return "armed", false, ""
+	case m.Posting.After(m.Watched) && m.Posting.After(m.Woken) && m.Posting.After(m.WakeFailed):
+		return "posting since " + m.Posting.In(zone).Format("15:04"), false, ""
+	case woken && m.Woken.After(m.LastAction):
+		// The driver owes it a decision. Remind it once per view: a wake
+		// lost to a run that died is posted again; one it chose to leave is not.
+		word = "woken " + m.Woken.In(zone).Format("15:04") + " (nothing done since)"
+		if d.now().Sub(m.Woken) > 10*time.Minute && m.WokenView != m.PrevView {
+			due = "woken " + ago(d.now().Sub(m.Woken)) + " ago with nothing done since"
+		}
+		return word, true, due
+	case woken:
+		return "none (woken " + m.Woken.In(zone).Format("15:04") + ", acted on since)", false, "acted on with no wake armed"
+	case !m.Watched.IsZero():
+		return "ended without a wake (watches.log says why)", false, "its watch ended without a wake"
+	}
+	return "none", false, "never watched"
+}
+
 // stuck says a watch still runs long after the turn it waits on ended: a
 // wait returns a minute after a turn ends, or ten after one that left its
-// own background jobs running.
-func stuck(r Row) bool {
-	ended := r.State == "done" || r.State == "error" || r.State == "interrupted" || strings.HasPrefix(r.State, "blocked")
-	return ended && r.For > 15*time.Minute
+// own background jobs running, counted from when the watch was armed if
+// that was later.
+func stuck(state string, since, watched, now time.Time) bool {
+	ended := state == "done" || state == "idle" || state == "error" || state == "interrupted" || strings.HasPrefix(state, "blocked")
+	if watched.After(since) {
+		since = watched
+	}
+	return ended && now.Sub(since) > 15*time.Minute
 }
 
 func ago(d time.Duration) string {

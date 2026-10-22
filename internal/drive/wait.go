@@ -1,6 +1,7 @@
 package drive
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/qiushiyan/drive/internal/batch"
@@ -47,14 +49,23 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 	}
 	var last string
 	stable := d.now()
+	misses := 0
 	for {
 		o, err := d.observe(members, ref)
 		if err != nil {
-			if _, ok := err.(*Refused); ok {
-				return &Ending{Label: ref, State: "gone", Msg: err.Error()}, nil
+			// One unreadable look is often Rex busy for a moment; three in a row is a session gone.
+			var r *Refused
+			if !errors.As(err, &r) {
+				return nil, err
 			}
-			return nil, err
+			if misses++; misses < 3 {
+				d.sleep(d.poll())
+				continue
+			}
+			return &Ending{Label: ref, State: "gone", Msg: r.Reason,
+				Next: fmt.Sprintf("drive status lists what runs; if %s still runs there, watch it again: drive watch %s", ref, ref)}, nil
 		}
+		misses = 0
 		st := o.Session.Status
 		key := o.State() + o.Session.Since().String()
 		if key != last {
@@ -151,6 +162,9 @@ func (e *Ending) Text() string {
 	if e.Msg != "" && strings.HasPrefix(e.State, "blocked") {
 		fmt.Fprintf(&b, "prompt: %s\n", e.Msg)
 	}
+	if e.Msg != "" && e.State == "gone" {
+		fmt.Fprintf(&b, "why: %s\n", e.Msg)
+	}
 	if e.Reply != "" {
 		fmt.Fprintf(&b, "--- reply (end) ---\n%s\n", e.Reply)
 	}
@@ -166,7 +180,15 @@ func (e *Ending) Text() string {
 	return b.String()
 }
 
-func watchName(block string) string { return "drive-" + rex.Short(block) }
+// watchName is a session's watch in a batch. A batch's watches are its own:
+// one from an old batch neither blocks a new one's nor is taken for it.
+func watchName(b *batch.Batch, block string) string {
+	return "drive-" + safeName(b.Meta.Name) + "-" + rex.Short(block)
+}
+
+func timerName(b *batch.Batch, note string) string {
+	return "drive-" + safeName(b.Meta.Name) + "-timer-" + safeName(note)
+}
 
 // arm starts the wake for a session unless one is already waiting on it. A
 // watch takes itself off the books before it posts, so one still running
@@ -175,7 +197,7 @@ func (d *Driver) arm(b *batch.Batch, label, block string) error {
 	if d.Watches == nil {
 		return fmt.Errorf("this driver runs no watches")
 	}
-	name := watchName(block)
+	name := watchName(b, block)
 	if d.Watches.Alive(name) {
 		return nil
 	}
@@ -193,7 +215,9 @@ type Watched struct {
 	Restarted bool // the watch ran long after the turn ended and was started again
 }
 
-// Watch arms the wake for a session in a batch that wakes its driver by webhook.
+// Watch arms the wake for a session in a batch that wakes its driver by
+// webhook, parked or not. It owns the session meanwhile, so it never races
+// a send's own arming into two watches.
 func (d *Driver) Watch(ref string) (*Watched, error) {
 	b, err := d.Batch()
 	if err != nil {
@@ -210,14 +234,27 @@ func (d *Driver) Watch(ref string) (*Watched, error) {
 	if err != nil {
 		return nil, err
 	}
-	o, err := d.observe(batch.Members(evs), ref)
+	members := batch.Members(evs)
+	label, block, err := d.target(members, ref)
 	if err != nil {
 		return nil, err
 	}
-	name := watchName(o.Session.Block)
+	l, err := d.own(label, block, "arming "+label+"'s wake")
+	if err != nil {
+		return nil, err
+	}
+	defer l.release()
+	o, err := d.observe(members, ref)
+	if err != nil {
+		return nil, err
+	}
+	name := watchName(b, o.Session.Block)
 	if d.Watches.Alive(name) {
-		r := Row{State: o.State(), For: d.now().Sub(o.Session.Since())}
-		if !stuck(r) {
+		var watched time.Time
+		if m := batch.Find(members, o.Session.Block); m != nil {
+			watched = m.Watched
+		}
+		if !stuck(o.State(), o.Session.Since(), watched, d.now()) {
 			return &Watched{Label: o.Label, Already: true}, nil
 		}
 		if err := d.Watches.Stop(name); err != nil {
@@ -228,13 +265,95 @@ func (d *Driver) Watch(ref string) (*Watched, error) {
 	return &Watched{Label: o.Label}, d.arm(b, o.Label, o.Session.Block)
 }
 
+// Rearmed is a session whose wake Due armed, and why it was due.
+type Rearmed struct {
+	Label    string
+	Why      string
+	Failures int // times its watch ended without a wake in this batch
+}
+
+// Due arms the wake of every session in a webhook batch that has none and
+// needs one: never watched, acted on with no wake armed, a watch that ended
+// without a wake or is stuck, a wake nothing was done about (once per view),
+// a parked session waiting for a hold that is free. It is a chat driver's
+// watchdog in one command.
+func (d *Driver) Due() ([]Rearmed, error) {
+	b, err := d.Batch()
+	if err != nil {
+		return nil, &Refused{Reason: err.Error()}
+	}
+	if b.Meta.Wake != "webhook" {
+		return nil, &Refused{Reason: fmt.Sprintf("batch %s wakes no one (wake: %s)", b.Meta.Name, b.Meta.Wake)}
+	}
+	st, err := d.Status(false)
+	if err != nil {
+		return nil, err
+	}
+	evs, err := b.Events()
+	if err != nil {
+		return nil, err
+	}
+	var out []Rearmed
+	for _, r := range st.Rows {
+		if r.Due == "" || r.Error != "" {
+			continue
+		}
+		if _, err := d.Watch(r.Label); err != nil {
+			return out, err
+		}
+		n := 0
+		for _, e := range evs {
+			if e.Kind == batch.KindFailure && e.Session == r.Label && strings.HasPrefix(e.Reason, "watch ended without a wake") {
+				n++
+			}
+		}
+		out = append(out, Rearmed{Label: r.Label, Why: r.Due, Failures: n})
+	}
+	return out, nil
+}
+
+// StopWatches stops a batch's watches and timers once another batch has
+// started: a wake from the old batch would reach the driver about sessions
+// it now drives in the new one.
+func (d *Driver) StopWatches(b *batch.Batch) (int, error) {
+	if d.Watches == nil {
+		return 0, nil
+	}
+	evs, err := b.Events()
+	if err != nil {
+		return 0, err
+	}
+	names := map[string]bool{}
+	for _, e := range evs {
+		switch {
+		case e.Kind == batch.KindWatch && e.Block != "":
+			names[watchName(b, e.Block)] = true
+		case e.Kind == batch.KindWatch && strings.HasPrefix(e.Note, "timer "):
+			names[timerName(b, strings.TrimPrefix(e.Note, "timer "))] = true
+		}
+	}
+	n := 0
+	for name := range names {
+		if d.Watches.Alive(name) {
+			if err := d.Watches.Stop(name); err != nil {
+				return n, err
+			}
+			n++
+		}
+	}
+	if n > 0 {
+		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindNote, Note: fmt.Sprintf("stopped %d watches: a new batch started", n)})
+	}
+	return n, nil
+}
+
 // Timer arms a wake after a delay, such as the five-minute veto on a plan.
 func (d *Driver) Timer(after time.Duration, note string) error {
 	b, err := d.Batch()
 	if err != nil {
 		return &Refused{Reason: err.Error()}
 	}
-	name := "drive-timer-" + safeName(note)
+	name := timerName(b, note)
 	if d.Watches.Alive(name) {
 		return &Refused{Reason: fmt.Sprintf("a timer named %q is already running", note), Next: "give this one another note"}
 	}
@@ -318,22 +437,13 @@ func (d *Driver) Wake(label string, e *Ending, note string) error {
 	host, _ := os.Hostname()
 	payload := map[string]any{"batch": b.Meta.Name, "host": host}
 	if e != nil {
-		payload["kind"], payload["session"], payload["state"], payload["view"] = "turn", e.Label, e.State, e.View.String()
-		text := e.Text()
-		if evs, err := b.Events(); err == nil {
-			for _, h := range batch.Holds(evs) {
-				if h.Session != e.Label {
-					continue
-				}
-				for _, w := range batch.Waiting(evs) {
-					if w.Name == h.Name {
-						text += fmt.Sprintf("waiting for %s, which %s held: %s, refused %s; send it once the hold is free (drive status)\n",
-							h.Name, e.Label, w.Session, clip(w.Step, 80))
-					}
-				}
-			}
+		view := ""
+		if e.View.Session != "" {
+			view = e.View.String()
 		}
-		payload["output"] = tail(text, 6000)
+		payload["kind"], payload["session"], payload["state"], payload["view"] = "turn", e.Label, e.State, view
+		payload["output"] = tail(e.Text()+d.waiterLines(b, e.Label), 6000)
+		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindPosting, Session: label, Block: e.Block, View: view})
 	} else {
 		payload["kind"], payload["output"] = "timer", "timer done: "+note
 	}
@@ -352,12 +462,69 @@ func (d *Driver) Wake(label string, e *Ending, note string) error {
 		}
 	}
 	_ = b.Append(ev)
+	if err != nil {
+		return err // no wake reached the chat, so there is nothing to follow up
+	}
 	for _, c := range append(append([]string{}, b.Meta.AfterWake...), d.Cfg.AfterWake...) {
-		if out, cerr := exec.Command("/bin/sh", "-c", c).CombinedOutput(); cerr != nil {
-			_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindNote, Note: fmt.Sprintf("after_wake %q failed: %s", c, clip(string(out), 200))})
+		if out, cerr := afterWake(c, AfterWakeLimit); cerr != nil {
+			_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindNote, Note: fmt.Sprintf("after_wake %q failed: %v: %s", c, cerr, clip(out, 200))})
 		}
 	}
-	return err
+	return nil
+}
+
+// AfterWakeLimit bounds each after-wake command: a watch that has posted
+// its wake is off the books, so one left hanging would never be seen.
+var AfterWakeLimit = 2 * time.Minute
+
+// afterWake runs one of the batch's after-wake commands, killing it and
+// whatever it started once limit has passed.
+func afterWake(c string, limit time.Duration) (string, error) {
+	cmd := exec.Command("/bin/sh", "-c", c)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		return out.String(), err
+	case <-time.After(limit):
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-done
+		return out.String(), fmt.Errorf("still running after %s, killed", limit)
+	}
+}
+
+// waiterLines names, for a session whose turn has ended, each session
+// waiting on a hold it held, with the send to run once the hold is free.
+func (d *Driver) waiterLines(b *batch.Batch, label string) string {
+	evs, err := b.Events()
+	if err != nil {
+		return ""
+	}
+	members := batch.Members(evs)
+	var out strings.Builder
+	for _, h := range batch.Holds(evs) {
+		if h.Session != label {
+			continue
+		}
+		for _, w := range batch.Waiting(evs) {
+			if w.Name != h.Name {
+				continue
+			}
+			view := w.Session + "@VIEW"
+			if o, err := d.observe(members, w.Session); err == nil {
+				view = o.View.String()
+			}
+			fmt.Fprintf(&out, "waiting for %s, which %s held: %s; send it once %s is free (drive status): drive send %s %s --hold %s\n",
+				h.Name, label, w.Session, h.Name, view, w.Command(), h.Name)
+		}
+	}
+	return out.String()
 }
 
 // holder says whether a hold is taken by a session other than label: its

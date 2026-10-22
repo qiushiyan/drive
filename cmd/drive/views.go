@@ -91,7 +91,7 @@ func cmdStatus(d *drive.Driver, argv []string) int {
 			for _, r := range rs {
 				m := map[string]any{"label": r.Label, "sid": r.SID, "block": rex.Short(r.Block), "window": r.Window, "state": r.State,
 					"for_seconds": int(r.For.Seconds()), "account": r.Account, "input": r.Input, "stage": r.Stage,
-					"watch": r.Watch, "unhandled_wake": r.Unhandled, "last_sent": r.LastSent, "error": r.Error}
+					"watch": r.Watch, "unhandled_wake": r.Unhandled, "wake_due": r.Due, "last_sent": r.LastSent, "error": r.Error}
 				if r.View.Session != "" {
 					m["view"] = r.View.String()
 				}
@@ -127,9 +127,6 @@ func cmdStatus(d *drive.Driver, argv []string) int {
 				continue
 			}
 			wake := r.Watch
-			if r.Unhandled {
-				wake += " (nothing sent since)"
-			}
 			sent := r.LastSent
 			if !r.SentAt.IsZero() {
 				sent += " " + clock(r.SentAt, st.Zone, now)
@@ -540,11 +537,19 @@ func cmdBatch(d *drive.Driver, argv []string) int {
 		if c := a.str("after-wake"); c != "" {
 			after = []string{c}
 		}
+		prev, _ := d.Batch()
 		b, err := d.Store.New(batch.Meta{Name: a.pos[1], Started: time.Now(), Wake: wake, RexSession: rs, TZ: tz, AfterWake: after})
 		if err != nil {
 			return fail(&drive.Refused{Reason: err.Error()})
 		}
 		fmt.Printf("batch %s started and current (%s)\n", b.Meta.Name, b.Dir)
+		if prev != nil {
+			if n, err := d.StopWatches(prev); err != nil {
+				fmt.Printf("note: the watches of batch %s were not stopped: %v\n", prev.Meta.Name, err)
+			} else if n > 0 {
+				fmt.Printf("stopped %d watches of batch %s\n", n, prev.Meta.Name)
+			}
+		}
 		if wake == "webhook" && d.Cfg.Webhook.URL == "" {
 			fmt.Printf("note: no webhook in %s, so no wake can be posted until one is written\n", d.Cfg.WebhookPath())
 		}
