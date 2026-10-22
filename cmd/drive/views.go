@@ -479,7 +479,9 @@ func cmdMetrics(d *drive.Driver, argv []string) int {
 		sort.Strings(keys)
 		fmt.Printf("snippets: %s\n", strings.Join(keys, ", "))
 	}
-	fmt.Printf("wakes: %d posted, %d failed, %d followed by no action before the next\n", m.Wakes, m.WakeFails, m.Unhandled)
+	fmt.Printf("wakes: %d posted, %d failed; %d followed by no action on the session before its next wake or the batch's end\n",
+		m.Wakes, m.WakeFails, m.Unhandled)
+	fmt.Printf("turns left unwatched: %d (a send or respond that no wake, park or close of its session followed)\n", m.Unwatched)
 	if len(m.Refusals) > 0 {
 		var rs []string
 		for k, n := range m.Refusals {

@@ -524,7 +524,16 @@ func TestSendArmsTheWakeInAWebhookBatch(t *testing.T) {
 }
 
 func TestRecordsAndMetrics(t *testing.T) {
-	r := newRig(t, "none")
+	r := newRig(t, "webhook")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer srv.Close()
+	r.d.Cfg.Webhook = config.Webhook{URL: srv.URL}
+	notify := func(c *testkit.Claude, label string) {
+		t.Helper()
+		if _, err := r.d.Notify("drive-"+c.Block[len(c.Block)-6:], label, time.Second, time.Minute); err != nil {
+			t.Fatal(err)
+		}
+	}
 	c := r.w.Add("T1")
 	done(c, "onboard", "analysis")
 	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "go"}, drive.SendOptions{Label: "T1"}); err != nil {
@@ -540,6 +549,46 @@ func TestRecordsAndMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _ = r.d.Ask("T1", "Phase C boxes?", "no", "nothing waits")
+
+	// T1's first wake is handled by re-arming its watch, which wakes the
+	// driver again; its last wake has nothing after it.
+	notify(c, "T1")
+	if _, err := r.d.Watch("T1"); err != nil {
+		t.Fatal(err)
+	}
+	notify(c, "T1")
+	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "/compact"}, drive.SendOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := r.d.Metrics(""); m.Wakes != 2 || m.Unhandled != 0 {
+		t.Fatalf("a wake followed by a re-armed watch was handled: %d of %d unhandled", m.Unhandled, m.Wakes)
+	}
+	notify(c, "T1")
+
+	// T2 stops on a prompt and is approved: no watch follows the rest of that
+	// turn, and its end wakes no one.
+	c2 := r.w.Add("T2")
+	done(c2, "onboard", "analysis")
+	if _, err := r.d.Send(r.view(c2.Block[len(c2.Block)-6:]), drive.Step{Line: "start"}, drive.SendOptions{Label: "T2"}); err != nil {
+		t.Fatal(err)
+	}
+	notify(c2, "T2")
+	c2.Edit(func(c *testkit.Claude) {
+		c.Reply = func(c *testkit.Claude, _ string) { c.Ask("rm -rf node_modules/.vite") }
+	})
+	step := filepath.Join(t.TempDir(), "step.md")
+	if err := os.WriteFile(step, []byte("Clear the build cache, then run the tests.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.Send(r.view("T2"), drive.Step{File: step}, drive.SendOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	notify(c2, "T2")
+	if _, err := r.d.Respond(r.view("T2"), "approve"); err != nil {
+		t.Fatal(err)
+	}
+	c2.Done("cleaned, tests pass")
+
 	r.w.Clock.Sleep(30 * time.Minute)
 	if _, err := r.d.Note("T1", "the night ends here"); err != nil {
 		t.Fatal(err)
@@ -561,8 +610,14 @@ func TestRecordsAndMetrics(t *testing.T) {
 	if again, _ := r.d.Metrics(""); again.OwnerWait != m.OwnerWait {
 		t.Fatalf("owner wait does not grow with every reading: %s then %s", m.OwnerWait, again.OwnerWait)
 	}
-	if m.Sends != 1 || m.OwnWords != 1 || m.Sessions != 1 {
+	if m.Sends != 4 || m.OwnWords != 4 || m.Sessions != 2 {
 		t.Fatalf("send measures: %+v", m)
+	}
+	if m.Wakes != 5 || m.Unhandled != 1 {
+		t.Fatalf("of five wakes, T1's last is the one no driver action followed: %d of %d unhandled", m.Unhandled, m.Wakes)
+	}
+	if m.Unwatched != 1 {
+		t.Fatalf("the approval that left T2's turn with no wake after it is counted: %d", m.Unwatched)
 	}
 }
 

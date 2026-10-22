@@ -126,7 +126,22 @@ type Metrics struct {
 	Recovered int // lines retyped after their start was lost
 	Wakes     int
 	WakeFails int
-	Unhandled int // wakes posted that no driver action followed before the next one
+	// Unhandled counts wakes posted that no driver action on their session
+	// followed before its next wake or the batch's end: a send, respond,
+	// park, close, re-armed watch, or a refusal of one.
+	Unhandled int
+	// Unwatched counts, in a batch that wakes its driver, the sends and
+	// responds that reached a session and that no wake, park or close of it
+	// followed before the batch's end: turns whose end woke no one, the lost
+	// wake itself.
+	Unwatched int
+}
+
+// driverActions are what a driver does to a session; any of them after a
+// wake shows the wake reached a driver.
+var driverActions = map[string]bool{
+	batch.KindSendIntent: true, batch.KindSend: true, batch.KindRespond: true, batch.KindPark: true,
+	batch.KindClose: true, batch.KindWatch: true, batch.KindRefused: true, batch.KindOpenIntent: true, batch.KindOpen: true,
 }
 
 // MergedPR is a change the batch merged, with the sessions that name it:
@@ -179,8 +194,12 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 		sort.Slice(waits, func(i, j int) bool { return waits[i] < waits[j] })
 		m.MedianAnswer = waits[len(waits)/2]
 	}
-	lastWake := map[string]time.Time{}
+	woken := map[string]bool{}    // a session's posted wake that no driver action has followed yet
+	unwatched := map[string]int{} // a session's steps that no wake, park or close has followed yet
 	for _, e := range evs {
+		if e.Session != "" && driverActions[e.Kind] {
+			woken[e.Session] = false
+		}
 		switch e.Kind {
 		case batch.KindSend:
 			if e.Mode == "notice" {
@@ -200,11 +219,15 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 			case "unknown":
 				m.Unknown++
 			}
-			if w, ok := lastWake[e.Session]; ok && !w.IsZero() {
-				lastWake[e.Session] = time.Time{}
+			if e.Outcome != "unknown" {
+				unwatched[e.Session]++
 			}
-		case batch.KindRespond, batch.KindPark:
-			lastWake[e.Session] = time.Time{}
+		case batch.KindRespond:
+			if e.Action != "clear" { // clearing the input box starts no turn
+				unwatched[e.Session]++
+			}
+		case batch.KindPark, batch.KindClose:
+			unwatched[e.Session] = 0
 		case batch.KindRefused:
 			m.Refusals[refusalKind(e.Reason)]++
 		case batch.KindFailure:
@@ -213,15 +236,26 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 			if e.Session == "" {
 				continue // a timer
 			}
+			unwatched[e.Session] = 0 // its watch saw the turn end, whether or not the post went
 			if e.HTTP == 0 {
 				m.WakeFails++
 				continue
 			}
 			m.Wakes++
-			if !lastWake[e.Session].IsZero() {
+			if woken[e.Session] {
 				m.Unhandled++
 			}
-			lastWake[e.Session] = e.At
+			woken[e.Session] = true
+		}
+	}
+	for _, w := range woken {
+		if w {
+			m.Unhandled++ // its last wake, with nothing after it
+		}
+	}
+	if b.Meta.Wake == "webhook" {
+		for _, n := range unwatched {
+			m.Unwatched += n
 		}
 	}
 	merged := map[string]int{} // repo#number to its index in m.Merged
