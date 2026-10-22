@@ -115,8 +115,8 @@ func cmdStatus(d *drive.Driver, argv []string) int {
 	if st.Batch == nil {
 		fmt.Println("no current batch (`drive batch new NAME` starts one); Claude sessions in Rex:")
 	} else {
-		fmt.Printf("batch %s · wakes: %s · Rex session %s · times %s\n", st.Batch.Name, st.Batch.Wake,
-			orDash(st.Batch.RexSession), now.In(st.Zone).Format("MST"))
+		fmt.Printf("batch %s · wakes: %s · Rex session %s · times %s (%s)\n", st.Batch.Name, st.Batch.Wake,
+			orDash(st.Batch.RexSession), st.Zone, now.In(st.Zone).Format("MST, UTC-07:00"))
 	}
 	if len(st.Rows) > 0 {
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
