@@ -357,7 +357,7 @@ func firstLine(s string) string {
 // owns the session, and o is what its checks read.
 func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, view string) (*Sent, error) {
 	intent := newIntent()
-	var noticeLine string
+	var noticeLine, noticeIntent string
 	err := b.Locked(func(evs []batch.Event) error {
 		members := batch.Members(evs)
 		if opt.Hold != "" {
@@ -394,7 +394,12 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 			if err != nil {
 				return err
 			}
-			noticeLine = pointer(path)
+			// The notice goes in a turn of its own, under an intent of its own:
+			// the step's intent, and any hold it takes, stay pending until the
+			// step itself has an outcome.
+			noticeLine, noticeIntent = pointer(path), newIntent()
+			add = append(add, batch.Event{At: d.now(), Kind: batch.KindSendIntent, Session: o.Label, Intent: noticeIntent,
+				View: view, Text: noticeLine, Mode: "notice", Notice: true})
 		}
 		if p.body != "" {
 			path, err := b.SaveSend(o.Label, []byte(strings.TrimRight(p.body, "\n")+"\n"))
@@ -404,7 +409,7 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 			p.path, p.typed = path, pointer(path)
 		}
 		add = append(add, batch.Event{At: d.now(), Kind: batch.KindSendIntent, Session: o.Label, Intent: intent,
-			Hold: opt.Hold, View: view, Key: p.key, Text: p.typed, Path: p.path, Mode: p.mode(), Notice: p.notice})
+			Hold: opt.Hold, View: view, Key: p.key, Text: p.typed, Path: p.path, Mode: p.mode(), Notice: p.notice && !p.alone})
 		return b.Append(add...)
 	})
 	if err != nil {
@@ -425,9 +430,12 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 	if noticeLine != "" {
 		// A typed first step follows the notice once the notice's turn ends.
 		outcome, err := d.deliver(o, noticeLine)
-		if outcome != "" {
-			record(batch.Event{Kind: batch.KindSend, Outcome: outcome, Mode: "notice", Text: noticeLine, Notice: true})
+		notice := batch.Event{At: d.now(), Kind: batch.KindSend, Session: o.Label, Intent: noticeIntent, View: view,
+			Outcome: outcome, Mode: "notice", Text: noticeLine, Notice: true}
+		if outcome == "" && err != nil {
+			notice.Kind, notice.Reason = batch.KindFailure, err.Error()
 		}
+		_ = b.Append(notice)
 		if err != nil {
 			failed(err)
 			return nil, err

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -128,6 +129,102 @@ func TestANoticeTurnThatStopsOnAPromptHoldsTheStep(t *testing.T) {
 	}
 	if typed, _ := c.Seen(); len(typed) != 1 || !strings.HasPrefix(typed[0], "Read ") {
 		t.Fatalf("only the notice went: %q", typed)
+	}
+}
+
+// noticeSent says whether a session's notice has an outcome on record.
+func noticeSent(r *rig, label string) bool {
+	for _, e := range r.events(batch.KindSend) {
+		if e.Mode == "notice" && e.Session == label {
+			return true
+		}
+	}
+	return false
+}
+
+// A typed first step follows the notice once the notice's turn has ended.
+// The hold the step takes stands through that gap, until the step itself
+// has gone: the notice's arrival is not the step's.
+func TestAHoldStandsBetweenTheNoticeAndItsStep(t *testing.T) {
+	r := newRig(t, "none")
+	adopted(t, r, "T3")
+	c := r.w.Add("T5")
+	done(c, "onboard", "analysis")
+	gate := make(chan struct{})
+	c.Edit(func(c *testkit.Claude) {
+		// The notice's turn ends, and the step's typing is caught after it.
+		c.Reply = func(c *testkit.Claude, _ string) {
+			c.Edit(func(c *testkit.Claude) { c.TypeGate, c.Reply = gate, nil })
+			c.Done("read it")
+		}
+	})
+	v := r.view(c.Block[len(c.Block)-6:])
+	first := make(chan error, 1)
+	go func() {
+		_, err := r.d.Send(v, drive.Step{Line: "release"}, drive.SendOptions{Label: "T5", Hold: "release"})
+		first <- err
+	}()
+	for i := 0; i < 2000 && !noticeSent(r, "T5"); i++ {
+		time.Sleep(time.Millisecond)
+	}
+	_, err := r.d.Send(r.view("T3"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"})
+	close(gate)
+	if ferr := <-first; ferr != nil {
+		t.Fatalf("T5's step goes after its notice: %v", ferr)
+	}
+	if !isRefused(err) || !strings.Contains(err.Error(), "held by T5") {
+		t.Fatalf("the hold stands between the notice and the step: %v", err)
+	}
+}
+
+// dyingTerm ends the driver's run the moment it would type line, as a shell
+// that timed out in the notice's turn kills it: what it deferred runs, as
+// the lock's release does when a process dies, and nothing else.
+type dyingTerm struct {
+	*testkit.World
+	line string
+}
+
+func (d *dyingTerm) Type(block, text string) error {
+	if text == d.line {
+		runtime.Goexit()
+	}
+	return d.World.Type(block, text)
+}
+
+// A driver gone after the notice leaves its step in flight, for the next
+// driver of the session to settle from the transcript.
+func TestADriverGoneAfterTheNoticeLeavesItsStepToSettle(t *testing.T) {
+	r := newRig(t, "none")
+	c := r.w.Add("T5")
+	done(c, "onboard", "analysis")
+	v := r.view(c.Block[len(c.Block)-6:])
+	r.d.Term = &dyingTerm{World: r.w, line: "release"}
+	gone := make(chan struct{})
+	go func() {
+		defer close(gone)
+		_, _ = r.d.Send(v, drive.Step{Line: "release"}, drive.SendOptions{Label: "T5", Hold: "release"})
+	}()
+	<-gone
+	r.d.Term = r.w
+	st, _ := r.d.Status(false)
+	if len(st.InFlight) != 1 || st.InFlight[0].Text != "release" || st.InFlight[0].Driver != nil {
+		t.Fatalf("the step is in flight with its driver gone: %+v", st.InFlight)
+	}
+	if _, err := r.d.Send(r.view("T5"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
+		t.Fatalf("the next driver sends it: %v", err)
+	}
+	settled := 0
+	for _, e := range append(r.events(batch.KindSend), r.events(batch.KindFailure)...) {
+		if e.Intent == st.InFlight[0].Intent {
+			if e.Kind != batch.KindFailure {
+				t.Fatalf("the notice's arrival is not the step's: %+v", e)
+			}
+			settled++
+		}
+	}
+	if settled != 1 {
+		t.Fatalf("the step that never went is settled once, as not sent: %d", settled)
 	}
 }
 
