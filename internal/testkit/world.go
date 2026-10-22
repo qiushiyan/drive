@@ -379,7 +379,7 @@ type Watches struct {
 	Running map[string][]string
 }
 
-func (w *Watches) Start(name string, argv []string) error {
+func (w *Watches) Start(name string, argv []string, log string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.Running == nil {

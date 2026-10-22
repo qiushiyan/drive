@@ -240,6 +240,7 @@ func cmdWait(d *drive.Driver, argv []string) int {
 		time.Sleep(after)
 		if a.on("notify") {
 			if err := d.Wake("", nil, a.str("note")); err != nil {
+				d.WatchFailed("", err)
 				return fail(err)
 			}
 		}
@@ -259,12 +260,17 @@ func cmdWait(d *drive.Driver, argv []string) int {
 	}
 	e, err := d.Wait(a.pos[0], quiet, bg)
 	if err != nil {
+		if a.on("notify") {
+			d.WatchFailed(a.pos[0], err)
+		}
 		return fail(err)
 	}
 	if a.on("notify") {
 		if err := d.Wake(e.Label, e, ""); err != nil {
+			d.WatchFailed(e.Label, err)
 			return fail(err)
 		}
+		fmt.Printf("%s woke the driver for %s (%s)\n", time.Now().Format(time.RFC3339), e.Label, e.State)
 	}
 	if a.on("json") {
 		printJSON(map[string]any{"session": e.Label, "block": rex.Short(e.Block), "state": e.State, "error": e.Error,

@@ -177,7 +177,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 			case d.Watches != nil && d.Watches.Alive(watchName(m.Block)):
 				r.Watch = "armed"
 			case !m.Watched.IsZero():
-				r.Watch = "ended without a wake"
+				r.Watch = "ended without a wake (watches.log says why)"
 			default:
 				r.Watch = "none"
 			}

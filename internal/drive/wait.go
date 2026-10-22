@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -148,9 +149,10 @@ func (e *Ending) Text() string {
 }
 
 // Watches runs a wait in the background so it outlives the command that
-// armed it, and stops it.
+// armed it, and stops it. What the wait prints goes to log, so one that
+// ends early says why.
 type Watches interface {
-	Start(name string, argv []string) error
+	Start(name string, argv []string, log string) error
 	Alive(name string) bool
 	Stop(name string) error
 }
@@ -159,8 +161,23 @@ type Watches interface {
 // commands end, and a process they started would end with them.
 type Tmux struct{}
 
-func (Tmux) Start(name string, argv []string) error {
-	out, err := exec.Command("tmux", append([]string{"new-session", "-d", "-s", name, "--"}, argv...)...).CombinedOutput()
+// carried are the variables a watch needs from the command that armed it; a
+// tmux session otherwise starts from the tmux server's environment.
+func carried() []string {
+	var out []string
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if k == "PATH" || k == "HOME" || strings.HasPrefix(k, "DRIVE_") || k == "REX_SERVER" {
+			out = append(out, "-e", kv)
+		}
+	}
+	return out
+}
+
+func (Tmux) Start(name string, argv []string, log string) error {
+	args := append([]string{"new-session", "-d", "-s", name}, carried()...)
+	args = append(args, "--", "/bin/sh", "-c", `exec "$@" >>"$0" 2>&1`, log)
+	out, err := exec.Command("tmux", append(args, argv...)...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux new-session %s: %s", name, strings.TrimSpace(string(out)))
 	}
@@ -189,7 +206,7 @@ func (d *Driver) arm(b *batch.Batch, label, block string) error {
 	if d.Watches.Alive(name) {
 		return nil
 	}
-	if err := d.Watches.Start(name, []string{d.Self, "--batch", b.Meta.Name, "wait", label, "--notify"}); err != nil {
+	if err := d.Watches.Start(name, []string{d.Self, "--batch", b.Meta.Name, "wait", label, "--notify"}, watchLog(b)); err != nil {
 		return err
 	}
 	return b.Append(batch.Event{At: d.now(), Kind: batch.KindWatch, Session: label, Block: block})
@@ -239,10 +256,19 @@ func (d *Driver) Timer(after time.Duration, note string) error {
 		return &Refused{Reason: fmt.Sprintf("a timer named %q is already running", note), Next: "give this one another note"}
 	}
 	argv := []string{d.Self, "--batch", b.Meta.Name, "wait", "--sleep", fmt.Sprint(int(after.Seconds())), "--note", note, "--notify"}
-	if err := d.Watches.Start(name, argv); err != nil {
+	if err := d.Watches.Start(name, argv, watchLog(b)); err != nil {
 		return err
 	}
 	return b.Append(batch.Event{At: d.now(), Kind: batch.KindWatch, Note: "timer " + note})
+}
+
+func watchLog(b *batch.Batch) string { return filepath.Join(b.Dir, "watches.log") }
+
+// WatchFailed records a watch that ended without posting its wake.
+func (d *Driver) WatchFailed(label string, err error) {
+	if b, berr := d.Batch(); berr == nil {
+		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindFailure, Session: label, Reason: "watch ended without a wake: " + firstLine(err.Error())})
+	}
 }
 
 func safeName(s string) string {
