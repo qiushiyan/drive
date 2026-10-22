@@ -321,15 +321,22 @@ func (d *Driver) touch(block string) {
 	d.touched[block] = true
 }
 
-// typeInto and press are how an action reaches a session's keyboard.
+// typeInto and press are how an action reaches a session's keyboard. What
+// Rex did not take touched nothing.
 func (d *Driver) typeInto(block, text string) error {
+	if err := d.Term.Type(block, text); err != nil {
+		return err
+	}
 	d.touch(block)
-	return d.Term.Type(block, text)
+	return nil
 }
 
 func (d *Driver) press(block string, keys ...string) error {
+	if err := d.Term.Key(block, keys...); err != nil {
+		return err
+	}
 	d.touch(block)
-	return d.Term.Key(block, keys...)
+	return nil
 }
 
 // wakeFailed is an action that did what it was asked whose wake did not start.

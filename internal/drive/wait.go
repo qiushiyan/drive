@@ -508,6 +508,11 @@ func (d *Driver) waiterLines(b *batch.Batch, label string) string {
 			if w.Name != h.Name {
 				continue
 			}
+			if w.Open {
+				fmt.Fprintf(&out, "waiting for %s, which %s held: %s; open it once %s is free (drive status): %s\n",
+					h.Name, label, w.Session, h.Name, w.Command())
+				continue
+			}
 			view := w.Session + "@VIEW"
 			if o, err := d.observe(members, w.Session); err == nil {
 				view = o.View.String()

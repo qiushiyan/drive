@@ -309,6 +309,7 @@ type holdRefused struct {
 	Refused
 	hold string
 	step Step
+	open string // for a refused open, the drive open to run once the hold is free
 }
 
 func (h *holdRefused) Unwrap() error { return &h.Refused }
@@ -340,12 +341,15 @@ func (d *Driver) refuse(b *batch.Batch, label string, err error) error {
 	}
 	var h *holdRefused
 	if errors.As(err, &h) {
-		text := h.step.Line
+		e := batch.Event{At: d.now(), Kind: batch.KindRefused, Session: label, Reason: h.Reason, Hold: h.hold,
+			Key: h.step.Key, Text: h.step.Line, Path: h.step.File}
 		if h.step.Key != "" {
-			text = h.step.Text
+			e.Text = h.step.Text
 		}
-		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindRefused, Session: label, Reason: h.Reason, Hold: h.hold,
-			Key: h.step.Key, Text: text, Path: h.step.File})
+		if h.open != "" {
+			e.Mode, e.Key, e.Text, e.Path = "open", "", h.open, ""
+		}
+		_ = b.Append(e)
 		return &h.Refused
 	}
 	var r *Refused
@@ -489,7 +493,7 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 					}
 				}
 				return &holdRefused{Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), what),
-					Next: next}, opt.Hold, p.step}
+					Next: next}, opt.Hold, p.step, ""}
 			}
 		}
 		var add []batch.Event

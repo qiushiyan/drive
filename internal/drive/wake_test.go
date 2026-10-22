@@ -1,6 +1,7 @@
 package drive_test
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -205,4 +206,55 @@ func TestAfterWakeIsBounded(t *testing.T) {
 		t.Fatalf("no after-wake command runs for a wake that was never posted: %q", b)
 	}
 	_ = c
+}
+
+// A key Rex refused reached nothing, and arms nothing.
+func TestAKeyRexRefusedArmsNoWake(t *testing.T) {
+	r := newRig(t, "webhook")
+	c := adopted(t, r, "T1")
+	woken(r, c)
+	c.Busy("build")
+	c.Ask("make build")
+	r.w.KeyFails = 1
+	if _, err := r.d.Respond(r.view("T1"), "approve"); err == nil {
+		t.Fatal("the failed press is reported")
+	}
+	if r.watches.Alive(watchOf(c)) {
+		t.Fatal("nothing reached the session, so nothing is armed")
+	}
+}
+
+// An open refused on a hold waits for it like a send, and the holder's wake
+// names the open to run.
+func TestARefusedOpenWaitsForItsHold(t *testing.T) {
+	r := newRig(t, "webhook")
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		b, _ := io.ReadAll(req.Body)
+		body = string(b)
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+	r.d.Cfg.Webhook = config.Webhook{URL: srv.URL}
+	a := adopted(t, r, "T5")
+	a.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} })
+	if _, err := r.d.Send(r.view("T5"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.d.Open("sr-1", drive.Step{Line: "/strategic-review 9531"}, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work"), Hold: "release"})
+	if !isRefused(err) {
+		t.Fatalf("the open waits for the hold: %v", err)
+	}
+	if st, _ := r.d.Status(false); len(st.Holds) != 1 || !strings.Contains(st.Holds[0], "sr-1") {
+		t.Fatalf("status lists the open among the waiters: %q", st.Holds)
+	}
+	a.Done("released")
+	woken(r, a)
+	e, _ := r.d.Wait("T5", time.Minute, 10*time.Minute)
+	if err := r.d.Wake("T5", e, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, "drive open sr-1") || !strings.Contains(body, "--hold release") {
+		t.Fatalf("the holder's wake names the open to run: %s", body)
+	}
 }

@@ -75,7 +75,7 @@ type Member struct {
 	Joined  time.Time
 	Parked  string // why, while parked; a later send unparks
 	Closed  bool
-	Resumed bool // it carries on a session that already read the notice
+	Resumed bool // it carries on a session that read the notice in this batch
 	// LastAction is the latest thing a driver did to it: a send, a respond, a park.
 	LastAction time.Time
 	LastSend   *Event
@@ -94,12 +94,13 @@ type Member struct {
 func Members(evs []Event) []*Member {
 	var order []*Member
 	by := map[string]*Member{}
+	read := map[string]bool{} // session ids that read the notice
 	for i := range evs {
 		e := &evs[i]
 		m := by[e.Session]
 		switch e.Kind {
 		case KindOpen, KindAdopt:
-			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Joined: e.At, Resumed: e.Ref != ""}
+			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Joined: e.At, Resumed: read[e.Ref]}
 			if old, ok := by[e.Session]; ok {
 				*old = *m // reopened under the same label
 				m = old
@@ -111,7 +112,7 @@ func Members(evs []Event) []*Member {
 			if m != nil && e.Outcome != "" {
 				m.LastAction, m.LastSend, m.Parked = e.At, e, ""
 				if e.Notice && (e.Outcome == "arrived" || e.Outcome == "queued" || e.Outcome == "recovered") {
-					m.Noticed = true
+					m.Noticed, read[m.SID] = true, true
 				}
 			}
 		case KindRespond:
@@ -210,11 +211,15 @@ type Hold struct {
 	Step    string // for a session waiting for the hold: the step it was refused
 	Key     string // that step's snippet, when it was one
 	Path    string // that step's file, when it was one
+	Open    bool   // the refused action was an open: Step is the drive open to run
 }
 
-// Command is the refused step as drive send takes it.
+// Command is the refused step as drive send takes it, or for a refused
+// open the whole drive open.
 func (h Hold) Command() string {
 	switch {
+	case h.Open:
+		return h.Step
 	case h.Key != "":
 		return strings.TrimSpace("--snippet " + h.Key + " " + shellWords(h.Step))
 	case h.Path != "":
@@ -277,7 +282,7 @@ func Waiting(evs []Event) []Hold {
 				order = append(order, e.Session)
 			}
 			if _, ok := refused[e.Session]; !ok || refused[e.Session].Name != e.Hold {
-				refused[e.Session] = Hold{Name: e.Hold, Session: e.Session, Since: e.At, Step: e.Text, Key: e.Key, Path: e.Path}
+				refused[e.Session] = Hold{Name: e.Hold, Session: e.Session, Since: e.At, Step: e.Text, Key: e.Key, Path: e.Path, Open: e.Mode == "open"}
 			}
 		case e.Kind == KindSend && e.Outcome != "":
 			delete(refused, e.Session)

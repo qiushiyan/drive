@@ -115,3 +115,22 @@ func TestOwnRefusesASecondDriver(t *testing.T) {
 	}
 	again()
 }
+
+// A relaunch skips the notice only for a session that read it: one whose
+// notice never reached it gets it with the step it is relaunched with.
+func TestAResumedSessionHasReadTheNoticeOnlyIfItDid(t *testing.T) {
+	for _, tc := range []struct {
+		outcome string
+		resumed bool
+	}{{"arrived", true}, {"unknown", false}} {
+		evs := []Event{
+			{Kind: KindAdopt, Session: "T4", Block: "block:a-000001", SID: "s1"},
+			{Kind: KindSend, Session: "T4", Outcome: tc.outcome, Notice: true},
+			{Kind: KindClose, Session: "T4"},
+			{Kind: KindOpen, Session: "T4", Block: "block:a-000002", SID: "s1", Ref: "s1"},
+		}
+		if m := Find(Members(evs), "T4"); m.Resumed != tc.resumed {
+			t.Fatalf("notice %s: resumed %v", tc.outcome, m.Resumed)
+		}
+	}
+}

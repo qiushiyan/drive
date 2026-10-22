@@ -61,7 +61,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	}
 	if !step.empty() {
 		// The account is the launcher's choice, so skills are read from the default one.
-		if _, err := d.plan(opt.Dir, filepath.Join(d.Cfg.Home, ".claude"), again, step, opt.Resume == ""); err != nil {
+		if _, err := d.plan(opt.Dir, filepath.Join(d.Cfg.Home, ".claude"), again, step, !d.readNotice(b, opt.Resume)); err != nil {
 			return nil, d.refuse(b, label, err)
 		}
 	}
@@ -85,8 +85,8 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 				if b.Meta.Wake == "webhook" {
 					next = fmt.Sprintf("%s's wake comes when its turn ends; open %s in the run it starts: %s", h.Session, label, whole)
 				}
-				return &Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), holding(h)),
-					Next: next}
+				return &holdRefused{Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), holding(h)),
+					Next: next}, opt.Hold, step, whole}
 			}
 		}
 		return b.Append(batch.Event{At: d.now(), Kind: batch.KindOpenIntent, Session: label, Intent: intent, Dir: opt.Dir, Text: clip(stepSummary(step), 200)})
@@ -148,7 +148,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	f, _ := s.Frontier()
 	o := &Observation{Label: label, Session: s, Frontier: f, View: turn.ViewOf(label, s.ID, f)}
 	// A resumed session read the notice in the conversation it resumes.
-	p, err := d.plan(s.Dir, s.Config, "drive send "+o.View.String(), step, opt.Resume == "")
+	p, err := d.plan(s.Dir, s.Config, "drive send "+o.View.String(), step, !d.readNotice(b, opt.Resume))
 	if err != nil {
 		return out, err
 	}
@@ -243,4 +243,23 @@ func (d *Driver) awaitSession(block string, limit time.Duration) (*session.Sessi
 		}
 	}
 	return nil, fmt.Errorf("no session")
+}
+
+// readNotice says whether the session an open resumes read the notice in
+// this batch; a session whose first step never reached it gets the notice
+// with its relaunch.
+func (d *Driver) readNotice(b *batch.Batch, sid string) bool {
+	if sid == "" {
+		return false
+	}
+	evs, err := b.Events()
+	if err != nil {
+		return false
+	}
+	for _, m := range batch.Members(evs) {
+		if m.SID == sid && (m.Noticed || m.Resumed) {
+			return true
+		}
+	}
+	return false
 }

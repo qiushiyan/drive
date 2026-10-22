@@ -43,9 +43,10 @@ type World struct {
 	// OnCapture runs once, the next time a screen is captured: another
 	// driver acting between a driver's read and its action.
 	OnCapture func()
-	// StatusFails makes the next reads of Rex's records fail, as a busy
-	// Rex server sometimes does.
+	// StatusFails and KeyFails make the next reads of Rex's records, or key
+	// presses, fail, as a busy Rex server sometimes does.
 	StatusFails int
+	KeyFails    int
 	// Primary is the name the owner's shell gives the primary account's
 	// launcher: x-<Primary> starts a session under ~/.claude, which its
 	// session reports as account "primary".
@@ -451,6 +452,11 @@ func (w *World) Key(block string, keys ...string) error {
 	if !ok {
 		w.mu.Unlock()
 		return fmt.Errorf("no block")
+	}
+	if w.KeyFails > 0 {
+		w.KeyFails--
+		w.mu.Unlock()
+		return fmt.Errorf("rex send-key: connection refused")
 	}
 	var taken []string
 	compact, interrupted := false, false
