@@ -1,0 +1,112 @@
+package turn
+
+import (
+	"strings"
+	"testing"
+)
+
+func read(t *testing.T, rows ...string) Frontier {
+	t.Helper()
+	f, err := Read(strings.NewReader(strings.Join(rows, "\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+const (
+	prompt  = `{"type":"user","uuid":"p1","timestamp":"2026-10-21T09:43:30Z","message":{"role":"user","content":"Read /x/T4-brief.md and do what it asks."}}`
+	expired = `{"type":"assistant","uuid":"a1","timestamp":"2026-10-21T09:43:37Z","isApiErrorMessage":true,"error":"authentication_failed","message":{"role":"assistant","content":[{"type":"text","text":"Login expired · Please run /login"}]}}`
+	reply   = `{"type":"assistant","uuid":"a2","timestamp":"2026-10-21T10:00:00Z","message":{"role":"assistant","content":[{"type":"text","text":"Design ready."}]}}`
+)
+
+func TestLoginExpiredIsAnErrorAfterThePrompt(t *testing.T) {
+	f := read(t, prompt, expired)
+	if f.Error == nil || f.Error.Kind != "authentication_failed" || f.Error.Text != "Login expired · Please run /login" {
+		t.Fatalf("error: %+v", f.Error)
+	}
+	if f.Reply != nil {
+		t.Fatalf("an API error is not a reply: %+v", f.Reply)
+	}
+	// A later prompt clears it: a recovered session is not poisoned by its history.
+	f = read(t, prompt, expired, `{"type":"user","uuid":"p2","timestamp":"2026-10-21T10:20:00Z","message":{"role":"user","content":"again"}}`)
+	if f.Error != nil {
+		t.Fatalf("an error before the newest prompt is history: %+v", f.Error)
+	}
+}
+
+// A slash command typed while busy: enqueue with no content, dequeue, then
+// the command markup (seen in a real transcript eight minutes apart).
+func TestQueuedSlashCommandHasNoText(t *testing.T) {
+	enqueue := `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-21T12:32:15Z"}`
+	f := read(t, prompt, enqueue)
+	if f.Queued == nil || f.Queued.Known || !f.Queued.Queued {
+		t.Fatalf("queued without text: %+v", f.Queued)
+	}
+	if f.Newest() != f.Queued || f.Answered() {
+		t.Fatal("the queued command is the newest prompt and is not answered")
+	}
+	taken := `{"type":"user","uuid":"p3","timestamp":"2026-10-21T12:40:30Z","message":{"role":"user","content":"<command-message>write-spec</command-message>\n<command-name>/write-spec</command-name>\n<command-args>Write the answers in.</command-args>"}}`
+	f = read(t, prompt, enqueue, `{"type":"queue-operation","operation":"dequeue","timestamp":"2026-10-21T12:40:30Z"}`, taken)
+	if f.Queued != nil || f.Newest().Text != "/write-spec Write the answers in." {
+		t.Fatalf("taken as typed: %+v %+v", f.Queued, f.Newest())
+	}
+}
+
+func TestTaskNotificationsAreNotPrompts(t *testing.T) {
+	note := `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-21T12:33:28Z","content":"<task-notification>\n<task-id>b7</task-id>"}`
+	harness := `{"type":"user","uuid":"h","timestamp":"2026-10-21T12:34:00Z","origin":{"kind":"task-notification"},"message":{"role":"user","content":"done"}}`
+	f := read(t, prompt, note, harness)
+	if f.Queued != nil || len(f.Prompts) != 1 {
+		t.Fatalf("only the typed prompt counts: %+v %+v", f.Queued, f.Prompts)
+	}
+}
+
+func TestPendingToolCallAndAnswered(t *testing.T) {
+	call := `{"type":"assistant","uuid":"a3","timestamp":"2026-10-21T10:01:00Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"rm -rf x"}}]}}`
+	f := read(t, prompt, reply, call)
+	if f.Pending == nil || f.Pending.Input != "rm -rf x" || !f.Answered() {
+		t.Fatalf("pending: %+v", f.Pending)
+	}
+	result := `{"type":"user","uuid":"r1","timestamp":"2026-10-21T10:01:05Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}`
+	if f = read(t, prompt, reply, call, result); f.Pending != nil {
+		t.Fatalf("answered call: %+v", f.Pending)
+	}
+}
+
+func TestCompactIsOnePrompt(t *testing.T) {
+	typed := `{"type":"user","uuid":"c1","timestamp":"2026-10-21T11:00:00Z","message":{"role":"user","content":"/compact"}}`
+	marked := `{"type":"user","uuid":"c2","timestamp":"2026-10-21T11:05:00Z","message":{"role":"user","content":"<command-name>/compact</command-name>"}}`
+	if f := read(t, prompt, typed, marked); len(f.Prompts) != 2 || f.Newest().ID != "c2" {
+		t.Fatalf("prompts: %+v", f.Prompts)
+	}
+}
+
+func TestViewMovesWithTheConversation(t *testing.T) {
+	a := ViewOf("T1", "sid", read(t, prompt))
+	b := ViewOf("T1", "sid", read(t, prompt, reply))
+	if a.Prompt != b.Prompt || a.Reply == b.Reply {
+		t.Fatalf("a reply moves only the reply half: %s %s", a, b)
+	}
+	if other := ViewOf("T1", "sid2", read(t, prompt)); other.Prompt == a.Prompt {
+		t.Fatal("another session's view differs")
+	}
+	if _, err := ParseView("T1"); err == nil || !strings.Contains(err.Error(), "drive read T1") {
+		t.Fatalf("a bare name says where a view comes from: %v", err)
+	}
+}
+
+func TestInputBox(t *testing.T) {
+	cases := map[string]InputKind{
+		"❯ \x1b[0m\x1b[2mRead /x/T4-strat-3.md and…\x1b[0m\r": InputSuggestion,
+		"❯ Go heavy, take your recommendations\r":             InputTyped,
+		"❯ \r": InputEmpty,
+		"❯ \x1b[0m\x1b[38;2;136;136;136m─────\x1b[0m\r": InputEmpty,
+		"no prompt here": InputUnknown,
+	}
+	for screen, want := range cases {
+		if got, _ := InputBox("header\n" + screen + "\nfooter"); got != want {
+			t.Errorf("%q: got %s, want %s", screen, got, want)
+		}
+	}
+}

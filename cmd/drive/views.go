@@ -1,0 +1,551 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	"github.com/qiushiyan/drive/internal/batch"
+	"github.com/qiushiyan/drive/internal/drive"
+	"github.com/qiushiyan/drive/internal/rex"
+	"github.com/qiushiyan/drive/internal/snippet"
+)
+
+func printJSON(v any) {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(v)
+}
+
+func clock(t time.Time, zone *time.Location, now time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	t, now = t.In(zone), now.In(zone)
+	if t.YearDay() == now.YearDay() && t.Year() == now.Year() {
+		return t.Format("15:04")
+	}
+	return t.Format("01-02 15:04")
+}
+
+func ago(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "<1m"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
+}
+
+func prText(r drive.Row) string {
+	switch {
+	case r.PR != nil:
+		pr := r.PR
+		s := fmt.Sprintf("#%d %s", pr.Number, strings.ToLower(pr.State))
+		if pr.Draft {
+			s += " draft"
+		}
+		if pr.State == "OPEN" {
+			s += fmt.Sprintf(" checks %d/%d/%d", pr.Passed, pr.Failed, pr.Pending)
+			if pr.Merge != "" {
+				s += " " + strings.ToLower(pr.Merge)
+			}
+		}
+		return s
+	case r.PRRef != nil:
+		return fmt.Sprintf("#%d (%s)", r.PRRef.Number, r.PRErr)
+	}
+	return ""
+}
+
+func cmdStatus(d *drive.Driver, argv []string) int {
+	a, code := parseOr(argv, nil, []string{"json", "quick"})
+	if a == nil {
+		return code
+	}
+	st, err := d.Status(!a.on("quick"))
+	if err != nil {
+		return fail(err)
+	}
+	now := time.Now()
+	if a.on("json") {
+		rows := func(rs []drive.Row) []map[string]any {
+			var out []map[string]any
+			for _, r := range rs {
+				m := map[string]any{"label": r.Label, "block": rex.Short(r.Block), "window": r.Window, "state": r.State,
+					"for_seconds": int(r.For.Seconds()), "account": r.Account, "input": r.Input, "stage": r.Stage,
+					"watch": r.Watch, "unhandled_wake": r.Unhandled, "last_sent": r.LastSent, "error": r.Error}
+				if r.View.Session != "" {
+					m["view"] = r.View.String()
+				}
+				if r.Input == "typed" || r.Input == "suggestion" {
+					m["input_text"] = r.Typed
+				}
+				if r.PR != nil {
+					m["pr"] = r.PR
+				}
+				if r.Name != "" {
+					m["name"] = r.Name
+				}
+				out = append(out, m)
+			}
+			return out
+		}
+		printJSON(map[string]any{"batch": st.Batch, "sessions": rows(st.Rows), "others": rows(st.Others),
+			"holds": st.Holds, "open_asks": st.Asks, "grants": st.Grants, "in_flight": st.InFlight})
+		return 0
+	}
+	if st.Batch == nil {
+		fmt.Println("no current batch (`drive batch new NAME` starts one); Claude sessions in Rex:")
+	} else {
+		fmt.Printf("batch %s · wakes: %s · Rex session %s · times %s\n", st.Batch.Name, st.Batch.Wake,
+			orDash(st.Batch.RexSession), now.In(st.Zone).Format("MST"))
+	}
+	if len(st.Rows) > 0 {
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "SESSION\tWIN\tBLOCK\tSTATE\tFOR\tINPUT\tSTAGE\tPR\tLAST SENT\tWAKE\tVIEW")
+		for _, r := range st.Rows {
+			if r.Error != "" {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t\t\t\t\t%s\t%s\t%s\n", r.Label, orDash(r.Window), rex.Short(r.Block), r.State, r.LastSent, r.Watch, r.Error)
+				continue
+			}
+			wake := r.Watch
+			if r.Unhandled {
+				wake += " (nothing sent since)"
+			}
+			sent := r.LastSent
+			if !r.SentAt.IsZero() {
+				sent += " " + clock(r.SentAt, st.Zone, now)
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Label, orDash(r.Window), rex.Short(r.Block), r.State,
+				ago(r.For), r.Input, r.Stage, prText(r), sent, wake, r.View)
+		}
+		w.Flush()
+	} else if st.Batch != nil {
+		fmt.Println("no sessions in this batch yet")
+	}
+	for _, r := range st.Rows {
+		if r.Input == "typed" {
+			fmt.Printf("%s's input box holds typed text nobody sent: %q\n", r.Label, r.Typed)
+		}
+	}
+	if len(st.Others) > 0 {
+		fmt.Println("\nother Claude sessions in Rex:")
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		for _, r := range st.Others {
+			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\n", orDash(r.Window), r.Label, r.State, ago(r.For), r.Name)
+		}
+		w.Flush()
+	}
+	for _, h := range st.Holds {
+		fmt.Println("hold " + h)
+	}
+	for _, p := range st.InFlight {
+		fmt.Printf("in flight: %s to %s since %s (%s)\n", p.Kind, p.Session, clock(p.At, st.Zone, now), clip(p.Text, 60))
+	}
+	for _, g := range st.Grants {
+		fmt.Printf("grant %s (%s): %s — %s\n", g.ID, clock(g.At, st.Zone, now), g.Scope, g.Source)
+	}
+	for _, q := range st.Asks {
+		fmt.Printf("open ask %s for %s, %s: %s — unanswered: %s\n", q.ID, orDash(q.Session), ago(now.Sub(q.At)), q.Question, q.IfUnanswered)
+	}
+	return 0
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+func clip(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s
+}
+
+func cmdRead(d *drive.Driver, argv []string) int {
+	// --prompts takes an optional count: "--prompts 5" or "--prompts".
+	n := 10
+	for i, x := range argv {
+		if x == "--prompts" && i+1 < len(argv) {
+			if v, err := strconv.Atoi(argv[i+1]); err == nil {
+				n = v
+				argv = append(append([]string{}, argv[:i+1]...), argv[i+2:]...)
+				break
+			}
+		}
+	}
+	a, code := parseOr(argv, nil, []string{"prompts", "pending", "user", "json"})
+	if a == nil {
+		return code
+	}
+	if len(a.pos) != 1 {
+		return bad("read needs one SESSION")
+	}
+	mode := drive.ReadLast
+	switch {
+	case a.on("prompts"):
+		mode = drive.ReadPrompts
+	case a.on("pending"):
+		mode = drive.ReadPending
+	case a.on("user"):
+		mode = drive.ReadUser
+	}
+	r, err := d.Read(a.pos[0], mode, n)
+	if err != nil {
+		return fail(err)
+	}
+	if a.on("json") {
+		printJSON(map[string]any{"session": r.Label, "state": r.State, "account": r.Account, "input": r.Input,
+			"input_text": r.Typed, "text": r.Text, "at": r.At, "view": r.View.String()})
+		return 0
+	}
+	fmt.Println(r.Text)
+	fmt.Println()
+	line := fmt.Sprintf("%s is %s on account %s", r.Label, r.State, orDash(r.Account))
+	switch r.Input {
+	case "typed":
+		line += fmt.Sprintf("; its input box holds typed text nobody sent: %q", r.Typed)
+	case "suggestion":
+		line += "; its input box shows only Claude Code's suggestion"
+	}
+	fmt.Println(line)
+	fmt.Printf("view: %s\n", r.View)
+	return 0
+}
+
+func cmdWait(d *drive.Driver, argv []string) int {
+	a, code := parseOr(argv, []string{"quiet", "bg", "sleep", "note"}, []string{"notify", "json"})
+	if a == nil {
+		return code
+	}
+	if s := a.str("sleep"); s != "" {
+		after, err := seconds(s, 0)
+		if err != nil {
+			return bad(err.Error())
+		}
+		time.Sleep(after)
+		if a.on("notify") {
+			if err := d.Wake("", nil, a.str("note")); err != nil {
+				return fail(err)
+			}
+		}
+		fmt.Printf("timer done: %s\n", a.str("note"))
+		return 0
+	}
+	if len(a.pos) != 1 {
+		return bad("wait needs one SESSION")
+	}
+	quiet, err := seconds(a.str("quiet"), time.Minute)
+	if err != nil {
+		return bad(err.Error())
+	}
+	bg, err := seconds(a.str("bg"), 10*time.Minute)
+	if err != nil {
+		return bad(err.Error())
+	}
+	e, err := d.Wait(a.pos[0], quiet, bg)
+	if err != nil {
+		return fail(err)
+	}
+	if a.on("notify") {
+		if err := d.Wake(e.Label, e, ""); err != nil {
+			return fail(err)
+		}
+	}
+	if a.on("json") {
+		printJSON(map[string]any{"session": e.Label, "block": rex.Short(e.Block), "state": e.State, "error": e.Error,
+			"shells": e.Shells, "orphans": e.Orphans, "reply": e.Reply, "screen": e.Screen, "view": e.View.String()})
+		return 0
+	}
+	fmt.Print(e.Text())
+	return 0
+}
+
+func cmdRecord(d *drive.Driver, argv []string) int {
+	a, code := parseOr(argv, []string{"source", "scope", "question", "recommendation", "if-unanswered", "took", "session"}, []string{"explained"})
+	if a == nil {
+		return code
+	}
+	if len(a.pos) == 0 {
+		return bad("record needs a kind: grant, ask, answer or note")
+	}
+	var id string
+	var err error
+	switch a.pos[0] {
+	case "grant":
+		id, err = d.Grant(a.str("source"), a.str("scope"))
+	case "ask":
+		if len(a.pos) != 2 {
+			return bad("record ask needs the SESSION it holds (\"-\" for the batch)")
+		}
+		id, err = d.Ask(strings.TrimPrefix(a.pos[1], "-"), a.str("question"), a.str("recommendation"), a.str("if-unanswered"))
+	case "answer":
+		if len(a.pos) != 2 {
+			return bad("record answer needs the ASK it answers, such as A3")
+		}
+		id, err = d.Answer(a.pos[1], a.str("source"), a.str("took"), a.on("explained"))
+	case "note":
+		id, err = d.Note(a.str("session"), strings.Join(a.pos[1:], " "))
+	default:
+		return bad(fmt.Sprintf("record %q: grant, ask, answer or note", a.pos[0]))
+	}
+	if err != nil {
+		return fail(err)
+	}
+	fmt.Printf("recorded %s %s\n", a.pos[0], id)
+	return 0
+}
+
+func cmdLog(d *drive.Driver, argv []string) int {
+	a, code := parseOr(argv, []string{"since"}, []string{"json"})
+	if a == nil {
+		return code
+	}
+	var since time.Time
+	if s := a.str("since"); s != "" {
+		var err error
+		if since, err = parseWhen(s); err != nil {
+			return bad(err.Error())
+		}
+	}
+	b, evs, err := d.Log(since)
+	if err != nil {
+		return fail(err)
+	}
+	if a.on("json") {
+		for _, e := range evs {
+			line, _ := json.Marshal(e)
+			fmt.Println(string(line))
+		}
+		return 0
+	}
+	zone, now := b.Zone(), time.Now()
+	for _, e := range evs {
+		fmt.Printf("%s  %-12s %-8s %s\n", clock(e.At, zone, now), e.Kind, e.Session, describe(e))
+	}
+	return 0
+}
+
+func parseWhen(s string) (time.Time, error) {
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04", "2006-01-02T15:04", "2006-01-02"} {
+		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("--since %q: give a date or a date and time, such as \"2026-10-22 16:00\"", s)
+}
+
+func describe(e batch.Event) string {
+	switch e.Kind {
+	case batch.KindSend:
+		s := e.Outcome + ": " + clip(e.Text, 100)
+		if e.Key != "" {
+			s = e.Outcome + ": snippet " + e.Key
+		}
+		if e.Hold != "" {
+			s += " (holds " + e.Hold + ")"
+		}
+		return s
+	case batch.KindSendIntent, batch.KindOpenIntent:
+		return clip(e.Text, 100)
+	case batch.KindOpen, batch.KindAdopt:
+		return fmt.Sprintf("block %s, account %s, %s", rex.Short(e.Block), e.Account, e.Dir)
+	case batch.KindRespond:
+		return e.Action + " " + clip(e.Call, 100)
+	case batch.KindWake:
+		if e.HTTP == 0 && e.Reason != "" {
+			return "post failed: " + e.Reason
+		}
+		return fmt.Sprintf("%s, posted (http %d, try %d)", orDash(e.Outcome), e.HTTP, e.Try)
+	case batch.KindGrant:
+		return e.ID + " " + e.Scope + " — " + e.Source
+	case batch.KindAsk:
+		return e.ID + " " + e.Question + " (recommends: " + e.Recommendation + "; unanswered: " + e.IfUnanswered + ")"
+	case batch.KindAnswer:
+		ex := ""
+		if e.Explained {
+			ex = ", needed explaining"
+		}
+		return e.Ref + " " + e.Took + ex + " — " + e.Source
+	case batch.KindNote:
+		return e.Note
+	case batch.KindRefused, batch.KindFailure, batch.KindPark:
+		return clip(e.Reason, 140)
+	}
+	return clip(e.Note+" "+e.Reason, 140)
+}
+
+func cmdMetrics(d *drive.Driver, argv []string) int {
+	a, code := parseOr(argv, nil, []string{"json"})
+	if a == nil {
+		return code
+	}
+	name := ""
+	if len(a.pos) > 0 {
+		name = a.pos[0]
+	}
+	m, err := d.Metrics(name)
+	if err != nil {
+		return fail(err)
+	}
+	if a.on("json") {
+		printJSON(m)
+		return 0
+	}
+	fmt.Printf("batch %s, %s → %s, %d sessions\n", m.Batch, m.From.Local().Format("01-02 15:04"), m.To.Local().Format("01-02 15:04"), m.Sessions)
+	fmt.Printf("asks: %d (%d answered, %d open); took the recommendation %d, amended %d, delegated %d, moot %d; needed explaining %d\n",
+		m.Asks, m.Answered, m.Unanswered, m.Took["recommended"], m.Took["amended"], m.Took["delegated"], m.Took["moot"], m.Explained)
+	fmt.Printf("owner wait: %s in all, median answer %s", m.OwnerWait.Round(time.Minute), m.MedianAnswer.Round(time.Minute))
+	if len(m.Merged) > 0 {
+		fmt.Printf(", %s per merged change", m.PerMerge.Round(time.Minute))
+	}
+	fmt.Println()
+	fmt.Printf("merged: %d", len(m.Merged))
+	for _, p := range m.Merged {
+		fmt.Printf(" #%d (%s)", p.Number, p.Session)
+	}
+	fmt.Println()
+	fmt.Printf("sends: %d — %d the owner's snippets, %d the driver's own words; %d retyped after a lost start; %d with delivery unknown\n",
+		m.Sends, m.Snippets, m.OwnWords, m.Recovered, m.Unknown)
+	if len(m.ByKey) > 0 {
+		var keys []string
+		for k, n := range m.ByKey {
+			keys = append(keys, fmt.Sprintf("%s %d", k, n))
+		}
+		sort.Strings(keys)
+		fmt.Printf("snippets: %s\n", strings.Join(keys, ", "))
+	}
+	fmt.Printf("wakes: %d posted, %d failed, %d followed by no action before the next\n", m.Wakes, m.WakeFails, m.Unhandled)
+	if len(m.Refusals) > 0 {
+		var rs []string
+		for k, n := range m.Refusals {
+			rs = append(rs, fmt.Sprintf("%s %d", k, n))
+		}
+		sort.Strings(rs)
+		fmt.Printf("refused: %s\n", strings.Join(rs, ", "))
+	}
+	for _, f := range m.Failures {
+		fmt.Printf("failure: %s\n", f)
+	}
+	return 0
+}
+
+func cmdBatch(d *drive.Driver, argv []string) int {
+	a, code := parseOr(argv, []string{"wake", "rex-session", "tz"}, nil)
+	if a == nil {
+		return code
+	}
+	switch {
+	case len(a.pos) == 0:
+		b, err := d.Batch()
+		if err != nil {
+			return fail(err)
+		}
+		evs, _ := b.Events()
+		fmt.Printf("batch %s, started %s · wakes: %s · Rex session %s · zone %s · %d sessions · %s\n", b.Meta.Name,
+			b.Meta.Started.In(b.Zone()).Format("2006-01-02 15:04 MST"), b.Meta.Wake, orDash(b.Meta.RexSession),
+			orDash(b.Meta.TZ), len(batch.Members(evs)), b.Dir)
+	case a.pos[0] == "new" && len(a.pos) == 2:
+		wake := a.str("wake")
+		if wake == "" {
+			wake = "none"
+		}
+		if wake != "webhook" && wake != "none" {
+			return bad("--wake is webhook (a chat driver woken by its webhook) or none (a driver that waits itself)")
+		}
+		tz := a.str("tz")
+		if tz == "" {
+			tz = d.Cfg.TZ
+		}
+		if tz != "" {
+			if _, err := time.LoadLocation(tz); err != nil {
+				return bad(fmt.Sprintf("--tz %q is not a zone name such as Asia/Shanghai", tz))
+			}
+		}
+		rs := a.str("rex-session")
+		if rs == "" {
+			rs = d.Cfg.RexSession
+		}
+		if rs == "" {
+			rs = os.Getenv("REX_SESSION")
+		}
+		b, err := d.Store.New(batch.Meta{Name: a.pos[1], Started: time.Now(), Wake: wake, RexSession: rs, TZ: tz})
+		if err != nil {
+			return fail(&drive.Refused{Reason: err.Error()})
+		}
+		fmt.Printf("batch %s started and current (%s)\n", b.Meta.Name, b.Dir)
+		if wake == "webhook" && d.Cfg.Webhook.URL == "" {
+			fmt.Printf("note: no webhook in %s, so no wake can be posted until one is written\n", d.Cfg.WebhookPath())
+		}
+	case a.pos[0] == "use" && len(a.pos) == 2:
+		if err := d.Store.Use(a.pos[1]); err != nil {
+			return fail(&drive.Refused{Reason: err.Error()})
+		}
+		fmt.Printf("batch %s is current\n", a.pos[1])
+	case a.pos[0] == "list":
+		metas, err := d.Store.List()
+		if err != nil {
+			return fail(err)
+		}
+		cur, _ := d.Store.Current()
+		for _, m := range metas {
+			mark := " "
+			if cur != nil && cur.Meta.Name == m.Name {
+				mark = "*"
+			}
+			fmt.Printf("%s %s  started %s  wakes: %s\n", mark, m.Name, m.Started.Local().Format("2006-01-02 15:04"), m.Wake)
+		}
+	default:
+		return bad("batch takes: nothing, new NAME, use NAME, or list")
+	}
+	return 0
+}
+
+func cmdSnippet(d *drive.Driver, argv []string) int {
+	a, code := parseOr(argv, nil, []string{"list"})
+	if a == nil {
+		return code
+	}
+	if a.on("list") {
+		dir := "."
+		if len(a.pos) > 0 {
+			dir = a.pos[0]
+		}
+		from, keys, err := snippet.List(d.Cfg.Home, dir)
+		if err != nil {
+			return fail(err)
+		}
+		for _, k := range keys {
+			fmt.Printf("%s\t%s\n", k, from[k])
+		}
+		return 0
+	}
+	if len(a.pos) == 0 {
+		return bad("snippet needs a KEY, or --list")
+	}
+	dir := "."
+	if len(a.pos) > 1 {
+		dir = a.pos[1]
+	}
+	s, err := snippet.Expand(d.Cfg.Home, dir, a.pos[0], strings.Join(a.pos[min(2, len(a.pos)):], " "))
+	if err != nil {
+		return fail(&drive.Refused{Reason: err.Error()})
+	}
+	fmt.Fprintf(os.Stderr, "from: %s\n", s.From)
+	fmt.Println(s.Text)
+	return 0
+}
