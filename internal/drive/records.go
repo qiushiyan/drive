@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/qiushiyan/drive/internal/batch"
+	"github.com/qiushiyan/drive/internal/skill"
 )
 
 // Grant records authority the owner handed over, in their words and with
@@ -119,7 +120,8 @@ type Metrics struct {
 	Sends     int
 	Snippets  int            // sends that were one of the owner's snippets
 	ByKey     map[string]int // which snippets
-	OwnWords  int            // sends the driver wrote
+	Commands  int            // slash commands the driver typed, such as /compact
+	OwnWords  int            // steps the driver wrote: a typed line that is no command, or a file
 	Refusals  map[string]int // by kind of reason
 	Failures  []string
 	Unknown   int // sends whose delivery is unknown
@@ -210,6 +212,8 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 			case e.Key != "":
 				m.Snippets++
 				m.ByKey[e.Key]++
+			case e.Mode == "typed" && skill.Command(e.Text) != "":
+				m.Commands++
 			default:
 				m.OwnWords++
 			}

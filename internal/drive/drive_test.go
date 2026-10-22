@@ -610,8 +610,11 @@ func TestRecordsAndMetrics(t *testing.T) {
 	if again, _ := r.d.Metrics(""); again.OwnerWait != m.OwnerWait {
 		t.Fatalf("owner wait does not grow with every reading: %s then %s", m.OwnerWait, again.OwnerWait)
 	}
-	if m.Sends != 4 || m.OwnWords != 4 || m.Sessions != 2 {
+	if m.Sends != 4 || m.Sessions != 2 || m.Snippets+m.Commands+m.OwnWords != m.Sends {
 		t.Fatalf("send measures: %+v", m)
+	}
+	if m.Commands != 1 || m.OwnWords != 3 {
+		t.Fatalf("a typed /compact is a command, not the driver's own words; a typed line and a file are: %d commands, %d own", m.Commands, m.OwnWords)
 	}
 	if m.Wakes != 5 || m.Unhandled != 1 {
 		t.Fatalf("of five wakes, T1's last is the one no driver action followed: %d of %d unhandled", m.Unhandled, m.Wakes)

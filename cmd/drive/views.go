@@ -469,8 +469,8 @@ func cmdMetrics(d *drive.Driver, argv []string) int {
 		fmt.Printf("; %d session(s) whose progress could not be read, so this may be short", m.Unread)
 	}
 	fmt.Println()
-	fmt.Printf("sends: %d — %d the owner's snippets, %d the driver's own words; %d retyped after a lost start; %d with delivery unknown\n",
-		m.Sends, m.Snippets, m.OwnWords, m.Recovered, m.Unknown)
+	fmt.Printf("sends: %d — %d the owner's snippets, %d slash commands typed, %d the driver's own words; %d retyped after a lost start; %d with delivery unknown\n",
+		m.Sends, m.Snippets, m.Commands, m.OwnWords, m.Recovered, m.Unknown)
 	if len(m.ByKey) > 0 {
 		var keys []string
 		for k, n := range m.ByKey {
