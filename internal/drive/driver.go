@@ -482,7 +482,26 @@ func (d *Driver) otherAccounts(current string) []string {
 
 // relaunchHint says how to carry a session whose login was rejected over to
 // another account, for a driver that has its step to hand.
-func (d *Driver) relaunchHint(o *Observation) string { return d.relaunch(o, "'<the step>'") }
+func (d *Driver) relaunchHint(o *Observation) string { return d.relaunch(o, d.lastStep(o.Label)) }
+
+// lastStep is the step a session was last sent in this batch, as drive open
+// takes it: what a session whose login was rejected was to take. A file or
+// a snippet goes again as the copy drive saved of it.
+func (d *Driver) lastStep(label string) string {
+	if _, evs, _, err := d.members(); err == nil {
+		for i := len(evs) - 1; i >= 0; i-- {
+			e := evs[i]
+			if e.Kind != batch.KindSendIntent || e.Session != label || e.Mode == "notice" {
+				continue
+			}
+			if e.Path != "" {
+				return "--file " + shellQuote(e.Path)
+			}
+			return shellQuote(e.Text)
+		}
+	}
+	return "'<the step>'"
+}
 
 // relaunch says how to carry a session whose login was rejected over to
 // another account: close it on its view as it stands now, and resume it

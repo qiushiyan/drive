@@ -258,3 +258,26 @@ func TestARefusedOpenWaitsForItsHold(t *testing.T) {
 		t.Fatalf("the holder's wake names the open to run: %s", body)
 	}
 }
+
+// A wake for a rejected login prints the relaunch with the step the session
+// was last sent, which a driver with no memory cannot supply.
+func TestALoginWakeRelaunchesWithTheLastStep(t *testing.T) {
+	r := newRig(t, "none")
+	_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".claude-accounts", "other@example.com", "sessions"), 0o755)
+	c := adopted(t, r, "T4")
+	c.Edit(func(c *testkit.Claude) {
+		c.Reply = func(c *testkit.Claude, _ string) {
+			c.Fail("authentication_failed", "Login expired · Please run /login")
+		}
+	})
+	if _, err := r.d.Send(r.view("T4"), drive.Step{Line: "implement-spec"}, drive.SendOptions{}); err == nil {
+		t.Fatal("the rejected login fails the send")
+	}
+	e, err := r.d.Wait("T4", time.Minute, 10*time.Minute)
+	if err != nil || e.State != "blocked:auth" {
+		t.Fatalf("%+v %v", e, err)
+	}
+	if !strings.Contains(e.Next, "--account other@example.com implement-spec") || strings.Contains(e.Next, "<the step>") {
+		t.Fatalf("the relaunch carries the last step: %s", e.Next)
+	}
+}
