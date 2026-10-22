@@ -177,6 +177,29 @@ func TestAHoldStandsBetweenTheNoticeAndItsStep(t *testing.T) {
 	}
 }
 
+// A notice nobody could confirm may never have reached the session: the
+// step sent after it carries it again.
+func TestANoticeLeftUnknownGoesAgain(t *testing.T) {
+	r := newRig(t, "none")
+	c := r.w.Add("T1")
+	done(c, "onboard", "analysis")
+	c.Edit(func(c *testkit.Claude) { c.LoseEnter = true })
+	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "go"}, drive.SendOptions{Label: "T1"}); err == nil {
+		t.Fatal("a notice whose Enter was lost is not an arrival")
+	}
+	c.Edit(func(c *testkit.Claude) { c.LoseEnter = false })
+	if _, err := r.d.Respond(r.view("T1"), "clear"); err != nil {
+		t.Fatal(err)
+	}
+	sent, err := r.d.Send(r.view("T1"), drive.Step{Line: "go"}, drive.SendOptions{})
+	if err != nil || !sent.Notice {
+		t.Fatalf("the next send carries the notice: %+v %v", sent, err)
+	}
+	if typed, _ := c.Seen(); len(typed) != 3 || !strings.HasPrefix(typed[1], "Read ") || typed[2] != "go" {
+		t.Fatalf("the notice, then the step: %q", typed)
+	}
+}
+
 // dyingTerm ends the driver's run the moment it would type line, as a shell
 // that timed out in the notice's turn kills it: what it deferred runs, as
 // the lock's release does when a process dies, and nothing else.

@@ -67,7 +67,7 @@ func TestDerivedViews(t *testing.T) {
 		{At: at(10), Kind: KindPark, Session: "T1", Reason: "waits on Qiushi"},
 	}
 	ms := Members(evs)
-	if len(ms) != 1 || ms[0].Sends != 1 || ms[0].Parked != "waits on Qiushi" {
+	if len(ms) != 1 || ms[0].LastSend == nil || ms[0].Parked != "waits on Qiushi" {
 		t.Fatalf("members: %+v", ms[0])
 	}
 	if Find(ms, "111111") != ms[0] || Find(ms, "T1") != ms[0] || Find(ms, "11") != nil {

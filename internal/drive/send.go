@@ -95,7 +95,7 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 		return nil, d.refuse(b, o.Label, err)
 	}
 	m := batch.Find(members, o.Label)
-	p, err := d.plan(o.Session.Dir, o.Session.Config, o.View, step, m == nil || m.Sends == 0 && !m.Resumed)
+	p, err := d.plan(o.Session.Dir, o.Session.Config, o.View, step, m == nil || !m.Noticed && !m.Resumed)
 	if err != nil {
 		return nil, d.refuse(b, o.Label, err)
 	}

@@ -79,7 +79,9 @@ type Member struct {
 	// LastAction is the latest thing a driver did to it: a send, a respond, a park.
 	LastAction time.Time
 	LastSend   *Event
-	Sends      int
+	// Noticed says a send that carried the notice reached the session:
+	// arrived, queued or recovered. One left unknown or garbled may not have.
+	Noticed    bool
 	Watched    time.Time // when its wake was last armed
 	Posting    time.Time // when a watch last began posting
 	Woken      time.Time // when its wake was last posted
@@ -108,7 +110,9 @@ func Members(evs []Event) []*Member {
 		case KindSend:
 			if m != nil && e.Outcome != "" {
 				m.LastAction, m.LastSend, m.Parked = e.At, e, ""
-				m.Sends++
+				if e.Notice && (e.Outcome == "arrived" || e.Outcome == "queued" || e.Outcome == "recovered") {
+					m.Noticed = true
+				}
 			}
 		case KindRespond:
 			if m != nil {
