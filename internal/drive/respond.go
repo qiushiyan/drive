@@ -59,23 +59,37 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 		}
 		keys = []string{"ctrl+c"} // once: a second press quits Claude Code
 	case "clear":
+		if strings.HasPrefix(before, "blocked") && before != "blocked:auth" {
+			// A prompt draws its options behind the box's ❯, which reads as typed text.
+			return nil, d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: what reads as typed text is the prompt's options", o.Label, strings.TrimPrefix(before, "blocked:")),
+				Next: answerNext(o.Label, o.View.String(), before)})
+		}
 		if o.Input != turn.InputTyped {
 			return nil, d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s's input box holds nothing typed", o.Label)})
 		}
 	default:
 		return nil, &Refused{Reason: fmt.Sprintf("unknown response %q: approve, deny, interrupt or clear", action)}
 	}
+	var uncleared *Failed
 	if action == "clear" {
-		for i := 0; i < 5; i++ {
+		kind, typed := turn.InputUnknown, ""
+		for i := 0; i < 5 && kind != turn.InputEmpty && kind != turn.InputSuggestion; i++ {
 			if err := d.press(block, "ctrl+u"); err != nil {
 				return nil, err
 			}
 			d.sleep(d.poll() / 4)
 			if screen, err := d.Term.Capture(block, true); err == nil {
-				if k, _ := turn.InputBox(screen); k != turn.InputTyped {
-					break
-				}
+				kind, typed = turn.InputBox(screen)
 			}
+		}
+		// Cleared only once the box is seen empty.
+		if kind != turn.InputEmpty && kind != turn.InputSuggestion {
+			what := "its screen shows no input box"
+			if kind == turn.InputTyped {
+				what = fmt.Sprintf("its input box still holds %q", clip(typed, 80))
+			}
+			uncleared = &Failed{What: fmt.Sprintf("pressed ctrl+u in %s and %s", o.Label, what),
+				Next: fmt.Sprintf("look at its screen: drive read %s --screen", o.Label)}
 		}
 	} else if err := d.press(block, keys...); err != nil {
 		return nil, err
@@ -100,9 +114,12 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 	if b != nil {
 		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindRespond, Session: o.Label, Action: action, Call: call, View: v.String(), Outcome: out.After})
 	}
+	if uncleared != nil {
+		return out, uncleared
+	}
 	if !moved {
 		f := &Failed{What: fmt.Sprintf("pressed %s in %s, and it still reads %s with nothing new in its transcript", strings.Join(keys, " "), o.Label, out.After),
-			Next: fmt.Sprintf("look at its screen: rex capture -b %s", block)}
+			Next: fmt.Sprintf("look at its screen: drive read %s --screen", o.Label)}
 		if action == "approve" {
 			f.What += "; an approved command that runs long leaves it so until the command ends"
 			f.Next = fmt.Sprintf("drive wait %s tells when it does; approving again does nothing", o.Label)

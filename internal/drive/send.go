@@ -212,8 +212,23 @@ func (d *Driver) ready(o *Observation, queue bool) error {
 	case o.Input == turn.InputTyped:
 		return &Refused{Reason: fmt.Sprintf("%s's input box holds typed text nobody sent: %q; it may be the owner's", o.Label, clip(o.Typed, 80)),
 			Next: fmt.Sprintf("leave it; if it is a step of yours that never went out, clear it: drive respond %s clear", o.View)}
+	case o.Input != turn.InputEmpty && o.Input != turn.InputSuggestion:
+		// Typing lands in whatever the screen shows: a dialog, a view, a shell.
+		return &Refused{Reason: fmt.Sprintf("%s's screen shows no input box to type into", o.Label),
+			Next: fmt.Sprintf("look at what it shows instead: drive read %s --screen", o.Label)}
 	}
 	return nil
+}
+
+// answerNext says how to answer the prompt a session waits on, decided on
+// view: two whole commands, and on a question what each does there.
+func answerNext(label, view, state string) string {
+	approve, deny := "drive respond "+view+" approve", "drive respond "+view+" deny"
+	if state == "blocked:question" {
+		return fmt.Sprintf("see the question and its options (drive read %s --screen); %s takes the option it has marked, %s dismisses the question and stops the turn, after which a step can answer it in words",
+			label, approve, deny)
+	}
+	return fmt.Sprintf("see what it asks (drive read %s --pending), then answer it: %s, or %s", label, approve, deny)
 }
 
 func orWord(s, fallback string) string {

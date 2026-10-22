@@ -206,7 +206,7 @@ func cmdRead(d *drive.Driver, argv []string) int {
 			}
 		}
 	}
-	a, code := parseOr(argv, nil, []string{"prompts", "pending", "user", "json"})
+	a, code := parseOr(argv, nil, []string{"prompts", "pending", "user", "screen", "json"})
 	if a == nil {
 		return code
 	}
@@ -221,6 +221,8 @@ func cmdRead(d *drive.Driver, argv []string) int {
 		mode = drive.ReadPending
 	case a.on("user"):
 		mode = drive.ReadUser
+	case a.on("screen"):
+		mode = drive.ReadScreen
 	}
 	r, err := d.Read(a.pos[0], mode, n)
 	if err != nil {

@@ -404,6 +404,37 @@ func TestRespondAndCloseAreRecorded(t *testing.T) {
 	}
 }
 
+// A response the session's state does not call for is refused, and nothing
+// is pressed.
+func TestRespondRefusesWhatTheSessionDoesNotWaitOn(t *testing.T) {
+	for _, tc := range []struct {
+		name, action string
+		state        func(c *testkit.Claude)
+	}{
+		{"approve with no prompt", "approve", func(*testkit.Claude) {}},
+		{"deny with no prompt", "deny", func(*testkit.Claude) {}},
+		{"interrupt with no turn running", "interrupt", func(*testkit.Claude) {}},
+		{"clear with nothing typed", "clear", func(*testkit.Claude) {}},
+		// A prompt's options sit behind the ❯ the input box uses (seen live).
+		{"clear on a prompt", "clear", func(c *testkit.Claude) { c.Busy("clean up"); c.Ask("rm -rf build") }},
+		{"an unknown response", "yes", func(*testkit.Claude) {}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t, "none")
+			c := adopted(t, r, "T1")
+			tc.state(c)
+			_, keys0 := c.Seen()
+			_, err := r.d.Respond(r.view("T1"), tc.action)
+			if !isRefused(err) {
+				t.Fatalf("refused: %v", err)
+			}
+			if _, keys := c.Seen(); len(keys) != len(keys0) {
+				t.Fatalf("nothing pressed: %q", keys[len(keys0):])
+			}
+		})
+	}
+}
+
 // The race the per-session lock closes: driver B reads T1, driver A sends
 // and finishes between B's read and B's send, and B sends on the old turn.
 func TestADecisionOvertakenMidReadIsRefused(t *testing.T) {

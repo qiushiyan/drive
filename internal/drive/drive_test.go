@@ -399,8 +399,20 @@ func TestTypedInputIsLeftAlone(t *testing.T) {
 	if err := r.d.Close(v); !isRefused(err) {
 		t.Fatalf("and the close, got %v", err)
 	}
+	// A screen with no input box on it takes no typing: it would land in whatever is there.
+	c.Edit(func(c *testkit.Claude) { c.Input, c.Screen = "", "Transcript view · ctrl+o to return" })
+	_, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "consult-design"}, drive.SendOptions{})
+	if !isRefused(err) || !strings.Contains(err.Error(), "drive read "+c.Block[len(c.Block)-6:]+" --screen") {
+		t.Fatalf("a screen with no input box stops the send, saying how to see it: %v", err)
+	}
+	if rd, _ := r.d.Read(c.Block[len(c.Block)-6:], drive.ReadScreen, 0); !strings.Contains(rd.Text, "Transcript view") {
+		t.Fatalf("read --screen shows it: %q", rd.Text)
+	}
+	if typed, _ := c.Seen(); len(typed) != 0 {
+		t.Fatalf("nothing typed: %q", typed)
+	}
 	// Claude Code's own dimmed suggestion is not typed text.
-	c.Edit(func(c *testkit.Claude) { c.Input, c.Suggestion = "", "Read /tmp/T1-5.md and do what it asks." })
+	c.Edit(func(c *testkit.Claude) { c.Screen, c.Suggestion = "", "Read /tmp/T1-5.md and do what it asks." })
 	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "consult-design"}, drive.SendOptions{}); err != nil {
 		t.Fatalf("a suggestion does not stop a send: %v", err)
 	}

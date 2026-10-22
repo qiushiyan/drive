@@ -30,9 +30,10 @@ send with --queue, which needs only that no prompt came since. One driver
 acts on a session at a time; a second is refused while the first acts.
 
   drive status [--json] [--quick]          every session in the batch, live
-  drive read SESSION [--prompts [N] | --pending | --user] [--json]
+  drive read SESSION [--prompts [N] | --pending | --user | --screen] [--json]
                                            its newest reply, or what it was told, the
-                                           call a prompt waits on, its newest prompt
+                                           call a prompt waits on, its newest prompt,
+                                           the end of its screen
   drive wait SESSION [--quiet S] [--bg S]  block until its turn ends; prints the reply's end
   drive send VIEW STEP [--queue] [--hold NAME] [--as LABEL]
   drive open LABEL [STEP] [--dir DIR] [--resume ID] [--account NAME] [--model M] [--hold NAME]

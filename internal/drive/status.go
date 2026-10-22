@@ -21,6 +21,7 @@ const (
 	ReadPrompts ReadMode = "prompts" // what it has been told
 	ReadPending ReadMode = "pending" // the tool call a prompt waits on
 	ReadUser    ReadMode = "user"    // the newest prompt, as it arrived
+	ReadScreen  ReadMode = "screen"  // the end of what its block shows: a prompt's options, whatever covers the input box
 )
 
 // Reading is one session read for a decision.
@@ -80,6 +81,12 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 		if p.Queued {
 			r.Text = "(queued) " + r.Text
 		}
+	case ReadScreen:
+		screen, err := d.Term.Capture(o.Session.Block, false)
+		if err != nil {
+			return r, &Refused{Reason: fmt.Sprintf("%s's screen cannot be read: %v", o.Label, err), Next: fmt.Sprintf("try again: drive read %s --screen", o.Label)}
+		}
+		r.Text = lastLines(strings.TrimRight(screen, "\r\n "), 40)
 	default:
 		if f.Error != nil {
 			r.Text, r.At = fmt.Sprintf("[%s] %s", f.Error.Kind, f.Error.Text), f.Error.At

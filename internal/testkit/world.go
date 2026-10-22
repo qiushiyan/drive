@@ -77,8 +77,11 @@ type Claude struct {
 
 	Input      string // typed into the box, not sent
 	Suggestion string // Claude Code's dimmed guess
-	DropHead   int    // characters the next typing loses
-	LoseEnter  bool   // Enter does not reach the session: the line stays in the box
+	// Screen, when set, is what the block shows in place of the input box,
+	// such as a full-screen view drawn over it: no ❯ line.
+	Screen    string
+	DropHead  int  // characters the next typing loses
+	LoseEnter bool // Enter does not reach the session: the line stays in the box
 	// TypeGate, when set, holds every Type until it is closed: a send caught mid-delivery.
 	TypeGate chan struct{}
 	Shells   []time.Time
@@ -391,6 +394,12 @@ func (w *World) Capture(block string, vt bool) (string, error) {
 		return "", fmt.Errorf("no block")
 	}
 	switch {
+	case c.Screen != "":
+		return c.Screen + "\r\n", nil
+	case c.Activity == "waiting":
+		// A prompt draws its options where the input box was, the chosen
+		// one behind the ❯ the box uses, as seen live.
+		return "Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No, and tell Claude what to do differently (esc)\r\n", nil
 	case c.Input != "":
 		return "╭───\n❯ " + c.Input + "\r\n╰───\n", nil
 	case c.Suggestion != "" && vt:
