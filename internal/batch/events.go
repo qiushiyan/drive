@@ -170,6 +170,7 @@ type Hold struct {
 	Name    string
 	Session string
 	Since   time.Time
+	Step    string // for a session waiting for the hold: the step it was refused
 }
 
 // Holds lists the newest taking of each hold. Whether it is still held
@@ -204,7 +205,7 @@ func Waiting(evs []Event) []Hold {
 				order = append(order, e.Session)
 			}
 			if _, ok := refused[e.Session]; !ok || refused[e.Session].Name != e.Hold {
-				refused[e.Session] = Hold{Name: e.Hold, Session: e.Session, Since: e.At}
+				refused[e.Session] = Hold{Name: e.Hold, Session: e.Session, Since: e.At, Step: e.Text}
 			}
 		case e.Kind == KindSend && e.Outcome != "":
 			delete(refused, e.Session)

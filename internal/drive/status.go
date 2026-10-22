@@ -217,7 +217,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 			var waiting []string
 			for _, w := range batch.Waiting(evs) {
 				if w.Name == name {
-					waiting = append(waiting, fmt.Sprintf("%s (refused it at %s)", w.Session, w.Since.In(out.Zone).Format("15:04")))
+					waiting = append(waiting, fmt.Sprintf("%s (refused %s at %s)", w.Session, clip(w.Step, 60), w.Since.In(out.Zone).Format("15:04")))
 				}
 			}
 			if len(waiting) > 0 {

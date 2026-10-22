@@ -61,9 +61,10 @@ checkout) until the turn this step starts has ended.
 
 status reads, per session: STATE (working, done, blocked:permission|question|
 auth, error); INPUT (empty; suggestion, Claude Code's dimmed guess, which
-typing replaces; typed, a line someone left unsent); WAKE (armed; woken HH:MM,
-with "(nothing sent since)" when no driver acted after it; ended without a
-wake; parked: why; stuck). A wake also comes when a session stops on a prompt.
+typing replaces; typed, a line someone left unsent); WAKE (none; armed; woken
+HH:MM, with "(nothing sent since)" when no driver acted after it; ended
+without a wake; parked: why; stuck). Hold lines name who holds each and who
+waits for it with the step it was refused. A wake also comes when a session stops on a prompt.
 
 SESSION is a label in the batch (T1) or a block id (its last six characters).
 --batch NAME acts in that batch instead of the current one.

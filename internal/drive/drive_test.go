@@ -625,10 +625,26 @@ func TestHoldWaitersAreListedAndTheRefusalSaysHowBack(t *testing.T) {
 		t.Fatalf("a chat driver is told the holder's wake brings it back: %v", err)
 	}
 	st, _ := r.d.Status(false)
-	if len(st.Holds) != 1 || !strings.Contains(st.Holds[0], "held by T5s") || !strings.Contains(st.Holds[0], "waiting for it: T3s") {
-		t.Fatalf("status names the holder and who waits: %q", st.Holds)
+	if len(st.Holds) != 1 || !strings.Contains(st.Holds[0], "held by T5s") || !strings.Contains(st.Holds[0], "waiting for it: T3s (refused release") {
+		t.Fatalf("status names the holder, who waits and the step it was refused: %q", st.Holds)
 	}
 	a.Done("released")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
+		if !strings.Contains(string(body), "waiting for release, which T5s held: T3s, refused release") {
+			t.Errorf("the holder's wake names who waits for what it held: %s", body)
+		}
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+	r.d.Cfg.Webhook = config.Webhook{URL: srv.URL}
+	e, err := r.d.Wait("T5s", time.Minute, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.d.Wake("T5s", e, ""); err != nil {
+		t.Fatal(err)
+	}
 	st, _ = r.d.Status(false)
 	if len(st.Holds) != 1 || !strings.HasPrefix(st.Holds[0], "release: free; waiting for it: T3s") {
 		t.Fatalf("once free, the waiter is still listed until it is sent: %q", st.Holds)

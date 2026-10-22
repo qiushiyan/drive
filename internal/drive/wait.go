@@ -303,7 +303,21 @@ func (d *Driver) Wake(label string, e *Ending, note string) error {
 	payload := map[string]any{"batch": b.Meta.Name, "host": host}
 	if e != nil {
 		payload["kind"], payload["session"], payload["state"], payload["view"] = "turn", e.Label, e.State, e.View.String()
-		payload["output"] = tail(e.Text(), 6000)
+		text := e.Text()
+		if evs, err := b.Events(); err == nil {
+			for _, h := range batch.Holds(evs) {
+				if h.Session != e.Label {
+					continue
+				}
+				for _, w := range batch.Waiting(evs) {
+					if w.Name == h.Name {
+						text += fmt.Sprintf("waiting for %s, which %s held: %s, refused %s; send it once the hold is free (drive status)\n",
+							h.Name, e.Label, w.Session, clip(w.Step, 80))
+					}
+				}
+			}
+		}
+		payload["output"] = tail(text, 6000)
 	} else {
 		payload["kind"], payload["output"] = "timer", "timer done: "+note
 	}

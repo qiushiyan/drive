@@ -134,6 +134,7 @@ func since(now, t time.Time) string {
 type holdRefused struct {
 	Refused
 	hold string
+	step Step
 }
 
 func (d *Driver) refuse(b *batch.Batch, o *Observation, err error) error {
@@ -142,7 +143,8 @@ func (d *Driver) refuse(b *batch.Batch, o *Observation, err error) error {
 	}
 	var h *holdRefused
 	if errors.As(err, &h) {
-		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindRefused, Session: o.Label, Reason: h.Reason, Hold: h.hold})
+		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindRefused, Session: o.Label, Reason: h.Reason, Hold: h.hold,
+			Key: h.step.Key, Text: clip(stepSummary(h.step), 200)})
 		return &h.Refused
 	}
 	var r *Refused
@@ -251,7 +253,7 @@ func (d *Driver) send(b *batch.Batch, o *Observation, step Step, opt SendOptions
 						h.Session, o.Label, o.Label, opt.Hold)
 				}
 				return &holdRefused{Refused{Reason: fmt.Sprintf("%s is held by %s since %s, whose turn is still running", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04")),
-					Next: next}, opt.Hold}
+					Next: next}, opt.Hold, step}
 			}
 		}
 		notice = m == nil || m.Sends == 0
