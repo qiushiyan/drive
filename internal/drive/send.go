@@ -190,8 +190,8 @@ func (d *Driver) compose(b *batch.Batch, o *Observation, step Step, notice bool)
 	if name := skill.Command(first); name != "" && skill.TypedOnly(d.Cfg.Home, o.Session.Config, o.Session.Dir, name) {
 		return payload{}, &Refused{
 			Reason: fmt.Sprintf("/%s starts only when typed: a session told to run it from a file refuses", name),
-			Next: fmt.Sprintf("type the command and point it at the rest: drive send %s %q",
-				o.View, clip(first, 120)+" — read <file> first")}
+			Next: fmt.Sprintf("type the command and put the rest in a file it points at: drive send %s '%s Read <file> for the rest'",
+				o.View, clip(first, 120))}
 	}
 	if notice {
 		text, err := os.ReadFile(d.Cfg.Notice)
