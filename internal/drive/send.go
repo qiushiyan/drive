@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/rex"
@@ -526,9 +527,11 @@ func (d *Driver) awaitTurn(o *Observation, limit time.Duration) error {
 const pad = "        "
 
 // deliver types a line, submits it and confirms from the transcript that it
-// arrived whole. Typing sometimes drops a line's first characters; the
-// garbled turn is then taken back and the line typed again behind eight
-// spaces, which absorb the loss and change nothing a session reads.
+// arrived whole. Typing sometimes drops a line's first characters, which
+// come back as a line break; the garbled turn is then taken back and the
+// line typed again behind eight spaces, which absorb the loss and change
+// nothing a session reads. A slash command is never padded: behind spaces
+// it is words, so it is typed again as it is.
 func (d *Driver) deliver(o *Observation, line string) (string, error) {
 	outcome, got, err := d.typeAndConfirm(o, line)
 	if err != nil || got == nil {
@@ -555,7 +558,11 @@ func (d *Driver) deliver(o *Observation, line string) (string, error) {
 		}
 		_ = d.press(block, "ctrl+u")
 	}
-	outcome, got, err = d.typeAndConfirm(o, pad+line)
+	retype := pad + line
+	if skill.Command(line) != "" {
+		retype = line
+	}
+	outcome, got, err = d.typeAndConfirm(o, retype)
 	if err != nil {
 		return outcome, err
 	}
@@ -585,7 +592,7 @@ func (d *Driver) typeAndConfirm(o *Observation, line string) (string, *turn.Prom
 	if err := d.press(block, "enter"); err != nil {
 		return "", nil, err
 	}
-	want := strings.TrimLeft(line, " ")
+	want := strings.TrimLeftFunc(line, unicode.IsSpace)
 	limit := time.Minute
 	if strings.HasPrefix(want, "/compact") {
 		limit = 10 * time.Minute // a Claude Code older than 2.1.308 may record it only once compaction ends
@@ -613,7 +620,7 @@ func (d *Driver) typeAndConfirm(o *Observation, line string) (string, *turn.Prom
 			}
 			continue
 		}
-		got := strings.TrimLeft(p.Text, " ")
+		got := strings.TrimLeftFunc(p.Text, unicode.IsSpace) // a lost head comes back as a line break
 		switch {
 		case got == want:
 			if p.Queued {

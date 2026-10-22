@@ -292,32 +292,38 @@ func TestOpenRefusesALabelAlreadyOpen(t *testing.T) {
 	}
 }
 
-func TestLostHeadIsRetypedPadded(t *testing.T) {
-	r := newRig(t, "none")
-	c := r.w.Add("T1")
-	done(c, "onboard", "analysis")
-	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "warm up"}, drive.SendOptions{Label: "T1"}); err != nil {
-		t.Fatal(err)
-	}
-	c.Edit(func(c *testkit.Claude) {
-		c.DropHead = 3
-		// The garbled prompt starts a turn that runs on, as a real one would.
-		c.Reply = func(c *testkit.Claude, p string) {
-			if strings.HasPrefix(strings.TrimLeft(p, " "), "/") {
-				c.Done("ok")
+// A line that lost its head is taken back while its turn runs and typed
+// again: behind eight spaces, which absorb a second loss, unless it is a
+// slash command, which behind spaces is words.
+func TestLostHeadIsRetyped(t *testing.T) {
+	for _, tc := range []struct{ line, retype string }{
+		{"warm up the cache, then run the suite", "        warm up the cache, then run the suite"},
+		{"/pl-loopy-handoff-distill merged and deployed", "/pl-loopy-handoff-distill merged and deployed"},
+	} {
+		t.Run(tc.line, func(t *testing.T) {
+			r := newRig(t, "none")
+			c := adopted(t, r, "T1")
+			c.Edit(func(c *testkit.Claude) {
+				c.DropHead = 3
+				// The garbled prompt starts a turn that runs on, as a real one would.
+				c.Reply = func(c *testkit.Claude, p string) {
+					if !strings.HasPrefix(p, "\n") {
+						c.Done("ok")
+					}
+				}
+			})
+			sent, err := r.d.Send(r.view("T1"), drive.Step{Line: tc.line}, drive.SendOptions{})
+			if err != nil || sent.Outcome != "recovered" {
+				t.Fatalf("a line that lost its head is taken back and retyped: %+v %v", sent, err)
 			}
-		}
-	})
-	sent, err := r.d.Send(r.view("T1"), drive.Step{Line: "/pl-loopy-handoff-distill merged and deployed"}, drive.SendOptions{})
-	if err != nil || sent.Outcome != "recovered" {
-		t.Fatalf("a line that lost its head is taken back and retyped: %+v %v", sent, err)
-	}
-	typed, _ := c.Seen()
-	if last := typed[len(typed)-1]; last != "        /pl-loopy-handoff-distill merged and deployed" {
-		t.Fatalf("the retype is padded with eight spaces, got %q", last)
-	}
-	if log, _ := os.ReadFile(c.Transcript()); !strings.Contains(string(log), "[Request interrupted by user]") {
-		t.Fatal("the garbled turn is interrupted while it runs")
+			typed, _ := c.Seen()
+			if last := typed[len(typed)-1]; last != tc.retype {
+				t.Fatalf("retyped as %q, want %q", last, tc.retype)
+			}
+			if log, _ := os.ReadFile(c.Transcript()); !strings.Contains(string(log), "[Request interrupted by user]") {
+				t.Fatal("the garbled turn is interrupted while it runs")
+			}
+		})
 	}
 }
 

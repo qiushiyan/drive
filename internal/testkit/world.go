@@ -8,7 +8,7 @@
 // interrupt, and can be told of a held message the session does not show.
 // A slash command typed while busy is queued without its text, one behind
 // spaces is words, an expired login answers with an API error and no Stop,
-// typing can lose a line's head.
+// typing can lose a line's head, which comes back as a line break.
 package testkit
 
 import (
@@ -418,7 +418,9 @@ func (w *World) Type(block, text string) error {
 	}
 	c.Typed = append(c.Typed, text)
 	if c.DropHead > 0 && len(text) > c.DropHead {
-		text = text[c.DropHead:]
+		// A real lost head comes back as a line break in its place:
+		// "\nopy-handoff-distill merged and deployed".
+		text = "\n" + text[c.DropHead:]
 		c.DropHead = 0
 	}
 	c.Input += text
