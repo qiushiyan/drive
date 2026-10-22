@@ -101,14 +101,14 @@ type Metrics struct {
 	Batch string
 	Zone  *time.Location `json:"-"`
 	From  time.Time
-	To    time.Time
+	To    time.Time // the batch's last event: what is still open is measured to it
 
 	Asks         int
 	Answered     int
 	Took         map[string]int // recommended, amended, delegated, moot
 	Explained    int            // answers the owner needed explained first
 	Unanswered   int
-	OwnerWait    time.Duration // summed from each ask to its answer, or to now while open
+	OwnerWait    time.Duration // summed from each ask to its answer, or to the batch's last event while open
 	MedianAnswer time.Duration
 
 	Sessions int
@@ -151,10 +151,11 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
-	now := d.now()
-	m := &Metrics{Batch: b.Meta.Name, Zone: b.Zone(), From: b.Meta.Started, To: now, Took: map[string]int{}, ByKey: map[string]int{}, Refusals: map[string]int{}}
-	if n := len(evs); n > 0 {
-		m.To = evs[n-1].At
+	m := &Metrics{Batch: b.Meta.Name, Zone: b.Zone(), From: b.Meta.Started, To: b.Meta.Started, Took: map[string]int{}, ByKey: map[string]int{}, Refusals: map[string]int{}}
+	for _, e := range evs {
+		if e.At.After(m.To) {
+			m.To = e.At
+		}
 	}
 	_, asks, _ := batch.Records(evs)
 	var waits []time.Duration
@@ -162,7 +163,7 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 		m.Asks++
 		if a.Answer == nil {
 			m.Unanswered++
-			m.OwnerWait += now.Sub(a.At)
+			m.OwnerWait += m.To.Sub(a.At)
 			continue
 		}
 		m.Answered++

@@ -540,12 +540,26 @@ func TestRecordsAndMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _ = r.d.Ask("T1", "Phase C boxes?", "no", "nothing waits")
+	r.w.Clock.Sleep(30 * time.Minute)
+	if _, err := r.d.Note("T1", "the night ends here"); err != nil {
+		t.Fatal(err)
+	}
+	r.w.Clock.Sleep(5 * time.Hour) // metrics read the morning after
 	m, err := r.d.Metrics("")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if m.Asks != 2 || m.Answered != 1 || m.Took["delegated"] != 1 || m.Explained != 1 || m.Unanswered != 1 || m.MedianAnswer != 13*time.Minute {
 		t.Fatalf("ask measures: %+v", m)
+	}
+	evs, _ := r.b.Events()
+	open := r.events(batch.KindAsk)[1]
+	if m.To != evs[len(evs)-1].At || m.OwnerWait != 13*time.Minute+m.To.Sub(open.At) {
+		t.Fatalf("an open ask waits until the batch's last event, not until the metrics are read: to %s, wait %s", m.To, m.OwnerWait)
+	}
+	r.w.Clock.Sleep(time.Hour)
+	if again, _ := r.d.Metrics(""); again.OwnerWait != m.OwnerWait {
+		t.Fatalf("owner wait does not grow with every reading: %s then %s", m.OwnerWait, again.OwnerWait)
 	}
 	if m.Sends != 1 || m.OwnWords != 1 || m.Sessions != 1 {
 		t.Fatalf("send measures: %+v", m)
