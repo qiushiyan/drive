@@ -104,7 +104,7 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 			case state == "blocked:auth":
 				e.Next = d.relaunchHint(o)
 			case strings.HasPrefix(state, "blocked"):
-				e.Next = fmt.Sprintf("see what it asks (drive read %s --pending), then answer it: drive respond %s approve|deny", o.Label, o.View)
+				e.Next = answerNext(o.Label, o.View.String(), state)
 			case state == "error":
 				e.Next = fmt.Sprintf("read it (drive read %s); send its step again once the API recovers", o.Label)
 			case state == "interrupted":

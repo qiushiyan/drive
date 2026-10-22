@@ -55,6 +55,10 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	}
 	defer opening.release()
 	again := openCommand(label, opt)
+	whole := again // the open as it was asked for, its step on it
+	if !step.empty() {
+		whole += " " + stepArgs(step)
+	}
 	if !step.empty() {
 		// The account is the launcher's choice, so skills are read from the default one.
 		if _, err := d.plan(opt.Dir, filepath.Join(d.Cfg.Home, ".claude"), again, step, opt.Resume == ""); err != nil {
@@ -77,9 +81,9 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		}
 		if opt.Hold != "" {
 			if h, held := d.holder(evs, batch.Members(evs), opt.Hold, label); held {
-				next := fmt.Sprintf("wait for %s's turn to end (drive wait %s), then open it: %s %s", h.Session, h.Session, again, stepArgs(step))
+				next := fmt.Sprintf("wait for %s's turn to end (drive wait %s), then open it: %s", h.Session, h.Session, whole)
 				if b.Meta.Wake == "webhook" {
-					next = fmt.Sprintf("%s's wake comes when its turn ends; open %s in the run it starts: %s %s", h.Session, label, again, stepArgs(step))
+					next = fmt.Sprintf("%s's wake comes when its turn ends; open %s in the run it starts: %s", h.Session, label, whole)
 				}
 				return &Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), holding(h)),
 					Next: next}
@@ -88,30 +92,32 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return b.Append(batch.Event{At: d.now(), Kind: batch.KindOpenIntent, Session: label, Intent: intent, Dir: opt.Dir, Text: clip(stepSummary(step), 200)})
 	})
 	if err != nil {
-		return nil, d.refuse(b, label, err)
+		return nil, d.refuse(b, label, unsent(err, whole))
 	}
 
 	block, err := d.Term.Run(rex.Open{Session: b.Meta.RexSession, Dir: opt.Dir, Label: label, Command: d.launch(opt)})
 	if err != nil {
-		f := &Failed{What: fmt.Sprintf("Rex did not open a block for %s: %v", label, err)}
+		f := &Failed{What: fmt.Sprintf("Rex did not open a block for %s: %v", label, err),
+			Next: "drive status lists the blocks; if none opened for it, try it again: " + whole}
 		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindFailure, Session: label, Intent: intent, Reason: f.What})
 		return nil, f
 	}
 	// On record at once: a driver that ends while Claude Code starts leaves the block known.
 	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindOpen, Session: label, Intent: intent, Block: block, Dir: opt.Dir, Outcome: "starting"}); err != nil {
-		return nil, err
+		return nil, unrecorded(label, block, err)
 	}
 	s, err := d.awaitSession(block, 90*time.Second)
 	if err != nil {
 		screen, _ := d.Term.Capture(block, false)
 		f := &Failed{What: fmt.Sprintf("Claude Code did not start in block %s within 90 s; its screen ends:\n%s", rex.Short(block), tail(strings.TrimSpace(screen), 600)),
-			Next: fmt.Sprintf("close the block (rex block close %s) once you have read why", rex.Short(block))}
+			// drive closes only a block with Claude Code in it; this one has none.
+			Next: fmt.Sprintf("close the block once you have read why: rex block close %s", block)}
 		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindFailure, Session: label, Block: block, Reason: f.What})
 		return nil, f
 	}
 	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindOpen, Session: label, Block: block,
 		SID: s.ID, Account: s.Account, Dir: s.Dir, Ref: opt.Resume}); err != nil {
-		return nil, err
+		return nil, unrecorded(label, block, err)
 	}
 	out = &Opened{Label: label, Block: block, Account: s.Account, Session: s.ID}
 	// From here the block is open: whatever stops the first step is a
@@ -176,6 +182,12 @@ func (d *Driver) settleOpen(b *batch.Batch, evs []batch.Event, label string) err
 		}
 	}
 	return nil
+}
+
+// unrecorded is a block Rex opened that the batch's log did not take.
+func unrecorded(label, block string, err error) *Failed {
+	return &Failed{What: fmt.Sprintf("Rex opened block %s for %s, but the batch's log did not take it: %v", rex.Short(block), label, err),
+		Next: "drive status lists it among the sessions outside the batch; close it there if it is not wanted: rex block close " + block}
 }
 
 // openCommand is the drive open that opens label as opt says; its step follows.

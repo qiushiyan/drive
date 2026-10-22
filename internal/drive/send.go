@@ -64,13 +64,14 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 	if err != nil {
 		return nil, &Refused{Reason: err.Error()}
 	}
+	again := sendCommand(view, step, opt)
 	evs, err := b.Events()
 	if err != nil {
-		return nil, err
+		return nil, unsent(err, again)
 	}
 	label, block, err := d.target(batch.Members(evs), v.Session)
 	if err != nil {
-		return nil, err
+		return nil, unsent(err, again)
 	}
 	l, err := d.own(label, block, fmt.Sprintf("sending %s %q", label, clip(stepSummary(step), 60)))
 	if err != nil {
@@ -79,20 +80,20 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 	l.noWake = opt.NoWatch
 	defer func() { sent, err = endSend(l, sent, err) }()
 	if err := d.settle(b, label, block); err != nil {
-		return nil, err
+		return nil, unsent(err, again)
 	}
 	if evs, err = b.Events(); err != nil {
-		return nil, err
+		return nil, unsent(err, again)
 	}
 	members := batch.Members(evs)
 	o, err := d.observe(members, v.Session)
 	if err != nil {
-		return nil, err
+		return nil, d.refuse(b, label, unsent(err, again))
 	}
 	if err := checkView(o, v, opt.Queue, b.Zone()); err != nil {
 		return nil, d.refuse(b, o.Label, err)
 	}
-	if err := d.ready(o, opt.Queue, step); err != nil {
+	if err := d.ready(o, opt, step); err != nil {
 		return nil, d.refuse(b, o.Label, err)
 	}
 	m := batch.Find(members, o.Label)
@@ -101,6 +102,56 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 		return nil, d.refuse(b, o.Label, err)
 	}
 	return d.send(b, o, p, opt, v.String())
+}
+
+// sendCommand is the drive send that sends step on view as opt says.
+func sendCommand(view string, step Step, opt SendOptions) string {
+	c := "drive send " + view + " " + stepArgs(step)
+	if opt.Queue {
+		c += " --queue"
+	}
+	if opt.Hold != "" {
+		c += " --hold " + shellQuote(opt.Hold)
+	}
+	if opt.Label != "" {
+		c += " --as " + shellQuote(opt.Label)
+	}
+	return c
+}
+
+// unsent is an error met before anything reached the session, such as a
+// transcript or the batch's log that could not be read, as the refusal it
+// is: nothing was done, so the action can be tried again as it was.
+func unsent(err error, again string) error {
+	var r *Refused
+	var f *Failed
+	if err == nil || errors.As(err, &r) || errors.As(err, &f) {
+		return err
+	}
+	return &Refused{Reason: err.Error(), Next: "nothing was done; try it again: " + again}
+}
+
+// wakes says whether the driver is a chat bot brought back by the session's
+// wake, which cannot hold a command open, and if so whether the session's
+// wake is armed. A Claude Code driver waits for a turn itself.
+func (d *Driver) wakes(block string) (webhook, armed bool) {
+	b, err := d.Batch()
+	if err != nil || b.Meta.Wake != "webhook" {
+		return false, false
+	}
+	return true, d.Watches != nil && d.Watches.Alive(watchName(b, block))
+}
+
+// whenTurnEnds says how the driver comes back to a session once its
+// working turn ends.
+func (d *Driver) whenTurnEnds(label, block string) string {
+	switch webhook, armed := d.wakes(block); {
+	case !webhook:
+		return "wait for its turn to end: drive wait " + label
+	case armed:
+		return "its wake comes when its turn ends"
+	}
+	return "arm its wake, which comes when its turn ends: drive watch " + label
 }
 
 // settle gives an outcome to the sends an earlier driver of this session
@@ -185,8 +236,9 @@ func asTyped(s string) string { return strings.TrimSpace(turn.AsTyped(s)) }
 // ready refuses a send the session cannot take as it stands. --queue lets a
 // working session take a step mid-turn; nothing lets a step through a
 // prompt, where Enter would answer it.
-func (d *Driver) ready(o *Observation, queue bool, step Step) error {
+func (d *Driver) ready(o *Observation, opt SendOptions, step Step) error {
 	state := o.State()
+	view := o.View.String()
 	switch {
 	case state == "blocked:auth":
 		msg := ""
@@ -201,17 +253,20 @@ func (d *Driver) ready(o *Observation, queue bool, step Step) error {
 			call = fmt.Sprintf(" for %s: %s", p.Name, clip(p.Input, 120))
 		}
 		return &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt%s", o.Label, strings.TrimPrefix(state, "blocked:"), call),
-			Next: fmt.Sprintf("answer it first: drive respond %s approve|deny", o.View)}
-	case state == "working" && !queue:
+			Next: "answer it first; " + answerNext(o.Label, view, state)}
+	case state == "working" && !opt.Queue:
+		queued := opt
+		queued.Queue = true
 		return &Refused{Reason: fmt.Sprintf("%s is working (for %s)", o.Label, since(d.now(), o.Session.Since())),
-			Next: fmt.Sprintf("wait for its turn to end (drive wait %s), or add --queue to have it take this mid-turn", o.Label)}
-	case !queue && !o.Frontier.Answered():
+			Next: fmt.Sprintf("%s; or have it take this mid-turn: %s", d.whenTurnEnds(o.Label, o.Session.Block), sendCommand(view, step, queued))}
+	case !opt.Queue && !o.Frontier.Answered():
 		p := o.Frontier.Newest()
 		return &Refused{Reason: fmt.Sprintf("%s has a prompt it has not answered yet (%s: %s)", o.Label, p.At.In(d.zone()).Format("15:04"), clip(promptText(*p), 80)),
-			Next: fmt.Sprintf("someone already sent its next step; drive wait %s", o.Label)}
+			Next: "someone already sent its next step; " + d.whenTurnEnds(o.Label, o.Session.Block)}
 	case o.Input == turn.InputTyped:
 		return &Refused{Reason: fmt.Sprintf("%s's input box holds typed text nobody sent: %q; it may be the owner's", o.Label, clip(o.Typed, 80)),
-			Next: fmt.Sprintf("leave it; if it is a step of yours that never went out, clear it: drive respond %s clear", o.View)}
+			Next: fmt.Sprintf("leave it, and park the session if it waits on the owner, as nothing wakes you for it: drive park %s %s; if it is a step of yours that never went out, clear it: drive respond %s clear",
+				view, shellQuote("an unsent line in its input box"), view)}
 	case o.Input != turn.InputEmpty && o.Input != turn.InputSuggestion:
 		// Typing lands in whatever the screen shows: a dialog, a view, a shell.
 		return &Refused{Reason: fmt.Sprintf("%s's screen shows no input box to type into", o.Label),
@@ -255,6 +310,8 @@ type holdRefused struct {
 	hold string
 	step Step
 }
+
+func (h *holdRefused) Unwrap() error { return &h.Refused }
 
 // holding says what keeps a hold taken.
 func holding(h batch.Hold) string {
@@ -422,10 +479,14 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 		if opt.Hold != "" {
 			if h, held := d.holder(evs, members, opt.Hold, o.Label); held {
 				what := holding(h)
-				next := fmt.Sprintf("send this once %s's turn ends: drive wait %s", h.Session, h.Session)
+				next := fmt.Sprintf("wait for %s's turn to end (drive wait %s), then send this again: %s", h.Session, h.Session, sendCommand(o.View.String(), p.step, opt))
 				if b.Meta.Wake == "webhook" {
-					next = fmt.Sprintf("%s's wake comes when its turn ends; send this to %s then (drive status lists %s as waiting for %s)",
-						h.Session, o.Label, o.Label, opt.Hold)
+					// The refused session is left untouched, so no wake of its own comes.
+					next = fmt.Sprintf("%s's wake comes when its turn ends and names %s as waiting for %s", h.Session, o.Label, opt.Hold)
+					if batch.Find(members, o.Label) != nil {
+						next += fmt.Sprintf("; nothing else wakes you for %s, so park it meanwhile: drive park %s %s; drive watch --due wakes it once %s is free",
+							o.Label, o.View, shellQuote("waits for "+opt.Hold+", held by "+h.Session), opt.Hold)
+					}
 				}
 				return &holdRefused{Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), what),
 					Next: next}, opt.Hold, p.step}
@@ -469,7 +530,7 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 		return b.Append(add...)
 	})
 	if err != nil {
-		return nil, d.refuse(b, o.Label, err)
+		return nil, d.refuse(b, o.Label, unsent(err, sendCommand(view, p.step, opt)))
 	}
 	record := func(e batch.Event) {
 		e.At, e.Session, e.Intent, e.Hold, e.View = d.now(), o.Label, intent, opt.Hold, view
@@ -498,23 +559,32 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 			failed(err)
 			return nil, err
 		}
-		if err := d.awaitTurn(o, 5*time.Minute); err != nil {
+		// Still running, the notice's turn takes the step queued behind it.
+		queued := opt
+		queued.Queue = true
+		if err := d.awaitTurn(o, 5*time.Minute, func() string { return sendCommand(viewNow(o), p.step, queued) }); err != nil {
 			failed(err)
 			return nil, err
 		}
 		evs, err := b.Events()
-		if err != nil {
-			return nil, err
-		}
-		after, err := d.observe(batch.Members(evs), o.Label)
+		var after *Observation
 		if err == nil {
-			err = d.ready(after, false, p.step)
+			after, err = d.observe(batch.Members(evs), o.Label)
+		}
+		if err == nil {
+			err = d.ready(after, SendOptions{}, p.step)
 		}
 		if err != nil {
-			f := &Failed{What: fmt.Sprintf("%s read the notice; its step was not sent: %s", o.Label, err.Error())}
+			f := &Failed{What: fmt.Sprintf("%s read the notice; its step was not sent: %s", o.Label, err.Error()),
+				Next: fmt.Sprintf("read it, then send the step: drive read %s", o.Label)}
 			var r *Refused
-			if errors.As(err, &r) {
-				f.What, f.Next = fmt.Sprintf("%s read the notice; its step was not sent: %s", o.Label, r.Reason), r.Next+", then send the step"
+			switch {
+			case !errors.As(err, &r):
+			case r.account != "":
+				f.What, f.Next = fmt.Sprintf("%s read the notice; its step was not sent: %s", o.Label, r.Reason), r.Next // the relaunch carries the step
+			default:
+				f.What = fmt.Sprintf("%s read the notice; its step was not sent: %s", o.Label, r.Reason)
+				f.Next = fmt.Sprintf("%s; then its step goes, decided on a fresh read: drive read %s", r.Next, o.Label)
 			}
 			failed(f)
 			return nil, f
@@ -561,7 +631,9 @@ func stepSummary(s Step) string {
 }
 
 // awaitTurn waits for the turn the notice started to end.
-func (d *Driver) awaitTurn(o *Observation, limit time.Duration) error {
+// queue is the send that queues the step behind that turn, built when the
+// wait gives up.
+func (d *Driver) awaitTurn(o *Observation, limit time.Duration, queue func() string) error {
 	end := d.now().Add(limit)
 	for d.now().Before(end) {
 		d.sleep(d.poll())
@@ -578,7 +650,7 @@ func (d *Driver) awaitTurn(o *Observation, limit time.Duration) error {
 		}
 	}
 	return &Failed{What: fmt.Sprintf("%s did not finish reading the notice within %s", o.Label, limit),
-		Next: fmt.Sprintf("drive read %s, then send the step when its turn ends", o.Label)}
+		Next: "it takes the step once that turn ends if the step is queued behind it: " + queue()}
 }
 
 const pad = "        "
@@ -625,7 +697,7 @@ func (d *Driver) deliver(o *Observation, line string) (string, error) {
 	}
 	if got != nil {
 		return "garbled", &Failed{What: fmt.Sprintf("%s lost the start of the line twice; it last received %q", o.Label, clip(got.Text, 120)),
-			Next: fmt.Sprintf("it is working on that; read it (drive read %s), then interrupt it with the view that prints: drive respond VIEW interrupt", o.Label)}
+			Next: fmt.Sprintf("it is working on that; read it first (drive read %s), and interrupt it if it works on the wrong thing: drive respond %s interrupt", o.Label, viewNow(o))}
 	}
 	return "recovered", nil
 }
@@ -701,7 +773,7 @@ func (d *Driver) typeAndConfirm(o *Observation, line string) (string, *turn.Prom
 		}
 	}
 	return "unknown", nil, &Failed{What: what,
-		Next: fmt.Sprintf("drive read %s: if the line sits in its input box, clear it (drive respond VIEW clear) and send again", o.Label)}
+		Next: fmt.Sprintf("if the line sits in its input box (drive read %s shows it), clear it and send again: drive respond %s clear", o.Label, viewNow(o))}
 }
 
 // viewNow is the session's view as it stands when a message is built, for
@@ -740,6 +812,11 @@ func (d *Driver) checkAnswer(o *Observation, at time.Time) error {
 func (d *Driver) retryHint(o *Observation, kind string) string {
 	if kind == "authentication_failed" {
 		return d.relaunchHint(o)
+	}
+	if webhook, _ := d.wakes(o.Session.Block); webhook {
+		// No wake comes for an API recovering: a timer brings the driver back.
+		return fmt.Sprintf("the session is idle again; send the step again once the API recovers, and have a timer bring you back to it: drive watch --sleep 900 %s",
+			shellQuote("retry "+o.Label))
 	}
 	return fmt.Sprintf("the session is idle again; read it (drive read %s) and send the step again when the API recovers", o.Label)
 }
