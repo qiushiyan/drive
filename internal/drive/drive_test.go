@@ -299,17 +299,40 @@ func TestLostHeadIsRetypedPadded(t *testing.T) {
 	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "warm up"}, drive.SendOptions{Label: "T1"}); err != nil {
 		t.Fatal(err)
 	}
-	c.Edit(func(c *testkit.Claude) { c.DropHead = 3 })
+	c.Edit(func(c *testkit.Claude) {
+		c.DropHead = 3
+		// The garbled prompt starts a turn that runs on, as a real one would.
+		c.Reply = func(c *testkit.Claude, p string) {
+			if strings.HasPrefix(strings.TrimLeft(p, " "), "/") {
+				c.Done("ok")
+			}
+		}
+	})
 	sent, err := r.d.Send(r.view("T1"), drive.Step{Line: "/pl-loopy-handoff-distill merged and deployed"}, drive.SendOptions{})
 	if err != nil || sent.Outcome != "recovered" {
 		t.Fatalf("a line that lost its head is taken back and retyped: %+v %v", sent, err)
 	}
-	typed, keys := c.Seen()
+	typed, _ := c.Seen()
 	if last := typed[len(typed)-1]; last != "        /pl-loopy-handoff-distill merged and deployed" {
 		t.Fatalf("the retype is padded with eight spaces, got %q", last)
 	}
-	if !contains(keys, "ctrl+c") {
-		t.Fatalf("the garbled turn is interrupted first: %q", keys)
+	if log, _ := os.ReadFile(c.Transcript()); !strings.Contains(string(log), "[Request interrupted by user]") {
+		t.Fatal("the garbled turn is interrupted while it runs")
+	}
+}
+
+// Ctrl+C stops whatever turn runs: once the garbled turn has ended, drive
+// leaves it and says so.
+func TestAGarbledTurnThatEndedIsNotTakenBack(t *testing.T) {
+	r := newRig(t, "none")
+	c := adopted(t, r, "T1")
+	c.Edit(func(c *testkit.Claude) { c.DropHead = 3 })
+	sent, err := r.d.Send(r.view("T1"), drive.Step{Line: "/pl-loopy-handoff-distill merged and deployed"}, drive.SendOptions{})
+	if err == nil || sent == nil || sent.Outcome != "garbled" || !strings.Contains(err.Error(), "drive read T1") {
+		t.Fatalf("a garbled turn that already ended is reported, not retyped: %+v %v", sent, err)
+	}
+	if _, keys := c.Seen(); contains(keys, "ctrl+c") {
+		t.Fatalf("no Ctrl+C into a finished turn: %q", keys)
 	}
 }
 
@@ -395,28 +418,37 @@ func TestHoldIsExclusiveUntilTheTurnEnds(t *testing.T) {
 	}
 }
 
-// A driver that died after recording its send leaves an intent: another
-// driver waits rather than sending on top of it.
-func TestUnfinishedSendBlocksAnother(t *testing.T) {
+// A driver that died after recording its send leaves an intent. The next
+// driver to own the session settles it from the transcript, whatever its age.
+func TestAnIntentLeftByAGoneDriverIsSettled(t *testing.T) {
 	r := newRig(t, "none")
 	c := r.w.Add("T1")
 	done(c, "onboard", "analysis")
 	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "x"}, drive.SendOptions{Label: "T1"}); err != nil {
 		t.Fatal(err)
 	}
-	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindSendIntent, Session: "T1", Intent: "dead", Text: "implement-spec"})
-	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "y"}, drive.SendOptions{}); !isRefused(err) || !strings.Contains(err.Error(), "another driver") {
-		t.Fatalf("a send in flight blocks another, got %v", err)
-	}
-	r.w.Clock.Sleep(batch.InFlight + time.Second)
+	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindSendIntent, Session: "T1", Intent: "lost", Text: "implement-spec"})
 	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "y"}, drive.SendOptions{}); err != nil {
-		t.Fatalf("an intent older than its window no longer blocks: %v", err)
+		t.Fatalf("an intent whose driver has gone does not block: %v", err)
 	}
-	st, err := r.d.Status(false)
-	if err != nil {
+	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindSendIntent, Session: "T1", Intent: "arrived", Text: "implement-spec"})
+	r.w.Clock.Sleep(time.Second)
+	done(c, "implement-spec", "implemented")
+	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "z"}, drive.SendOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	_ = st
+	got := map[string]string{}
+	for _, e := range append(r.events(batch.KindSend), r.events(batch.KindFailure)...) {
+		if e.Intent == "lost" || e.Intent == "arrived" {
+			got[e.Intent] = e.Kind + " " + e.Outcome
+		}
+	}
+	if got["lost"] != "failure " || got["arrived"] != "send arrived" {
+		t.Fatalf("settled from the transcript: %v", got)
+	}
+	if st, _ := r.d.Status(false); len(st.InFlight) != 0 {
+		t.Fatalf("nothing is left in flight: %+v", st.InFlight)
+	}
 }
 
 func TestWaitEndsOnAnAPIErrorRexWasNotToldAbout(t *testing.T) {
@@ -428,7 +460,7 @@ func TestWaitEndsOnAnAPIErrorRexWasNotToldAbout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.State != "error" || e.Error == nil || !strings.Contains(e.Text(), "Login expired") {
+	if e.State != "blocked:auth" || e.Error == nil || !strings.Contains(e.Text(), "Login expired") {
 		t.Fatalf("the wait returns on the error at once: %+v", e)
 	}
 }
@@ -480,7 +512,10 @@ func TestSendArmsTheWakeInAWebhookBatch(t *testing.T) {
 	if strings.Join(argv, " ") != "/bin/drive --batch b1 wait T1 --notify" {
 		t.Fatalf("the wake is pinned to its batch: %q", argv)
 	}
-	if err := r.d.Park("T1", "waits on Qiushi's workspace"); err != nil {
+	if err := r.d.Park("T1", "waits on Qiushi's workspace"); !isRefused(err) || !strings.Contains(err.Error(), "drive read T1") {
+		t.Fatalf("a park is decided on a view too: %v", err)
+	}
+	if err := r.d.Park(r.view("T1"), "waits on Qiushi's workspace"); err != nil {
 		t.Fatal(err)
 	}
 	if r.watches.Alive("drive-" + c.Block[len(c.Block)-6:]) {
@@ -544,6 +579,8 @@ func TestWakeRecordsEveryPost(t *testing.T) {
 	}))
 	defer srv.Close()
 	r.d.Cfg.Webhook = config.Webhook{URL: srv.URL, Auth: "Bearer k"}
+	archived := filepath.Join(r.w.Root, "archived")
+	r.d.Cfg.AfterWake = []string{"echo archived >> " + archived, "exit 7"}
 	c := r.w.Add("T1")
 	done(c, "onboard", "analysis")
 	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "go"}, drive.SendOptions{Label: "T1"}); err != nil {
@@ -555,6 +592,12 @@ func TestWakeRecordsEveryPost(t *testing.T) {
 	}
 	if err := r.d.Wake("T1", e, ""); err != nil {
 		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(archived); string(b) != "archived\n" {
+		t.Fatalf("the after-wake command ran once the wake was posted: %q", b)
+	}
+	if notes := r.events(batch.KindNote); len(notes) != 1 || !strings.Contains(notes[0].Note, `"exit 7" failed`) {
+		t.Fatalf("a failing after-wake command is noted, not fatal: %+v", notes)
 	}
 	mu.Lock()
 	status = 400
@@ -674,8 +717,12 @@ func TestAStuckWatchIsFlaggedAndRestarted(t *testing.T) {
 	if !strings.Contains(st.Rows[0].Watch, "stuck") {
 		t.Fatalf("a watch alive an hour after the turn ended is flagged: %q", st.Rows[0].Watch)
 	}
+	before := r.watches.Running
 	w, err := r.d.Watch("T4")
-	if err != nil || !w.Restarted {
+	if err != nil || !w.Restarted || len(before) != 1 {
 		t.Fatalf("watch restarts it: %+v %v", w, err)
+	}
+	if n := len(r.events(batch.KindWatch)); n != 2 {
+		t.Fatalf("the restart is a new watch: %d", n)
 	}
 }

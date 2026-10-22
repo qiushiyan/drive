@@ -110,3 +110,31 @@ func TestInputBox(t *testing.T) {
 		}
 	}
 }
+
+func TestATurnEndsWithoutAnAssistantEntry(t *testing.T) {
+	rows := []string{
+		`{"type":"user","uuid":"p1","timestamp":"2026-10-21T17:20:14Z","message":{"role":"user","content":"<command-name>/compact</command-name>\n<command-args></command-args>"}}`,
+		`{"type":"user","uuid":"o1","timestamp":"2026-10-21T17:22:01Z","message":{"role":"user","content":"<local-command-stdout>Compacted </local-command-stdout>"}}`,
+	}
+	f, _ := Read(strings.NewReader(strings.Join(rows, "\n")))
+	if !f.Answered() || len(f.Prompts) != 1 {
+		t.Fatalf("a local command's output answers it: %+v", f)
+	}
+	rows = []string{
+		`{"type":"user","uuid":"p2","timestamp":"2026-10-21T19:50:00Z","message":{"role":"user","content":"go"}}`,
+		`{"type":"assistant","uuid":"a1","timestamp":"2026-10-21T19:57:10Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"rm -rf x"}}]}}`,
+		`{"type":"user","uuid":"r1","timestamp":"2026-10-21T19:57:16.918Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"The user doesn't want to proceed with this tool use."}]}}`,
+		`{"type":"user","uuid":"i1","timestamp":"2026-10-21T19:57:16.922Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}`,
+	}
+	f, _ = Read(strings.NewReader(strings.Join(rows, "\n")))
+	if !f.Interrupted || f.Pending != nil || !f.Answered() {
+		t.Fatalf("a denied call ends the turn: %+v", f)
+	}
+	rows = append(rows,
+		`{"type":"user","uuid":"n1","timestamp":"2026-10-21T19:58:00Z","message":{"role":"user","content":"<task-notification>done</task-notification>"}}`,
+		`{"type":"assistant","uuid":"a2","timestamp":"2026-10-21T19:58:05Z","message":{"role":"assistant","content":[{"type":"text","text":"the build finished"}]}}`)
+	f, _ = Read(strings.NewReader(strings.Join(rows, "\n")))
+	if f.Interrupted {
+		t.Fatal("an answer after the interrupt means the session moved on")
+	}
+}

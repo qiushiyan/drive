@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +24,10 @@ next step, answer its prompts, and be woken when its turn ends.
 
 Every action on a session is decided on a VIEW: read, wait and status print
 one (T1@3fa91c07), and an action is refused once the session has moved past
-it, so a step decided on an old turn never reaches a new one.
+it, so a step decided on an old turn never reaches a new one. A working
+session's view changes as it writes: decide on a turn that has ended, or
+send with --queue, which needs only that no prompt came since. One driver
+acts on a session at a time; a second is refused while the first acts.
 
   drive status [--json] [--quick]          every session in the batch, live
   drive read SESSION [--prompts [N] | --pending | --user] [--json]
@@ -36,7 +40,7 @@ it, so a step decided on an old turn never reaches a new one.
   drive watch SESSION | drive watch --sleep SECONDS NOTE
                                            a webhook batch: wake the driver when the turn
                                            ends (send and open arm this themselves)
-  drive park SESSION REASON…               stop waking for it; the reason is kept
+  drive park VIEW REASON…                  stop waking for it; the reason is kept
   drive close VIEW                         close its block after its last step
   drive record grant --source WORDS --scope WHAT
   drive record ask SESSION --question Q --recommendation R --if-unanswered WHAT
@@ -55,23 +59,28 @@ STEP is one of:
                           TEXT where the owner would type after it
 The first step a session gets in a batch carries the notice ahead of it.
 
---queue sends to a working session, which takes it mid-turn. --hold NAME takes
-a resource only one session may use at a time (a release, a closeout into one
-checkout) until the turn this step starts has ended.
+--queue sends to a working session, which takes it mid-turn; a session on a
+prompt takes nothing until it is answered. --hold NAME is for what only one
+session may do at a time, such as a release or commits into a shared
+checkout: it is held from the send until the turn the step starts has ended,
+background shells that turn started included.
 
-status reads, per session: STATE (working, done, blocked:permission|question|
-auth, error); INPUT (empty; suggestion, Claude Code's dimmed guess, which
-typing replaces; typed, a line someone left unsent); WAKE (none; armed; woken
-HH:MM, with "(nothing sent since)" when no driver acted after it; ended
-without a wake; parked: why; stuck). Hold lines name who holds each and who
-waits for it with the step it was refused. A wake also comes when a session stops on a prompt.
+status reads, per session: STATE (working; done; idle; interrupted, its turn
+stopped by an interrupt or a denied prompt; error; blocked:permission|
+question|auth); INPUT (empty; suggestion, Claude Code's dimmed guess, which
+typing replaces; typed, a line someone left unsent); WAKE (none; armed, its
+wake comes about a minute after the turn ends; woken HH:MM, with "(nothing
+sent since)" when no driver acted after it; ended without a wake; parked:
+why; stuck). Hold lines name who holds each and who waits for it with the
+step it was refused. A wake also comes when a session stops on a prompt, and
+ends with what to do next when the ending decides it.
 
 SESSION is a label in the batch (T1) or a block id (its last six characters).
 --batch NAME acts in that batch instead of the current one.
 
 Exit status: 0 done; 1 refused, nothing done (the message says why and what to
-do); 2 usage; 3 tried and did not end as asked; 4 the session's login or API
-failed (relaunch it on another account).
+do); 2 usage; 3 tried and did not end as asked, the message saying what did
+happen; 4 the session's login was rejected (the message prints the relaunch).
 `
 
 func main() {
@@ -91,11 +100,8 @@ func run(argv []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	self, _ := os.Executable()
-	d := &drive.Driver{
-		Term: rex.CLI{}, Host: session.Machine{Home: cfg.Home}, Store: batch.Store{Dir: cfg.StateDir},
-		Cfg: cfg, Progress: progress.Tools{}, Watches: drive.Tmux{}, Self: self, BatchName: batchName,
-	}
+	d := newDriver(cfg)
+	d.BatchName = batchName
 	cmd, rest := argv[0], argv[1:]
 	for _, a := range rest {
 		if a == "--help" || a == "-h" {
@@ -134,6 +140,15 @@ func run(argv []string) int {
 		return cmdSnippet(d, rest)
 	}
 	return bad(fmt.Sprintf("unknown command %q", cmd))
+}
+
+// newDriver wires a driver to this machine; tests wire it to a fake one.
+var newDriver = func(cfg config.Config) *drive.Driver {
+	self, _ := os.Executable()
+	return &drive.Driver{
+		Term: rex.CLI{}, Host: session.Machine{Home: cfg.Home}, Store: batch.Store{Dir: cfg.StateDir},
+		Cfg: cfg, Progress: progress.Tools{}, Watches: drive.Detached{Dir: filepath.Join(cfg.StateDir, "watches")}, Self: self,
+	}
 }
 
 func bad(msg string) int {
@@ -328,12 +343,12 @@ func cmdPark(d *drive.Driver, argv []string) int {
 		return code
 	}
 	if len(a.pos) < 2 {
-		return bad("park needs a SESSION and the REASON")
+		return bad("park needs a VIEW and the REASON")
 	}
 	if err := d.Park(a.pos[0], strings.Join(a.pos[1:], " ")); err != nil {
 		return fail(err)
 	}
-	fmt.Printf("parked %s: no wake until a step is sent to it\n", a.pos[0])
+	fmt.Printf("parked %s: no wake until a step is sent to it\n", strings.SplitN(a.pos[0], "@", 2)[0])
 	return 0
 }
 

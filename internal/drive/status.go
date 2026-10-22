@@ -26,6 +26,7 @@ const (
 // Reading is one session read for a decision.
 type Reading struct {
 	Label   string
+	SID     string // the Claude Code session id, which claude-steps takes
 	State   string
 	Account string
 	Input   turn.InputKind
@@ -45,7 +46,7 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Reading{Label: o.Label, State: o.State(), Account: o.Session.Account, Input: o.Input, Typed: o.Typed, View: o.View}
+	r := &Reading{Label: o.Label, SID: o.Session.ID, State: o.State(), Account: o.Session.Account, Input: o.Input, Typed: o.Typed, View: o.View}
 	f := o.Frontier
 	switch mode {
 	case ReadPrompts:
@@ -94,6 +95,7 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 // Row is one session in the status table.
 type Row struct {
 	Label     string
+	SID       string
 	Block     string
 	Window    string
 	State     string
@@ -122,10 +124,17 @@ type Status struct {
 	Zone     *time.Location
 	Rows     []Row
 	Others   []Row // Claude sessions in Rex outside the batch
+	Closed   int   // sessions of the batch closed since
 	Holds    []string
 	Asks     []*batch.Ask
 	Grants   []batch.Event
-	InFlight []batch.Event
+	InFlight []InFlight
+}
+
+// InFlight is an action admitted with no outcome yet.
+type InFlight struct {
+	batch.Event
+	Driver *batch.Owner // the driver acting on it; nil when that driver has gone
 }
 
 // Status reads every session in the batch, and lists the other Claude
@@ -151,18 +160,22 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 	for _, bl := range blocks {
 		window[bl.ID] = bl.Window
 	}
-	var mu sync.Mutex
 	var wg sync.WaitGroup
 	seen := map[string]bool{}
+	var open []*batch.Member
 	for _, m := range members {
 		seen[m.Block] = true
 		if m.Closed {
+			out.Closed++
 			continue
 		}
-		i := len(out.Rows)
-		out.Rows = append(out.Rows, Row{Label: m.Label, Block: m.Block, Window: window[m.Block], Member: true})
+		open = append(open, m)
+	}
+	// Each reader fills its own row of a table sized up front.
+	out.Rows = make([]Row, len(open))
+	for i, m := range open {
 		wg.Add(1)
-		go func(m *batch.Member) {
+		go func(i int, m *batch.Member) {
 			defer wg.Done()
 			r := d.row(members, m.Label, withProgress)
 			r.Window, r.Member = window[m.Block], true
@@ -186,10 +199,8 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 			default:
 				r.Watch = "none"
 			}
-			mu.Lock()
 			out.Rows[i] = r
-			mu.Unlock()
-		}(m)
+		}(i, m)
 	}
 	for _, bl := range blocks {
 		if seen[bl.ID] {
@@ -234,9 +245,18 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 				out.Asks = append(out.Asks, a)
 			}
 		}
-		for _, m := range members {
-			if p := batch.Pending(evs, m.Label); p != nil {
-				out.InFlight = append(out.InFlight, *p)
+		named := map[string]bool{}
+		for _, e := range evs {
+			if (e.Kind != batch.KindSendIntent && e.Kind != batch.KindOpenIntent) || named[e.Session] {
+				continue
+			}
+			named[e.Session] = true
+			for _, p := range batch.Unresolved(evs, e.Session) {
+				key := "open:" + p.Session
+				if m := batch.Find(members, p.Session); p.Kind == batch.KindSendIntent && m != nil {
+					key = m.Block
+				}
+				out.InFlight = append(out.InFlight, InFlight{Event: p, Driver: d.Store.Busy(key)})
 			}
 		}
 	}
@@ -247,7 +267,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 // wait returns a minute after a turn ends, or ten after one that left its
 // own background jobs running.
 func stuck(r Row) bool {
-	ended := r.State == "done" || r.State == "error" || strings.HasPrefix(r.State, "blocked")
+	ended := r.State == "done" || r.State == "error" || r.State == "interrupted" || strings.HasPrefix(r.State, "blocked")
 	return ended && r.For > 15*time.Minute
 }
 
@@ -293,7 +313,7 @@ func (d *Driver) row(members []*batch.Member, label string, withProgress bool) R
 		return r
 	}
 	st := o.Session.Status
-	r.Block, r.State, r.For, r.Account = o.Session.Block, o.State(), d.now().Sub(st.UpdatedAt), o.Session.Account
+	r.Block, r.SID, r.State, r.For, r.Account = o.Session.Block, o.Session.ID, o.State(), d.now().Sub(st.UpdatedAt), o.Session.Account
 	r.Input, r.Typed, r.View = o.Input, o.Typed, o.View
 	if withProgress && d.Progress != nil && o.Session.ID != "" {
 		if s, err := d.Progress.Steps(o.Session.ID); err == nil {

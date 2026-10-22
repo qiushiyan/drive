@@ -50,10 +50,10 @@ type Frontier struct {
 	Prompts     []Prompt  // taken, oldest first
 	Queued      *Prompt   // typed while busy, not yet taken
 	Reply       *Entry    // newest assistant text
-	Last        *Entry    // newest assistant entry of any kind: text, tool call or API error
+	Last        *Entry    // newest answer of any kind: assistant text, tool call, API error, a local command's output
 	Error       *APIError // an API error after the newest prompt
 	Pending     *ToolCall
-	Interrupted bool // the newest prompt's turn was interrupted
+	Interrupted bool // the newest prompt's turn was interrupted, a denied prompt included, and nothing followed
 }
 
 // Newest is the newest prompt the session received, queued or taken.
@@ -67,10 +67,11 @@ func (f Frontier) Newest() *Prompt {
 	return nil
 }
 
-// Answered says whether an assistant entry came after the newest prompt.
+// Answered says whether the newest prompt's turn is over: an answer came
+// after it, or it was interrupted.
 func (f Frontier) Answered() bool {
 	p := f.Newest()
-	return p == nil || (!p.Queued && f.Last != nil && !f.Last.At.Before(p.At))
+	return p == nil || (!p.Queued && (f.Interrupted || f.Last != nil && !f.Last.At.Before(p.At)))
 }
 
 var (
@@ -195,7 +196,8 @@ func Read(r io.Reader) (Frontier, error) {
 				}
 			}
 			entry := &Entry{ID: e.UUID, At: e.at(), Text: strings.Join(texts, "\n")}
-			f.Last = entry
+			// Whatever ended the turn before, the session has moved on since.
+			f.Last, f.Interrupted = entry, false
 			if e.IsAPIError {
 				kind := e.Error
 				if kind == "" {
@@ -204,6 +206,7 @@ func Read(r io.Reader) (Frontier, error) {
 				f.Error = &APIError{At: e.at(), Kind: kind, Text: entry.Text}
 				continue
 			}
+			f.Error = nil
 			if len(texts) > 0 {
 				f.Reply = entry
 			}
@@ -220,6 +223,11 @@ func Read(r io.Reader) (Frontier, error) {
 			text := strings.Join(texts, "\n")
 			if strings.HasPrefix(text, "[Request interrupted by user") {
 				f.Interrupted = true
+				continue
+			}
+			if strings.HasPrefix(strings.TrimLeft(text, " \t\n"), "<local-command-stdout>") {
+				// A local command such as /compact answers with its output, not an assistant entry.
+				f.Last = &Entry{ID: e.UUID, At: e.at(), Text: text}
 				continue
 			}
 			if e.human() && !e.IsMeta && !e.IsCompactSummary && typed(text) {

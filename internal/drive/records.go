@@ -40,16 +40,18 @@ func (d *Driver) Answer(ask, source, took string, explained bool) (string, error
 	if !tookWords[took] {
 		return "", &Refused{Reason: fmt.Sprintf("--took %q: one of recommended, amended, delegated, moot", took)}
 	}
-	var found bool
-	id, err := d.record(func(evs []batch.Event) batch.Event {
-		for _, e := range evs {
-			found = found || e.Kind == batch.KindAsk && e.ID == ask
-		}
-		return batch.Event{Kind: batch.KindAnswer, Ref: ask, Source: source, Took: took, Explained: explained}
-	})
-	if err == nil && !found {
-		return id, &Refused{Reason: fmt.Sprintf("no ask %s in this batch; the answer was recorded anyway, unattached", ask)}
+	b, err := d.Batch()
+	if err != nil {
+		return "", &Refused{Reason: err.Error()}
 	}
+	err = b.Locked(func(evs []batch.Event) error {
+		for _, e := range evs {
+			if e.Kind == batch.KindAsk && e.ID == ask {
+				return b.Append(batch.Event{At: d.now(), Kind: batch.KindAnswer, Ref: ask, Source: source, Took: took, Explained: explained})
+			}
+		}
+		return &Refused{Reason: fmt.Sprintf("no ask %s in batch %s", ask, b.Meta.Name), Next: "drive status lists the open asks"}
+	})
 	return ask, err
 }
 
@@ -111,6 +113,7 @@ type Metrics struct {
 
 	Sessions int
 	Merged   []MergedPR
+	Unread   int           // sessions whose progress could not be read: Merged may be short
 	PerMerge time.Duration // OwnerWait over merged changes
 
 	Sends     int
@@ -126,11 +129,13 @@ type Metrics struct {
 	Unhandled int // wakes posted that no driver action followed before the next one
 }
 
-// MergedPR is a change the batch merged.
+// MergedPR is a change the batch merged, with the sessions that name it:
+// its builder, and its strategic reviewer when one merged it.
 type MergedPR struct {
-	Session string
-	Number  int
-	At      time.Time
+	Repo     string
+	Number   int
+	At       time.Time
+	Sessions []string
 }
 
 // Metrics computes the measures for a batch ("" is the current one).
@@ -177,6 +182,9 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 	for _, e := range evs {
 		switch e.Kind {
 		case batch.KindSend:
+			if e.Mode == "notice" {
+				continue // the notice ahead of a typed first step
+			}
 			m.Sends++
 			switch {
 			case e.Key != "":
@@ -185,8 +193,11 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 			default:
 				m.OwnWords++
 			}
-			if e.Outcome == "recovered" {
+			switch e.Outcome {
+			case "recovered":
 				m.Recovered++
+			case "unknown":
+				m.Unknown++
 			}
 			if w, ok := lastWake[e.Session]; ok && !w.IsZero() {
 				lastWake[e.Session] = time.Time{}
@@ -212,21 +223,33 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 			lastWake[e.Session] = e.At
 		}
 	}
+	merged := map[string]int{} // repo#number to its index in m.Merged
 	for _, mem := range batch.Members(evs) {
 		m.Sessions++
-		if p := batch.Pending(evs, mem.Label); p != nil && p.Kind == batch.KindSendIntent && now.Sub(p.At) > batch.InFlight {
-			m.Unknown++
-		}
 		if d.Progress == nil || mem.SID == "" {
 			continue
 		}
 		s, err := d.Progress.Steps(mem.SID)
-		if err != nil || s.PR == nil {
+		if err != nil {
+			m.Unread++
+			continue
+		}
+		if s.PR == nil {
+			continue
+		}
+		key := fmt.Sprintf("%s#%d", s.PR.Repo, s.PR.Number)
+		if i, ok := merged[key]; ok {
+			m.Merged[i].Sessions = append(m.Merged[i].Sessions, mem.Label)
 			continue
 		}
 		pr, err := d.Progress.PR(*s.PR)
-		if err == nil && pr.State == "MERGED" && !pr.MergedAt.Before(b.Meta.Started) {
-			m.Merged = append(m.Merged, MergedPR{Session: mem.Label, Number: pr.Number, At: pr.MergedAt})
+		if err != nil {
+			m.Unread++
+			continue
+		}
+		if pr.State == "MERGED" && !pr.MergedAt.Before(b.Meta.Started) {
+			m.Merged = append(m.Merged, MergedPR{Repo: s.PR.Repo, Number: pr.Number, At: pr.MergedAt, Sessions: []string{mem.Label}})
+			merged[key] = len(m.Merged) - 1
 		}
 	}
 	if len(m.Merged) > 0 {

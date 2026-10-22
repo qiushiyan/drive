@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -55,8 +56,10 @@ func TestDerivedViews(t *testing.T) {
 	at := func(m int) time.Time { return t0.Add(time.Duration(m) * time.Minute) }
 	evs := []Event{
 		{At: at(0), Kind: KindOpen, Session: "T1", Block: "block:aaaa-111111"},
-		{At: at(1), Kind: KindSendIntent, Session: "T1", Intent: "i1"},
+		{At: at(1), Kind: KindSendIntent, Session: "T1", Intent: "i1", Hold: "release"},
 		{At: at(2), Kind: KindSend, Session: "T1", Intent: "i1", Outcome: "arrived", Hold: "release"},
+		{At: at(2), Kind: KindSendIntent, Session: "T1", Intent: "i0", Hold: "deploy"},
+		{At: at(2), Kind: KindFailure, Session: "T1", Intent: "i0", Reason: "Type failed"},
 		{At: at(3), Kind: KindSendIntent, Session: "T1", Intent: "i2", Text: "next"},
 		{At: at(4), Kind: KindGrant, ID: "G1", Scope: "merge"},
 		{At: at(5), Kind: KindAsk, ID: "A1", Question: "q"},
@@ -70,10 +73,11 @@ func TestDerivedViews(t *testing.T) {
 	if Find(ms, "111111") != ms[0] || Find(ms, "T1") != ms[0] || Find(ms, "11") != nil {
 		t.Fatal("find by label or six characters of the block")
 	}
-	if p := Pending(evs, "T1"); p == nil || p.Intent != "i2" {
-		t.Fatalf("the intent with no outcome is pending: %+v", p)
+	if p := Unresolved(evs, "T1"); len(p) != 1 || p[0].Intent != "i2" {
+		t.Fatalf("the intent with no outcome is unresolved: %+v", p)
 	}
-	if h := Holds(evs); len(h) != 1 || h[0].Session != "T1" {
+	// A hold is taken from admission; a send that failed before reaching its session took none.
+	if h := Holds(evs); len(h) != 1 || h[0].Session != "T1" || h[0].Name != "release" || !h[0].Since.Equal(at(1)) || h[0].Pending {
 		t.Fatalf("holds: %+v", h)
 	}
 	g, asks, _ := Records(evs)
@@ -83,4 +87,31 @@ func TestDerivedViews(t *testing.T) {
 	if NextID(evs, KindAsk, "A") != "A2" {
 		t.Fatal("next id")
 	}
+}
+
+func TestOwnRefusesASecondDriver(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	release, err := s.Own("block:1", "sending T1 \"recap\"")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := s.Busy("block:1"); o == nil || o.What != "sending T1 \"recap\"" {
+		t.Fatalf("busy names the owner: %+v", o)
+	}
+	var busy *Busy
+	if _, err := s.Own("block:1", "closing T1"); !errors.As(err, &busy) || busy.What != "sending T1 \"recap\"" {
+		t.Fatalf("a second owner is refused with the first's action: %v", err)
+	}
+	if _, err := s.Own("block:2", "x"); err != nil {
+		t.Fatalf("another session is free: %v", err)
+	}
+	release()
+	if s.Busy("block:1") != nil {
+		t.Fatal("released")
+	}
+	again, err := s.Own("block:1", "closing T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	again()
 }

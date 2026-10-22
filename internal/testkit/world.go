@@ -32,6 +32,9 @@ type World struct {
 	seq     int
 	// OnOpen configures a session as Rex opens it.
 	OnOpen func(c *Claude)
+	// OnCapture runs once, the next time a screen is captured: another
+	// driver acting between a driver's read and its action.
+	OnCapture func()
 }
 
 // New makes a world under a temporary directory.
@@ -59,7 +62,13 @@ type Claude struct {
 	Input      string // typed into the box, not sent
 	Suggestion string // Claude Code's dimmed guess
 	DropHead   int    // characters the next typing loses
-	Shells     []time.Time
+	LoseEnter  bool   // Enter does not reach the session: the line stays in the box
+	// TypeGate, when set, holds every Type until it is closed: a send caught mid-delivery.
+	TypeGate chan struct{}
+	Shells   []time.Time
+
+	tool  string // the tool call a permission prompt asks about
+	stale bool   // the turn ended without a hook firing, so Rex's record is old
 
 	// Reply decides what a taken prompt does. The default answers "ok" and ends the turn.
 	Reply func(c *Claude, prompt string)
@@ -72,19 +81,23 @@ type Claude struct {
 func (w *World) Add(label string) *Claude {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.add(label, filepath.Join(w.Root, "work"))
+	return w.add(label, filepath.Join(w.Root, "work"), "acct@example.com")
 }
 
-func (w *World) add(label, cwd string) *Claude {
+// add starts a session on an account. Accounts share one projects
+// directory, as the owner's do, so a session resumed on another account
+// carries on in the same transcript.
+func (w *World) add(label, cwd, account string) *Claude {
 	w.seq++
 	w.nextPID++
 	id := fmt.Sprintf("block:00000000-0000-0000-0000-%012x", 0xa00000+w.seq)
 	c := &Claude{w: w, Block: id, Label: label, PID: w.nextPID, SID: fmt.Sprintf("sid-%d", w.seq),
-		Config: filepath.Join(w.Root, "accounts", "acct@example.com"), Cwd: cwd,
+		Config: filepath.Join(w.Root, "accounts", account), Cwd: cwd,
 		State: "idle", Updated: w.now(), Running: true}
 	_ = os.MkdirAll(cwd, 0o755)
 	_ = os.MkdirAll(filepath.Join(c.Config, "sessions"), 0o755)
-	_ = os.MkdirAll(filepath.Join(c.Config, "projects", "proj"), 0o755)
+	_ = os.MkdirAll(filepath.Join(w.Root, "projects", "proj"), 0o755)
+	_ = os.Symlink(filepath.Join(w.Root, "projects"), filepath.Join(c.Config, "projects"))
 	_ = os.WriteFile(filepath.Join(c.Config, "sessions", fmt.Sprint(c.PID)+".json"),
 		[]byte(fmt.Sprintf(`{"sessionId":%q}`, c.SID)), 0o644)
 	if w.OnOpen != nil {
@@ -153,8 +166,12 @@ func (c *Claude) Say(text string) {
 
 // Ask records a tool call and puts the session on its permission prompt.
 func (c *Claude) Ask(command string) {
+	id := "toolu_" + uuid()
 	c.Write(map[string]any{"type": "assistant", "uuid": uuid(), "message": map[string]any{"role": "assistant",
-		"content": []map[string]any{{"type": "tool_use", "id": "toolu_" + uuid(), "name": "Bash", "input": map[string]any{"command": command}}}}})
+		"content": []map[string]any{{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{"command": command}}}}})
+	c.w.mu.Lock()
+	c.tool = id
+	c.w.mu.Unlock()
 	c.Set("blocked", "permission", "Claude needs your permission to use Bash")
 }
 
@@ -173,7 +190,7 @@ func (c *Claude) Set(state, kind, msg string) {
 }
 
 func (c *Claude) set(state, kind, msg string) {
-	c.State, c.Kind, c.Msg, c.Updated = state, kind, msg, c.w.now()
+	c.State, c.Kind, c.Msg, c.Updated, c.stale = state, kind, msg, c.w.now(), false
 }
 
 // Busy puts the session mid-turn on a prompt.
@@ -231,6 +248,13 @@ func (w *World) Blocks(string) ([]rex.Block, error) {
 
 func (w *World) Capture(block string, vt bool) (string, error) {
 	w.mu.Lock()
+	hook := w.OnCapture
+	w.OnCapture = nil
+	w.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	w.mu.Lock()
 	defer w.mu.Unlock()
 	c, ok := w.blocks[block]
 	if !ok {
@@ -248,8 +272,17 @@ func (w *World) Capture(block string, vt bool) (string, error) {
 
 func (w *World) Type(block, text string) error {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	c, ok := w.blocks[block]
+	gate := (*Claude)(nil)
+	if ok && c.TypeGate != nil {
+		gate = c
+	}
+	w.mu.Unlock()
+	if gate != nil {
+		<-gate.TypeGate
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("no block")
 	}
@@ -274,10 +307,13 @@ func (w *World) Key(block string, keys ...string) error {
 		c.Keys = append(c.Keys, k)
 		switch k {
 		case "enter":
-			if c.State == "blocked" && c.Kind == "permission" {
+			if c.LoseEnter {
+				continue
+			}
+			if c.State == "blocked" && c.Kind == "permission" && !c.stale {
 				c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user",
-					"content": []map[string]any{{"type": "tool_result", "tool_use_id": "x", "content": "approved"}}}})
-				c.set("working", "", "")
+					"content": []map[string]any{{"type": "tool_result", "tool_use_id": c.tool, "content": "approved"}}}})
+				c.set("working", "", "") // PostToolUse, once the command ran
 				continue
 			}
 			text := c.Input
@@ -285,7 +321,7 @@ func (w *World) Key(block string, keys ...string) error {
 			if text == "" {
 				continue
 			}
-			if c.State == "working" {
+			if c.State == "working" && !c.stale {
 				op := map[string]any{"type": "queue-operation", "operation": "enqueue"}
 				if !strings.HasPrefix(strings.TrimLeft(text, " "), "/") {
 					op["content"] = text
@@ -296,14 +332,21 @@ func (w *World) Key(block string, keys ...string) error {
 			c.Prompt(text)
 			c.set("working", "", "")
 			taken = append(taken, text)
+		// No hook fires when a turn is interrupted, a denied prompt included:
+		// the transcript records it and Rex keeps what it last heard.
 		case "escape":
-			if c.State == "blocked" {
-				c.set("done", "", "")
+			if c.State == "blocked" && !c.stale {
+				c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user",
+					"content": []map[string]any{{"type": "tool_result", "tool_use_id": c.tool, "is_error": true,
+						"content": "The user doesn't want to proceed with this tool use."}}}},
+					map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user",
+						"content": []map[string]any{{"type": "text", "text": "[Request interrupted by user for tool use]"}}}})
+				c.stale = true
 			}
 		case "ctrl+c":
-			if c.State == "working" {
+			if c.State == "working" && !c.stale {
 				c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user", "content": "[Request interrupted by user]"}})
-				c.set("done", "", "")
+				c.stale = true
 			}
 		case "ctrl+u":
 			c.Input = ""
@@ -321,10 +364,24 @@ func (w *World) Key(block string, keys ...string) error {
 	return nil
 }
 
+// Run opens a block running Claude Code. A --resume carries on the session
+// it names, in the same transcript, as accounts share one projects directory.
 func (w *World) Run(o rex.Open) (string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	c := w.add(o.Label, o.Dir)
+	account := "acct@example.com"
+	for _, f := range strings.Fields(strings.Join(o.Command, " ")) {
+		if strings.HasPrefix(f, "x-") {
+			account = strings.TrimSuffix(strings.TrimPrefix(f, "x-"), ";")
+		}
+	}
+	c := w.add(o.Label, o.Dir, account)
+	if cmd := strings.Join(o.Command, " "); strings.Contains(cmd, "--resume ") {
+		id := strings.Fields(strings.SplitN(cmd, "--resume ", 2)[1])[0]
+		c.SID = strings.Trim(strings.TrimSuffix(id, ";"), "'")
+		_ = os.WriteFile(filepath.Join(c.Config, "sessions", fmt.Sprint(c.PID)+".json"),
+			[]byte(fmt.Sprintf(`{"sessionId":%q}`, c.SID)), 0o644)
+	}
 	return c.Block, nil
 }
 
@@ -373,17 +430,25 @@ func (w *World) Shells(pid int) []time.Time {
 	return nil
 }
 
-// Watches records the watches drive starts.
+// Watches records the watches drive starts. Like the real ones, a name
+// already running is refused.
 type Watches struct {
 	mu      sync.Mutex
 	Running map[string][]string
+	Fail    error // what Start returns, when set
 }
 
 func (w *Watches) Start(name string, argv []string, log string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.Fail != nil {
+		return w.Fail
+	}
 	if w.Running == nil {
 		w.Running = map[string][]string{}
+	}
+	if _, ok := w.Running[name]; ok {
+		return fmt.Errorf("a watch named %s is already running", name)
 	}
 	w.Running[name] = argv
 	return nil
@@ -401,4 +466,12 @@ func (w *Watches) Stop(name string) error {
 	defer w.mu.Unlock()
 	delete(w.Running, name)
 	return nil
+}
+
+func (w *Watches) Retire(name string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, ok := w.Running[name]
+	delete(w.Running, name)
+	return ok
 }

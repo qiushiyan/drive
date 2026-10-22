@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -87,7 +89,7 @@ func cmdStatus(d *drive.Driver, argv []string) int {
 		rows := func(rs []drive.Row) []map[string]any {
 			var out []map[string]any
 			for _, r := range rs {
-				m := map[string]any{"label": r.Label, "block": rex.Short(r.Block), "window": r.Window, "state": r.State,
+				m := map[string]any{"label": r.Label, "sid": r.SID, "block": rex.Short(r.Block), "window": r.Window, "state": r.State,
 					"for_seconds": int(r.For.Seconds()), "account": r.Account, "input": r.Input, "stage": r.Stage,
 					"watch": r.Watch, "unhandled_wake": r.Unhandled, "last_sent": r.LastSent, "error": r.Error}
 				if r.View.Session != "" {
@@ -106,7 +108,7 @@ func cmdStatus(d *drive.Driver, argv []string) int {
 			}
 			return out
 		}
-		printJSON(map[string]any{"batch": st.Batch, "sessions": rows(st.Rows), "others": rows(st.Others),
+		printJSON(map[string]any{"batch": st.Batch, "sessions": rows(st.Rows), "closed": st.Closed, "others": rows(st.Others),
 			"holds": st.Holds, "open_asks": st.Asks, "grants": st.Grants, "in_flight": st.InFlight})
 		return 0
 	}
@@ -136,6 +138,8 @@ func cmdStatus(d *drive.Driver, argv []string) int {
 				ago(r.For), r.Input, r.Stage, prText(r), sent, wake, r.View)
 		}
 		w.Flush()
+	} else if st.Batch != nil && st.Closed > 0 {
+		fmt.Printf("no open sessions in this batch (%d closed)\n", st.Closed)
 	} else if st.Batch != nil {
 		fmt.Println("no sessions in this batch yet")
 	}
@@ -162,7 +166,12 @@ func cmdStatus(d *drive.Driver, argv []string) int {
 		}
 	}
 	for _, p := range st.InFlight {
-		fmt.Printf("in flight: %s to %s since %s (%s)\n", p.Kind, p.Session, clock(p.At, st.Zone, now), clip(p.Text, 60))
+		if p.Driver != nil {
+			fmt.Printf("in flight: %s to %s since %s, by pid %d (%s)\n", p.Kind, p.Session, clock(p.At, st.Zone, now), p.Driver.PID, clip(p.Text, 60))
+		} else {
+			fmt.Printf("left unfinished: %s to %s since %s, by a driver that has gone (%s); the next action on %s settles it\n",
+				p.Kind, p.Session, clock(p.At, st.Zone, now), clip(p.Text, 60), p.Session)
+		}
 	}
 	for _, g := range st.Grants {
 		fmt.Printf("grant %s (%s): %s — %s\n", g.ID, clock(g.At, st.Zone, now), g.Scope, g.Source)
@@ -221,13 +230,13 @@ func cmdRead(d *drive.Driver, argv []string) int {
 		return fail(err)
 	}
 	if a.on("json") {
-		printJSON(map[string]any{"session": r.Label, "state": r.State, "account": r.Account, "input": r.Input,
+		printJSON(map[string]any{"session": r.Label, "sid": r.SID, "state": r.State, "account": r.Account, "input": r.Input,
 			"input_text": r.Typed, "text": r.Text, "at": r.At, "view": r.View.String()})
 		return 0
 	}
 	fmt.Println(r.Text)
 	fmt.Println()
-	line := fmt.Sprintf("%s is %s on account %s", r.Label, r.State, orDash(r.Account))
+	line := fmt.Sprintf("%s is %s on account %s (session %s)", r.Label, r.State, orDash(r.Account), orDash(r.SID))
 	switch r.Input {
 	case "typed":
 		line += fmt.Sprintf("; its input box holds typed text nobody sent: %q", r.Typed)
@@ -244,6 +253,24 @@ func cmdWait(d *drive.Driver, argv []string) int {
 	if a == nil {
 		return code
 	}
+	// A watch drive started carries its name; a signal from anyone but drive
+	// is recorded, so a watch never ends without a word.
+	watch := os.Getenv("DRIVE_WATCH")
+	if a.on("notify") && watch != "" {
+		label := "timer " + a.str("note")
+		if len(a.pos) == 1 {
+			label = a.pos[0]
+		}
+		sigs := make(chan os.Signal, 1)
+		signal.Notify(sigs, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
+		go func() {
+			sig := <-sigs
+			if d.Killed(watch, label, sig) {
+				os.Exit(3)
+			}
+			os.Exit(0)
+		}()
+	}
 	if s := a.str("sleep"); s != "" {
 		after, err := seconds(s, 0)
 		if err != nil {
@@ -251,8 +278,7 @@ func cmdWait(d *drive.Driver, argv []string) int {
 		}
 		time.Sleep(after)
 		if a.on("notify") {
-			if err := d.Wake("", nil, a.str("note")); err != nil {
-				d.WatchFailed("", err)
+			if err := d.Ring(watch, a.str("note")); err != nil {
 				return fail(err)
 			}
 		}
@@ -270,23 +296,21 @@ func cmdWait(d *drive.Driver, argv []string) int {
 	if err != nil {
 		return bad(err.Error())
 	}
-	e, err := d.Wait(a.pos[0], quiet, bg)
+	var e *drive.Ending
+	if a.on("notify") {
+		e, err = d.Notify(watch, a.pos[0], quiet, bg)
+	} else {
+		e, err = d.Wait(a.pos[0], quiet, bg)
+	}
 	if err != nil {
-		if a.on("notify") {
-			d.WatchFailed(a.pos[0], err)
-		}
 		return fail(err)
 	}
 	if a.on("notify") {
-		if err := d.Wake(e.Label, e, ""); err != nil {
-			d.WatchFailed(e.Label, err)
-			return fail(err)
-		}
 		fmt.Printf("%s woke the driver for %s (%s)\n", time.Now().Format(time.RFC3339), e.Label, e.State)
 	}
 	if a.on("json") {
 		printJSON(map[string]any{"session": e.Label, "block": rex.Short(e.Block), "state": e.State, "error": e.Error,
-			"shells": e.Shells, "orphans": e.Orphans, "reply": e.Reply, "screen": e.Screen, "view": e.View.String()})
+			"shells": e.Shells, "orphans": e.Orphans, "reply": e.Reply, "screen": e.Screen, "view": e.View.String(), "next": e.Next})
 		return 0
 	}
 	fmt.Print(e.Text())
@@ -335,8 +359,13 @@ func cmdLog(d *drive.Driver, argv []string) int {
 	}
 	var since time.Time
 	if s := a.str("since"); s != "" {
+		// Read in the zone drive prints times in, so a time copied from its output means what it said.
+		zone := time.Local
+		if b, err := d.Batch(); err == nil {
+			zone = b.Zone()
+		}
 		var err error
-		if since, err = parseWhen(s); err != nil {
+		if since, err = parseWhen(s, zone); err != nil {
 			return bad(err.Error())
 		}
 	}
@@ -358,9 +387,9 @@ func cmdLog(d *drive.Driver, argv []string) int {
 	return 0
 }
 
-func parseWhen(s string) (time.Time, error) {
+func parseWhen(s string, zone *time.Location) (time.Time, error) {
 	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04", "2006-01-02T15:04", "2006-01-02"} {
-		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+		if t, err := time.ParseInLocation(layout, s, zone); err == nil {
 			return t, nil
 		}
 	}
@@ -437,7 +466,10 @@ func cmdMetrics(d *drive.Driver, argv []string) int {
 	fmt.Println()
 	fmt.Printf("merged: %d", len(m.Merged))
 	for _, p := range m.Merged {
-		fmt.Printf(" #%d (%s)", p.Number, p.Session)
+		fmt.Printf(" %s#%d (%s)", p.Repo, p.Number, strings.Join(p.Sessions, ", "))
+	}
+	if m.Unread > 0 {
+		fmt.Printf("; %d session(s) whose progress could not be read, so this may be short", m.Unread)
 	}
 	fmt.Println()
 	fmt.Printf("sends: %d — %d the owner's snippets, %d the driver's own words; %d retyped after a lost start; %d with delivery unknown\n",

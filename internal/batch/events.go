@@ -50,8 +50,8 @@ type Event struct {
 	Action  string `json:"action,omitempty"`
 	Call    string `json:"call,omitempty"` // the tool call a respond answered
 
-	ID             string `json:"id,omitempty"` // G1, A1, N1
-	Ref            string `json:"ref,omitempty"`
+	ID             string `json:"id,omitempty"`     // G1, A1, N1
+	Ref            string `json:"ref,omitempty"`    // the ask an answer answers; the session an open resumed
 	Source         string `json:"source,omitempty"` // the owner's words, and where they were said
 	Scope          string `json:"scope,omitempty"`
 	Question       string `json:"question,omitempty"`
@@ -74,6 +74,7 @@ type Member struct {
 	Joined  time.Time
 	Parked  string // why, while parked; a later send unparks
 	Closed  bool
+	Resumed bool // it carries on a session that already read the notice
 	// LastAction is the latest thing a driver did to it: a send, a respond, a park.
 	LastAction time.Time
 	LastSend   *Event
@@ -91,7 +92,7 @@ func Members(evs []Event) []*Member {
 		m := by[e.Session]
 		switch e.Kind {
 		case KindOpen, KindAdopt:
-			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Joined: e.At}
+			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Joined: e.At, Resumed: e.Ref != ""}
 			if old, ok := by[e.Session]; ok {
 				*old = *m // reopened under the same label
 				m = old
@@ -145,50 +146,73 @@ func Find(members []*Member, ref string) *Member {
 	return nil
 }
 
-// InFlight is how long an intent with no outcome counts as still running.
-const InFlight = 3 * time.Minute
-
-// Pending returns the newest intent for a session with no outcome yet.
-func Pending(evs []Event, session string) *Event {
-	done := map[string]bool{}
+// resolved says which intents have an outcome: a send, an open, or a
+// failure. sent says which of those reached the session.
+func resolved(evs []Event) (done, sent map[string]bool) {
+	done, sent = map[string]bool{}, map[string]bool{}
 	for _, e := range evs {
-		if (e.Kind == KindSend || e.Kind == KindFailure || e.Kind == KindOpen) && e.Intent != "" {
+		if e.Intent == "" {
+			continue
+		}
+		switch e.Kind {
+		case KindSend, KindOpen:
+			done[e.Intent], sent[e.Intent] = true, true
+		case KindFailure:
 			done[e.Intent] = true
 		}
 	}
-	for i := len(evs) - 1; i >= 0; i-- {
-		e := evs[i]
-		if (e.Kind == KindSendIntent || e.Kind == KindOpenIntent) && e.Session == session && !done[e.Intent] {
-			return &evs[i]
-		}
-	}
-	return nil
+	return done, sent
 }
 
-// Hold is a resource a session holds while the turn a send started runs.
+// Unresolved returns a session's intents with no outcome yet, oldest first.
+// Each one's driver is either still acting, holding the session's lock, or
+// has gone; the next driver to own the session settles what it left.
+func Unresolved(evs []Event, session string) []Event {
+	done, _ := resolved(evs)
+	var out []Event
+	for _, e := range evs {
+		if (e.Kind == KindSendIntent || e.Kind == KindOpenIntent) && e.Session == session && !done[e.Intent] {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// Hold is a resource a session holds from the moment its send is admitted
+// until the turn that send started has ended.
 type Hold struct {
 	Name    string
 	Session string
-	Since   time.Time
+	Since   time.Time // when the send that took it was admitted
+	Intent  string
+	Pending bool   // that send has no outcome yet
 	Step    string // for a session waiting for the hold: the step it was refused
 }
 
-// Holds lists the newest taking of each hold. Whether it is still held
-// depends on the holder's turn, which only the session can say.
+// Holds lists the newest taking of each hold. A send that failed before it
+// reached its session took nothing. Whether a taking still holds depends on
+// the holder's turn, which only the session can say.
 func Holds(evs []Event) []Hold {
-	latest := map[string]Hold{}
+	done, sent := resolved(evs)
+	takings := map[string][]Hold{}
 	var names []string
 	for _, e := range evs {
-		if e.Kind == KindSend && e.Hold != "" && (e.Outcome == "arrived" || e.Outcome == "queued") {
-			if _, ok := latest[e.Hold]; !ok {
+		if e.Kind == KindSendIntent && e.Hold != "" {
+			if _, ok := takings[e.Hold]; !ok {
 				names = append(names, e.Hold)
 			}
-			latest[e.Hold] = Hold{Name: e.Hold, Session: e.Session, Since: e.At}
+			takings[e.Hold] = append(takings[e.Hold], Hold{Name: e.Hold, Session: e.Session, Since: e.At, Intent: e.Intent, Pending: !done[e.Intent]})
 		}
 	}
-	out := make([]Hold, 0, len(names))
+	var out []Hold
 	for _, n := range names {
-		out = append(out, latest[n])
+		ts := takings[n]
+		for i := len(ts) - 1; i >= 0; i-- {
+			if ts[i].Pending || sent[ts[i].Intent] {
+				out = append(out, ts[i])
+				break
+			}
+		}
 	}
 	return out
 }

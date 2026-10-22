@@ -47,6 +47,8 @@ type Driver struct {
 type Refused struct {
 	Reason string
 	Next   string
+
+	account string // an account whose login the refusal found rejected
 }
 
 func (r *Refused) Error() string {
@@ -119,38 +121,79 @@ type Observation struct {
 	Typed    string // the input box's text, typed or suggested
 }
 
-// State is the session's state in one word, with an auth block and an
-// API error that Rex has not been told about (a session started before
-// the StopFailure hook) folded in.
-func (o *Observation) State() string {
-	st := o.Session.Status
-	if o.Frontier.Error != nil && st.State == "working" {
+// State is where the session's turn stands, in one word.
+func (o *Observation) State() string { return turnState(o.Session.Status, o.Frontier) }
+
+// turnState is where a session's turn stands, the one answer every action
+// reads: working; done or idle; interrupted; error; blocked:permission,
+// blocked:question or blocked:auth; gone. Rex hears of most changes from
+// Claude Code's hooks. The transcript covers what no hook reports: a turn
+// interrupted or a prompt denied, after which Rex keeps reading working or
+// blocked, and an API error in a session started before the StopFailure hook.
+func turnState(st rex.Status, f turn.Frontier) string {
+	open := st.State == "working" || st.State == "blocked" && st.Kind != "auth"
+	e := liveError(st, f)
+	switch {
+	case e != nil && e.Kind == "authentication_failed":
+		return "blocked:auth"
+	case e != nil && open:
 		return "error"
-	}
-	if st.State == "blocked" && st.Kind != "" {
+	case f.Interrupted && open:
+		return "interrupted"
+	case st.State == "blocked" && st.Kind != "":
 		return "blocked:" + st.Kind
 	}
 	return st.State
 }
 
+// liveError is the API error that ended the newest prompt's turn, unless it
+// ended an earlier process: accounts share one transcript directory, so a
+// session resumed on another account reads the error that ended the one it
+// replaced, and Rex has heard the new one start since.
+func liveError(st rex.Status, f turn.Frontier) *turn.APIError {
+	if e := f.Error; e != nil && !(st.State == "idle" && st.UpdatedAt.After(e.At)) {
+		return e
+	}
+	return nil
+}
+
 // LoginRejected says whether the session's login was refused.
-func (o *Observation) LoginRejected() bool {
-	return o.Session.Status.Kind == "auth" || (o.Frontier.Error != nil && o.Frontier.Error.Kind == "authentication_failed")
+func (o *Observation) LoginRejected() bool { return o.State() == "blocked:auth" }
+
+// target resolves a label in the batch or a block id to the session's
+// label and block, without reading the session.
+func (d *Driver) target(members []*batch.Member, ref string) (label, block string, err error) {
+	if m := batch.Find(members, ref); m != nil {
+		return m.Label, m.Block, nil
+	}
+	id, err := d.findBlock(ref)
+	if err != nil {
+		return "", "", err
+	}
+	return rex.Short(id), id, nil
+}
+
+// own takes a session for one action, from the read it is decided against
+// to the record of how it went. A second driver acting on the same session
+// meanwhile is refused, never queued behind the first.
+func (d *Driver) own(label, key, what string) (func(), error) {
+	release, err := d.Store.Own(key, what)
+	var busy *batch.Busy
+	if errors.As(err, &busy) {
+		return nil, &Refused{Reason: fmt.Sprintf("another driver is %s (pid %d, since %s)", busy.What, busy.PID, busy.Since.In(d.zone()).Format("15:04:05")),
+			Next: fmt.Sprintf("leave %s to it; once it is done, drive read %s shows where it stands", label, label)}
+	}
+	return release, err
 }
 
 // observe reads one session. ref is a label in the batch or a block id.
 func (d *Driver) observe(members []*batch.Member, ref string) (*Observation, error) {
 	o := &Observation{}
-	block := ""
-	if m := batch.Find(members, ref); m != nil {
-		o.Member, o.Label, block = m, m.Label, m.Block
-	} else {
-		id, err := d.findBlock(ref)
-		if err != nil {
-			return nil, err
-		}
-		o.Label, block = rex.Short(id), id
+	label, block, err := d.target(members, ref)
+	if err != nil {
+		return nil, err
 	}
+	o.Label, o.Member = label, batch.Find(members, label)
 	s, err := session.Locate(d.Term, d.Host, block)
 	if errors.Is(err, session.ErrNoClaude) {
 		return nil, &Refused{Reason: fmt.Sprintf("%s (block %s) has no Claude Code session running", o.Label, rex.Short(block)),
@@ -164,6 +207,7 @@ func (d *Driver) observe(members []*batch.Member, ref string) (*Observation, err
 	if o.Frontier, err = s.Frontier(); err != nil {
 		return nil, fmt.Errorf("reading %s's transcript: %w", o.Label, err)
 	}
+	o.Frontier.Error = liveError(s.Status, o.Frontier)
 	o.View = turn.ViewOf(o.Label, s.ID, o.Frontier)
 	if screen, err := d.Term.Capture(block, true); err == nil {
 		o.Input, o.Typed = turn.InputBox(screen)
@@ -249,12 +293,21 @@ func tail(s string, n int) string {
 	return s
 }
 
-// otherAccounts names the accounts a session could be relaunched on.
+// otherAccounts names the accounts a session could be relaunched on: not
+// the one it runs on, and none whose login this batch saw rejected.
 func (d *Driver) otherAccounts(current string) []string {
+	rejected := map[string]bool{current: true}
+	if _, evs, _, err := d.members(); err == nil {
+		for _, e := range evs {
+			if e.Account != "" && (e.Kind == batch.KindFailure || e.Kind == batch.KindRefused) {
+				rejected[e.Account] = true
+			}
+		}
+	}
 	dirs, _ := filepath.Glob(filepath.Join(d.Cfg.Home, ".claude-accounts", "*"))
 	var out []string
 	for _, dir := range dirs {
-		if st, err := os.Stat(filepath.Join(dir, "sessions")); err == nil && st.IsDir() && filepath.Base(dir) != current {
+		if st, err := os.Stat(filepath.Join(dir, "sessions")); err == nil && st.IsDir() && !rejected[filepath.Base(dir)] {
 			out = append(out, filepath.Base(dir))
 		}
 	}
@@ -262,12 +315,14 @@ func (d *Driver) otherAccounts(current string) []string {
 	return out
 }
 
+// relaunchHint says how to carry a session whose login was rejected over to
+// another account: close it and resume it there, its step on the open.
 func (d *Driver) relaunchHint(o *Observation) string {
-	acct := "another account"
-	if others := d.otherAccounts(o.Session.Account); len(others) > 0 {
-		acct = others[0]
+	others := d.otherAccounts(o.Session.Account)
+	if len(others) == 0 {
+		return "every other account's login was rejected in this batch too: tell the owner, and park the session until they log in again"
 	}
 	// Claude Code finds a session to resume under its working directory's project.
-	return fmt.Sprintf("relaunch it on another account: drive close %s && drive open %s --dir %s --resume %s --account %s, then send its step again",
-		o.View, o.Label, shellQuote(o.Session.Dir), o.Session.ID, acct)
+	return fmt.Sprintf("relaunch it on another account with the step it was to take: drive close %s && drive open %s --dir %s --resume %s --account %s '<the step>'",
+		o.View, o.Label, shellQuote(o.Session.Dir), o.Session.ID, others[0])
 }

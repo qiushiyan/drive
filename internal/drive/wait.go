@@ -2,6 +2,7 @@ package drive
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -31,6 +32,7 @@ type Ending struct {
 	Screen  string // the screen's end, for a prompt the transcript does not show
 	View    turn.View
 	Account string
+	Next    string // what the driver does about it, where the ending decides that
 }
 
 // Wait blocks until a session's turn ends and has stayed ended for quiet: it
@@ -74,7 +76,7 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 		state := o.State()
 		ended := false
 		switch {
-		case o.Frontier.Error != nil || st.Kind == "auth" || state == "error":
+		case state == "blocked:auth" || state == "error" || state == "interrupted":
 			ended = true // nothing will happen until someone acts
 		case strings.HasPrefix(state, "blocked"):
 			ended = held >= quiet
@@ -94,6 +96,18 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 				if screen, err := d.Term.Capture(o.Session.Block, false); err == nil {
 					e.Screen = lastLines(screen, 25)
 				}
+			}
+			switch {
+			case state == "blocked:auth":
+				e.Next = d.relaunchHint(o)
+			case strings.HasPrefix(state, "blocked"):
+				e.Next = fmt.Sprintf("see what it asks (drive read %s --pending), then answer it: drive respond %s approve|deny", o.Label, o.View)
+			case state == "error":
+				e.Next = fmt.Sprintf("read it (drive read %s); send its step again once the API recovers", o.Label)
+			case state == "interrupted":
+				e.Next = fmt.Sprintf("its turn was interrupted; read where it stopped (drive read %s) before its next step", o.Label)
+			case e.Capped:
+				e.Next = fmt.Sprintf("if the reply says it waits on its own job, watch it again (drive watch %s); otherwise send its next step", o.Label)
 			}
 			return e, nil
 		}
@@ -116,6 +130,7 @@ func (e *Ending) Text() string {
 		"done": "its turn ended", "blocked:permission": "it waits on a permission prompt",
 		"blocked:question": "it waits on a question", "blocked:auth": "its login was rejected",
 		"error": "an API error ended its turn", "gone": "its session is gone",
+		"interrupted": "its turn was interrupted",
 	}[e.State]
 	if what == "" {
 		what = e.State
@@ -145,68 +160,27 @@ func (e *Ending) Text() string {
 	if e.View.Session != "" {
 		fmt.Fprintf(&b, "view: %s\n", e.View)
 	}
+	if e.Next != "" {
+		fmt.Fprintf(&b, "next: %s\n", e.Next)
+	}
 	return b.String()
-}
-
-// Watches runs a wait in the background so it outlives the command that
-// armed it, and stops it. What the wait prints goes to log, so one that
-// ends early says why.
-type Watches interface {
-	Start(name string, argv []string, log string) error
-	Alive(name string) bool
-	Stop(name string) error
-}
-
-// Tmux keeps each watch in a detached tmux session: a chat driver's shell
-// commands end, and a process they started would end with them.
-type Tmux struct{}
-
-// carried are the variables a watch needs from the command that armed it; a
-// tmux session otherwise starts from the tmux server's environment.
-func carried() []string {
-	var out []string
-	for _, kv := range os.Environ() {
-		k, _, _ := strings.Cut(kv, "=")
-		if k == "PATH" || k == "HOME" || strings.HasPrefix(k, "DRIVE_") || k == "REX_SERVER" {
-			out = append(out, "-e", kv)
-		}
-	}
-	return out
-}
-
-func (Tmux) Start(name string, argv []string, log string) error {
-	args := append([]string{"new-session", "-d", "-s", name}, carried()...)
-	args = append(args, "--", "/bin/sh", "-c", `exec "$@" >>"$0" 2>&1`, log)
-	out, err := exec.Command("tmux", append(args, argv...)...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("tmux new-session %s: %s", name, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-func (Tmux) Alive(name string) bool {
-	return exec.Command("tmux", "has-session", "-t", "="+name).Run() == nil
-}
-
-func (Tmux) Stop(name string) error {
-	if !(Tmux{}).Alive(name) {
-		return nil
-	}
-	return exec.Command("tmux", "kill-session", "-t", "="+name).Run()
 }
 
 func watchName(block string) string { return "drive-" + rex.Short(block) }
 
-// arm starts the wake for a session unless one is already running.
+// arm starts the wake for a session unless one is already waiting on it. A
+// watch takes itself off the books before it posts, so one still running
+// waits on a turn that has not ended.
 func (d *Driver) arm(b *batch.Batch, label, block string) error {
 	if d.Watches == nil {
-		return fmt.Errorf("no watches")
+		return fmt.Errorf("this driver runs no watches")
 	}
 	name := watchName(block)
 	if d.Watches.Alive(name) {
 		return nil
 	}
 	if err := d.Watches.Start(name, []string{d.Self, "--batch", b.Meta.Name, "wait", label, "--notify"}, watchLog(b)); err != nil {
+		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindFailure, Session: label, Reason: "its wake did not start: " + err.Error()})
 		return err
 	}
 	return b.Append(batch.Event{At: d.now(), Kind: batch.KindWatch, Session: label, Block: block})
@@ -280,6 +254,48 @@ func (d *Driver) WatchFailed(label string, err error) {
 	}
 }
 
+// Notify is a watch's own run: wait for the session's turn to end, take the
+// watch off the books so a step sent from now on arms a fresh one, then wake
+// the driver. watch is the watch's name, "" when run by hand.
+func (d *Driver) Notify(watch, ref string, quiet, bgCap time.Duration) (*Ending, error) {
+	e, err := d.Wait(ref, quiet, bgCap)
+	if watch != "" && d.Watches != nil {
+		d.Watches.Retire(watch)
+	}
+	if err != nil {
+		d.WatchFailed(ref, err)
+		return nil, err
+	}
+	if err := d.Wake(e.Label, e, ""); err != nil {
+		d.WatchFailed(e.Label, err)
+		return e, err
+	}
+	return e, nil
+}
+
+// Ring is a timer's own run once its delay is over.
+func (d *Driver) Ring(watch, note string) error {
+	if watch != "" && d.Watches != nil {
+		d.Watches.Retire(watch)
+	}
+	if err := d.Wake("", nil, note); err != nil {
+		d.WatchFailed("", err)
+		return err
+	}
+	return nil
+}
+
+// Killed records a watch ended by a signal, unless drive stopped it: Stop
+// takes a watch off the books before signalling it. It says whether the
+// signal came from elsewhere.
+func (d *Driver) Killed(watch, label string, sig os.Signal) bool {
+	if d.Watches == nil || !d.Watches.Retire(watch) {
+		return false
+	}
+	d.WatchFailed(label, fmt.Errorf("killed by %s", sig))
+	return true
+}
+
 func safeName(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -330,7 +346,10 @@ func (d *Driver) Wake(label string, e *Ending, note string) error {
 		ev.Block, ev.Outcome, ev.View = e.Block, e.State, e.View.String()
 	}
 	if err != nil {
-		ev.HTTP, ev.Reason = 0, fmt.Sprintf("http %d %s", last.HTTP, clip(last.Err, 200))
+		ev.HTTP, ev.Reason = 0, clip(err.Error(), 200)
+		if last.Try > 0 {
+			ev.Reason = fmt.Sprintf("http %d %s", last.HTTP, clip(last.Err, 200))
+		}
 	}
 	_ = b.Append(ev)
 	for _, c := range append(append([]string{}, b.Meta.AfterWake...), d.Cfg.AfterWake...) {
@@ -341,8 +360,9 @@ func (d *Driver) Wake(label string, e *Ending, note string) error {
 	return err
 }
 
-// holder says whether a hold is taken by a session other than label whose
-// turn, started by the send that took it, has not ended yet.
+// holder says whether a hold is taken by a session other than label: its
+// send is still under way, or the turn that send started has not ended. A
+// holder that cannot be read holds; only one that is gone does not.
 func (d *Driver) holder(evs []batch.Event, members []*batch.Member, name, label string) (batch.Hold, bool) {
 	for _, h := range batch.Holds(evs) {
 		if h.Name != name || h.Session == label {
@@ -352,15 +372,50 @@ func (d *Driver) holder(evs []batch.Event, members []*batch.Member, name, label 
 		if m == nil || m.Closed {
 			return h, false
 		}
-		s, err := session.Locate(d.Term, d.Host, m.Block)
-		if err != nil {
-			return h, false // the session is gone
-		}
-		if s.Status.State == "working" || strings.HasPrefix(s.Status.State, "blocked") && s.Status.Kind != "auth" {
+		if h.Pending && d.Store.Busy(m.Block) != nil {
 			return h, true
 		}
-		f, _ := s.Frontier()
-		return h, f.Last == nil || f.Last.At.Before(h.Since)
+		s, err := session.Locate(d.Term, d.Host, m.Block)
+		if errors.Is(err, session.ErrNoClaude) || err != nil && !d.blockExists(m.Block) {
+			return h, false
+		}
+		if err != nil {
+			return h, true
+		}
+		f, err := s.Frontier()
+		if err != nil {
+			return h, true
+		}
+		if state := turnState(s.Status, f); state == "working" || strings.HasPrefix(state, "blocked") && state != "blocked:auth" {
+			return h, true
+		}
+		if p := f.Newest(); p == nil || p.At.Before(h.Since) {
+			return h, false // the send never reached it
+		}
+		if !f.Answered() {
+			return h, true
+		}
+		// A turn that ended while a shell it started runs, such as a wait on
+		// checks before a merge, resumes when the shell ends.
+		for _, at := range d.Host.Shells(s.Status.PID) {
+			if !at.Before(h.Since) {
+				return h, true
+			}
+		}
+		return h, false
 	}
 	return batch.Hold{}, false
+}
+
+func (d *Driver) blockExists(block string) bool {
+	blocks, err := d.Term.Blocks("")
+	if err != nil {
+		return true
+	}
+	for _, b := range blocks {
+		if b.ID == block {
+			return true
+		}
+	}
+	return false
 }
