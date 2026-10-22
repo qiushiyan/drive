@@ -32,6 +32,20 @@ func adopted(t *testing.T, r *rig, label string) *testkit.Claude {
 	return c
 }
 
+// admitted waits until a send of text to session is on record: past its
+// admission, on its way to the session.
+func admitted(r *rig, session, text string) {
+	for i := 0; i < 2000; i++ {
+		for _, e := range r.events(batch.KindSendIntent) {
+			if e.Session == session && e.Text == text {
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	r.t.Fatalf("no send of %q to %s was admitted", text, session)
+}
+
 // A send that has recorded its hold but not yet finished typing holds it:
 // a second session's send for the same resource waits.
 func TestAHoldIsTakenWhenTheSendIsAdmitted(t *testing.T) {
@@ -47,9 +61,7 @@ func TestAHoldIsTakenWhenTheSendIsAdmitted(t *testing.T) {
 		first <- err
 	}()
 	// Let the first send get past admission and block in Type.
-	for i := 0; i < 200 && len(r.events(batch.KindSendIntent)) < 3; i++ {
-		time.Sleep(time.Millisecond)
-	}
+	admitted(r, "T5", "release")
 	_, err := r.d.Send(vb, drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"})
 	close(gate)
 	if ferr := <-first; ferr != nil {
@@ -378,9 +390,7 @@ func TestCloseWaitsForADriverMidSend(t *testing.T) {
 		defer wg.Done()
 		_, _ = r.d.Send(v, drive.Step{Line: "recap"}, drive.SendOptions{})
 	}()
-	for i := 0; i < 500 && len(r.events(batch.KindSendIntent)) < 2; i++ {
-		time.Sleep(time.Millisecond)
-	}
+	admitted(r, "T1", "recap")
 	err := r.d.Close(v)
 	close(gate)
 	wg.Wait()
