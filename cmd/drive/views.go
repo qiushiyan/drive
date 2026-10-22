@@ -412,12 +412,20 @@ func describe(e batch.Event) string {
 	case batch.KindOpen, batch.KindAdopt:
 		return fmt.Sprintf("block %s, account %s, %s", rex.Short(e.Block), e.Account, e.Dir)
 	case batch.KindRespond:
-		return e.Action + " " + clip(e.Call, 100)
-	case batch.KindWake:
-		if e.HTTP == 0 && e.Reason != "" {
-			return "post failed: " + e.Reason
+		s := e.Action + " " + clip(e.Call, 100)
+		if e.Outcome != "" {
+			s += " → " + e.Outcome
 		}
-		return fmt.Sprintf("%s, posted (http %d, try %d)", orDash(e.Outcome), e.HTTP, e.Try)
+		return s
+	case batch.KindWake:
+		what := orDash(e.Outcome)
+		if e.Session == "" {
+			what = "timer " + e.Note
+		}
+		if e.HTTP == 0 && e.Reason != "" {
+			return what + ", post failed: " + e.Reason
+		}
+		return fmt.Sprintf("%s, posted (http %d, try %d)", what, e.HTTP, e.Try)
 	case batch.KindGrant:
 		return e.ID + " " + e.Scope + " — " + e.Source
 	case batch.KindAsk:
