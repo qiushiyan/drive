@@ -536,7 +536,7 @@ func TestRecordsAndMetrics(t *testing.T) {
 	r.d.Cfg.Webhook = config.Webhook{URL: srv.URL}
 	notify := func(c *testkit.Claude, label string) {
 		t.Helper()
-		if _, err := r.d.Notify("drive-"+c.Block[len(c.Block)-6:], label, time.Second, time.Minute); err != nil {
+		if _, err := r.d.Notify("drive-b1-"+c.Block[len(c.Block)-6:], label, time.Second, time.Minute); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -576,8 +576,8 @@ func TestRecordsAndMetrics(t *testing.T) {
 	}
 	notify(c, "T1")
 
-	// T2 stops on a prompt and is approved: no watch follows the rest of that
-	// turn, and its end wakes no one.
+	// T2 stops on a prompt and is approved; the end of that turn is never
+	// posted, so the approval is a turn left unwatched.
 	c2 := r.w.Add("T2")
 	done(c2, "onboard", "analysis")
 	if _, err := r.d.Send(r.view(c2.Block[len(c2.Block)-6:]), drive.Step{Line: "start"}, drive.SendOptions{Label: "T2"}); err != nil {
@@ -621,7 +621,7 @@ func TestRecordsAndMetrics(t *testing.T) {
 		if err := r.d.Timer(5*time.Minute, note); err != nil {
 			t.Fatal(err)
 		}
-		_ = r.d.Ring("drive-timer-"+strings.ReplaceAll(note, " ", "-"), note)
+		_ = r.d.Ring("drive-b1-timer-"+strings.ReplaceAll(note, " ", "-"), note)
 	}
 
 	r.w.Clock.Sleep(30 * time.Minute)
