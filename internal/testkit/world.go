@@ -45,6 +45,10 @@ type World struct {
 	// StatusFails makes the next reads of Rex's records fail, as a busy
 	// Rex server sometimes does.
 	StatusFails int
+	// Primary is the name the owner's shell gives the primary account's
+	// launcher: x-<Primary> starts a session under ~/.claude, which its
+	// session reports as account "primary".
+	Primary string
 }
 
 // New makes a world under a temporary directory.
@@ -118,8 +122,12 @@ func (w *World) add(label, cwd, account string) *Claude {
 	w.seq++
 	w.nextPID++
 	id := fmt.Sprintf("block:00000000-0000-0000-0000-%012x", 0xa00000+w.seq)
+	config := filepath.Join(w.Root, "accounts", account)
+	if w.Primary != "" && account == w.Primary {
+		config = filepath.Join(w.Root, ".claude")
+	}
 	c := &Claude{w: w, Block: id, Label: label, PID: w.nextPID, SID: fmt.Sprintf("sid-%d", w.seq),
-		Config: filepath.Join(w.Root, "accounts", account), Cwd: cwd,
+		Config: config, Cwd: cwd,
 		State: "idle", Updated: w.now(), Running: true,
 		Activity: "idle", ActivityAt: w.now(), ProcStart: w.now().UTC().Format("Mon Jan _2 15:04:05 2006")}
 	_ = os.MkdirAll(cwd, 0o755)

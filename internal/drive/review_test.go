@@ -664,28 +664,126 @@ func TestAnInterruptedTurnEndsTheWait(t *testing.T) {
 	}
 }
 
-// The relaunch drive prescribes for a rejected login runs to the end: the
-// resumed session reads the old error in the transcript it shares.
+// shellWords splits a command as a shell would: words apart on spaces,
+// '…' quoting, '\” a quote inside.
+func shellWords(t *testing.T, s string) []string {
+	t.Helper()
+	var out []string
+	var w strings.Builder
+	in, started := false, false
+	for _, r := range s {
+		switch {
+		case r == '\'':
+			in, started = !in, true
+		case r == ' ' && !in:
+			if started {
+				out, started = append(out, w.String()), false
+				w.Reset()
+			}
+		default:
+			w.WriteRune(r)
+			started = true
+		}
+	}
+	if in {
+		t.Fatalf("unbalanced quote in %q", s)
+	}
+	if started {
+		out = append(out, w.String())
+	}
+	return out
+}
+
+// relaunch runs a relaunch as a message prints it: each drive command of
+// "drive close … && drive open …" in turn, as a driver would.
+func relaunch(t *testing.T, r *rig, next string) *drive.Opened {
+	t.Helper()
+	i := strings.Index(next, "drive close ")
+	if i < 0 {
+		t.Fatalf("no relaunch in %q", next)
+	}
+	var opened *drive.Opened
+	for _, cmd := range strings.Split(next[i:], " && ") {
+		w := shellWords(t, cmd)
+		switch w[1] {
+		case "close":
+			if err := r.d.Close(w[2]); err != nil {
+				t.Fatalf("%s: %v", cmd, err)
+			}
+		case "open":
+			var opt drive.OpenOptions
+			var step drive.Step
+			for j := 3; j < len(w); j++ {
+				switch w[j] {
+				case "--dir":
+					j++
+					opt.Dir = w[j]
+				case "--resume":
+					j++
+					opt.Resume = w[j]
+				case "--account":
+					j++
+					opt.Account = w[j]
+				default:
+					step.Line = w[j]
+				}
+			}
+			o, err := r.d.Open(w[2], step, opt)
+			if err != nil {
+				t.Fatalf("%s: %v", cmd, err)
+			}
+			opened = o
+		default:
+			t.Fatalf("not a relaunch: %s", cmd)
+		}
+	}
+	return opened
+}
+
+// The relaunch drive prints for a rejected login runs as printed: the close
+// on the session's view as it stands, the open on another account with the
+// step. The resumed session reads the old error in the transcript it shares
+// as the process it replaced's.
 func TestARelaunchedSessionTakesItsStep(t *testing.T) {
 	r := newRig(t, "none")
 	_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".claude-accounts", "other@example.com", "sessions"), 0o755)
-	_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".claude-accounts", "third@example.com", "sessions"), 0o755)
+	_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".claude", "sessions"), 0o755)
+	r.w.Primary, r.d.Cfg.PrimaryName = "owner", "owner"
 	c := adopted(t, r, "T4")
-	c.Prompt("implement-spec")
-	c.Fail("authentication_failed", "Login expired · Please run /login")
-	c.Set("blocked", "auth", "Login expired · Please run /login")
-	_, err := r.d.Send(r.view("T4"), drive.Step{Line: "go on"}, drive.SendOptions{})
-	if !isRefused(err) || !strings.Contains(err.Error(), "--resume "+c.SID+" --account other@example.com '<the step>'") {
-		t.Fatalf("the refusal prints the relaunch with the step on it: %v", err)
+	c.Edit(func(c *testkit.Claude) {
+		c.Reply = func(c *testkit.Claude, _ string) {
+			c.Fail("authentication_failed", "Login expired · Please run /login")
+			c.Set("blocked", "auth", "Login expired · Please run /login")
+		}
+	})
+	_, err := r.d.Send(r.view("T4"), drive.Step{Line: "implement-spec"}, drive.SendOptions{})
+	var f *drive.Failed
+	if !errors.As(err, &f) || !f.Login {
+		t.Fatalf("the step's answer is a rejected login: %v", err)
 	}
+	r.w.Clock.Sleep(time.Minute) // the driver reads the failure and relaunches
+	o := relaunch(t, r, f.Next)
+	if o.Account != "other@example.com" || o.Sent == nil || o.Sent.Outcome != "arrived" || o.Sent.Typed != "implement-spec" || o.Sent.Notice {
+		t.Fatalf("resumed on another account, it takes its step with no second notice: %+v %+v", o, o.Sent)
+	}
+
+	// Rejected there too, the next relaunch is offered on the primary.
+	n := r.w.Session(o.Block)
+	n.Prompt("go on")
+	n.Fail("authentication_failed", "Login expired · Please run /login")
+	n.Set("blocked", "auth", "Login expired")
+	_, err = r.d.Send(r.view("T4"), drive.Step{Line: "go on"}, drive.SendOptions{})
+	if !isRefused(err) || !strings.Contains(err.Error(), "--account primary 'go on'") {
+		t.Fatalf("the refusal prints the relaunch on the primary, the step on it: %v", err)
+	}
+	r.w.Clock.Sleep(time.Minute)
 	if err := r.d.Close(r.view("T4")); err != nil {
 		t.Fatal(err)
 	}
-	r.w.Clock.Sleep(time.Minute) // the driver reads the refusal and relaunches
 	// Resumed without its step, it still shows the old error until it takes one.
-	o, err := r.d.Open("T4", drive.Step{}, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work"), Resume: c.SID, Account: "other@example.com"})
-	if err != nil {
-		t.Fatal(err)
+	p, err := r.d.Open("T4", drive.Step{}, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work"), Resume: c.SID, Account: "primary"})
+	if err != nil || p.Account != "primary" {
+		t.Fatalf("opened on the primary: %+v %v", p, err)
 	}
 	if rd, _ := r.d.Read("T4", drive.ReadLast, 1); rd.State != "done" {
 		t.Fatalf("the error belongs to the process it replaced: %+v", rd)
@@ -694,12 +792,12 @@ func TestARelaunchedSessionTakesItsStep(t *testing.T) {
 	if err != nil || sent.Outcome != "arrived" || sent.Notice {
 		t.Fatalf("the resumed session takes the step, with no second notice: %+v %v", sent, err)
 	}
-	// A second rejected login steers the next relaunch clear of both accounts.
-	_ = r.b.Append(batch.Event{Kind: batch.KindFailure, Session: "T4", Account: "third@example.com", Reason: "login was rejected"})
-	n := r.w.Session(o.Block)
-	n.Prompt("go on")
-	n.Fail("authentication_failed", "Login expired · Please run /login")
-	n.Set("blocked", "auth", "Login expired")
+
+	// With every account seen rejected, none is offered.
+	m := r.w.Session(p.Block)
+	m.Prompt("go on")
+	m.Fail("authentication_failed", "Login expired · Please run /login")
+	m.Set("blocked", "auth", "Login expired")
 	_, err = r.d.Send(r.view("T4"), drive.Step{Line: "go on"}, drive.SendOptions{})
 	if !isRefused(err) || !strings.Contains(err.Error(), "every other account's login was rejected") {
 		t.Fatalf("no account known to be dead is offered: %v", err)

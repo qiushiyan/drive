@@ -787,6 +787,14 @@ func TestLaunchCommand(t *testing.T) {
 	if len(got) != 3 || got[0] != "/bin/zsh" || got[1] != "-lic" || got[2] != want {
 		t.Fatalf("launch: %q", got)
 	}
+	// The primary account's launcher is named by the owner's shell, not "primary".
+	r.d.Cfg.PrimaryName = "owner"
+	if _, err := r.d.Open("judge2", drive.Step{}, drive.OpenOptions{Dir: r.w.Root, Account: "primary"}); err != nil {
+		t.Fatal(err)
+	}
+	if want := "PLANLAB_AGENT_NUDGES=off x-owner; exec zsh -l"; len(got) != 3 || got[2] != want {
+		t.Fatalf("launch on the primary: %q", got)
+	}
 }
 
 type recordingTerm struct {

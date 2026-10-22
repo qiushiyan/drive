@@ -27,6 +27,11 @@ type Config struct {
 	// least-loaded account, "x-<account>" on that one. It runs in a login
 	// zsh, so it may be a shell function.
 	Launcher string `toml:"launcher"`
+	// PrimaryName is the name the launcher knows the primary account
+	// (~/.claude) by: Launcher-<name> starts a session there. It defaults to
+	// $CLAUDE_PRIMARY_NAME, then $HEADROOM_PRIMARY_NAME, as the owner's shell
+	// names it; unknown, the primary is never offered for a relaunch.
+	PrimaryName string `toml:"primary_name"`
 	// LaunchEnv is set for every session drive opens. The default turns off
 	// Bench's peer nudges, which hold a session at a prompt nobody answers.
 	LaunchEnv map[string]string `toml:"launch_env"`
@@ -56,12 +61,13 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	c := Config{
-		Home:      home,
-		ConfigDir: envOr("DRIVE_CONFIG_DIR", filepath.Join(home, ".config/drive")),
-		StateDir:  envOr("DRIVE_STATE_DIR", filepath.Join(home, ".local/state/drive")),
-		Launcher:  "x",
-		LaunchEnv: map[string]string{"PLANLAB_AGENT_NUDGES": "off"},
-		Notice:    filepath.Join(home, ".agents/skills/drive-session/NOTICE.md"),
+		Home:        home,
+		ConfigDir:   envOr("DRIVE_CONFIG_DIR", filepath.Join(home, ".config/drive")),
+		StateDir:    envOr("DRIVE_STATE_DIR", filepath.Join(home, ".local/state/drive")),
+		Launcher:    "x",
+		PrimaryName: envOr("CLAUDE_PRIMARY_NAME", os.Getenv("HEADROOM_PRIMARY_NAME")),
+		LaunchEnv:   map[string]string{"PLANLAB_AGENT_NUDGES": "off"},
+		Notice:      filepath.Join(home, ".agents/skills/drive-session/NOTICE.md"),
 	}
 	path := filepath.Join(c.ConfigDir, "config.toml")
 	if _, err := toml.DecodeFile(path, &c); err != nil && !os.IsNotExist(err) {

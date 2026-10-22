@@ -45,6 +45,10 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	if label == "" || strings.ContainsAny(label, " @/") {
 		return nil, &Refused{Reason: fmt.Sprintf("label %q: use a short name without spaces, '@' or '/', such as T1", label)}
 	}
+	if opt.Account == "primary" && d.Cfg.PrimaryName == "" {
+		return nil, &Refused{Reason: "the primary account's launcher is not known: its name is the owner's shell's",
+			Next: "open on another account, or tell the owner to set primary_name in ~/.config/drive/config.toml"}
+	}
 	opening, err := d.own(label, "open:"+label, "opening "+label)
 	if err != nil {
 		return nil, d.refuse(b, label, err)
@@ -195,7 +199,10 @@ func (d *Driver) launch(opt OpenOptions) []string {
 	}
 	sort.Strings(env)
 	launcher := d.Cfg.Launcher
-	if opt.Account != "" {
+	switch {
+	case opt.Account == "primary":
+		launcher += "-" + d.Cfg.PrimaryName // the shell names the primary's launcher; Open refuses it unknown
+	case opt.Account != "":
 		launcher += "-" + opt.Account
 	}
 	cmd := strings.TrimSpace(strings.Join(env, " ") + " " + launcher)

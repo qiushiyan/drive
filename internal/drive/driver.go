@@ -445,7 +445,9 @@ func tail(s string, n int) string {
 }
 
 // otherAccounts names the accounts a session could be relaunched on: not
-// the one it runs on, and none whose login this batch saw rejected.
+// the one it runs on, and none whose login this batch saw rejected. The
+// primary (~/.claude, which a session reports as "primary") is one when the
+// name its launcher takes is known.
 func (d *Driver) otherAccounts(current string) []string {
 	rejected := map[string]bool{current: true}
 	if _, evs, _, err := d.members(); err == nil {
@@ -463,17 +465,31 @@ func (d *Driver) otherAccounts(current string) []string {
 		}
 	}
 	sort.Strings(out)
+	if d.Cfg.PrimaryName != "" && !rejected["primary"] {
+		if st, err := os.Stat(filepath.Join(d.Cfg.Home, ".claude", "sessions")); err == nil && st.IsDir() {
+			out = append(out, "primary")
+		}
+	}
 	return out
 }
 
 // relaunchHint says how to carry a session whose login was rejected over to
-// another account: close it and resume it there, its step on the open.
-func (d *Driver) relaunchHint(o *Observation) string {
+// another account, for a driver that has its step to hand.
+func (d *Driver) relaunchHint(o *Observation) string { return d.relaunch(o, "'<the step>'") }
+
+// relaunch says how to carry a session whose login was rejected over to
+// another account: close it on its view as it stands now, and resume it
+// there with step, as drive open takes it, on the open.
+func (d *Driver) relaunch(o *Observation, step string) string {
 	others := d.otherAccounts(o.Session.Account)
 	if len(others) == 0 {
 		return "every other account's login was rejected in this batch too: tell the owner, and park the session until they log in again"
 	}
 	// Claude Code finds a session to resume under its working directory's project.
-	return fmt.Sprintf("relaunch it on another account with the step it was to take: drive close %s && drive open %s --dir %s --resume %s --account %s '<the step>'",
-		o.View, o.Label, shellQuote(o.Session.Dir), o.Session.ID, others[0])
+	cmd := fmt.Sprintf("drive close %s && %s %s", viewNow(o),
+		openCommand(o.Label, OpenOptions{Dir: o.Session.Dir, Resume: o.Session.ID, Account: others[0]}), step)
+	if n := len(d.Host.Shells(o.Session.Status.PID)); n > 0 {
+		return fmt.Sprintf("relaunch it on another account with the step it was to take once its %d background shell(s) end, as close refuses until then: %s", n, cmd)
+	}
+	return "relaunch it on another account with the step it was to take (close refuses while a background shell of its runs): " + cmd
 }

@@ -20,6 +20,8 @@ func TestMain(m *testing.M) {
 	os.Setenv("HOME", dir)
 	os.Setenv("DRIVE_STATE_DIR", filepath.Join(dir, "state"))
 	os.Setenv("DRIVE_CONFIG_DIR", filepath.Join(dir, "config"))
+	os.Unsetenv("CLAUDE_PRIMARY_NAME") // the owner's shell's, not the tests'
+	os.Unsetenv("HEADROOM_PRIMARY_NAME")
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

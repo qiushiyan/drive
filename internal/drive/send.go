@@ -92,7 +92,7 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 	if err := checkView(o, v, opt.Queue, b.Zone()); err != nil {
 		return nil, d.refuse(b, o.Label, err)
 	}
-	if err := d.ready(o, opt.Queue); err != nil {
+	if err := d.ready(o, opt.Queue, step); err != nil {
 		return nil, d.refuse(b, o.Label, err)
 	}
 	m := batch.Find(members, o.Label)
@@ -185,7 +185,7 @@ func asTyped(s string) string { return strings.TrimSpace(turn.AsTyped(s)) }
 // ready refuses a send the session cannot take as it stands. --queue lets a
 // working session take a step mid-turn; nothing lets a step through a
 // prompt, where Enter would answer it.
-func (d *Driver) ready(o *Observation, queue bool) error {
+func (d *Driver) ready(o *Observation, queue bool, step Step) error {
 	state := o.State()
 	switch {
 	case state == "blocked:auth":
@@ -194,7 +194,7 @@ func (d *Driver) ready(o *Observation, queue bool) error {
 			msg = fmt.Sprintf(": it answered %q", o.Frontier.Error.Text)
 		}
 		return &Refused{Reason: fmt.Sprintf("%s's login was rejected (account %s)%s", o.Label, o.Session.Account, msg),
-			Next: d.relaunchHint(o), account: o.Session.Account}
+			Next: d.relaunch(o, stepArgs(step)), account: o.Session.Account}
 	case strings.HasPrefix(state, "blocked"):
 		call := ""
 		if p := o.Frontier.Pending; p != nil {
@@ -476,10 +476,12 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 		_ = b.Append(e)
 	}
 	failed := func(err error) {
-		e := batch.Event{Kind: batch.KindFailure, Reason: err.Error()}
+		var e batch.Event
 		if f := (*Failed)(nil); errors.As(err, &f) && f.Login {
-			e.Account = o.Session.Account // the relaunch hint steers clear of it
+			f.Next = d.relaunch(o, stepArgs(p.step)) // the relaunch carries this step
+			e.Account = o.Session.Account            // and steers clear of this account
 		}
+		e.Kind, e.Reason = batch.KindFailure, err.Error()
 		record(e)
 	}
 
@@ -506,7 +508,7 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 		}
 		after, err := d.observe(batch.Members(evs), o.Label)
 		if err == nil {
-			err = d.ready(after, false)
+			err = d.ready(after, false, p.step)
 		}
 		if err != nil {
 			f := &Failed{What: fmt.Sprintf("%s read the notice; its step was not sent: %s", o.Label, err.Error())}
