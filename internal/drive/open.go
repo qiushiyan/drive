@@ -17,6 +17,7 @@ type OpenOptions struct {
 	Dir     string
 	Resume  string // a session id to resume instead of starting fresh
 	Account string // run on this account (x-<account>); "" lets the launcher choose
+	Model   string // such as "fable", for a fresh judge
 	Hold    string
 }
 
@@ -104,6 +105,9 @@ func (d *Driver) launch(opt OpenOptions) []string {
 		launcher += "-" + opt.Account
 	}
 	cmd := strings.TrimSpace(strings.Join(env, " ") + " " + launcher)
+	if opt.Model != "" {
+		cmd += " --model " + shellQuote(opt.Model)
+	}
 	if opt.Resume != "" {
 		cmd += " --resume " + shellQuote(opt.Resume)
 	}

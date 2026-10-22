@@ -454,7 +454,7 @@ func cmdMetrics(d *drive.Driver, argv []string) int {
 }
 
 func cmdBatch(d *drive.Driver, argv []string) int {
-	a, code := parseOr(argv, []string{"wake", "rex-session", "tz"}, nil)
+	a, code := parseOr(argv, []string{"wake", "rex-session", "tz", "after-wake"}, nil)
 	if a == nil {
 		return code
 	}
@@ -492,7 +492,11 @@ func cmdBatch(d *drive.Driver, argv []string) int {
 		if rs == "" {
 			rs = os.Getenv("REX_SESSION")
 		}
-		b, err := d.Store.New(batch.Meta{Name: a.pos[1], Started: time.Now(), Wake: wake, RexSession: rs, TZ: tz})
+		var after []string
+		if c := a.str("after-wake"); c != "" {
+			after = []string{c}
+		}
+		b, err := d.Store.New(batch.Meta{Name: a.pos[1], Started: time.Now(), Wake: wake, RexSession: rs, TZ: tz, AfterWake: after})
 		if err != nil {
 			return fail(&drive.Refused{Reason: err.Error()})
 		}

@@ -310,7 +310,7 @@ func (d *Driver) Wake(label string, e *Ending, note string) error {
 		ev.HTTP, ev.Reason = 0, fmt.Sprintf("http %d %s", last.HTTP, clip(last.Err, 200))
 	}
 	_ = b.Append(ev)
-	for _, c := range d.Cfg.AfterWake {
+	for _, c := range append(append([]string{}, b.Meta.AfterWake...), d.Cfg.AfterWake...) {
 		if out, cerr := exec.Command("/bin/sh", "-c", c).CombinedOutput(); cerr != nil {
 			_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindNote, Note: fmt.Sprintf("after_wake %q failed: %s", c, clip(string(out), 200))})
 		}

@@ -15,6 +15,7 @@ import (
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/config"
 	"github.com/qiushiyan/drive/internal/drive"
+	"github.com/qiushiyan/drive/internal/rex"
 	"github.com/qiushiyan/drive/internal/testkit"
 	"github.com/qiushiyan/drive/internal/turn"
 )
@@ -577,4 +578,29 @@ func TestWakeRecordsEveryPost(t *testing.T) {
 	if st.Rows[0].Watch == "armed" || !st.Rows[0].Unhandled {
 		t.Fatalf("a wake no driver acted on shows: %+v", st.Rows[0])
 	}
+}
+
+func TestLaunchCommand(t *testing.T) {
+	r := newRig(t, "none")
+	r.d.Cfg.LaunchEnv = map[string]string{"PLANLAB_AGENT_NUDGES": "off"}
+	var got []string
+	term := &recordingTerm{World: r.w, run: func(cmd []string) { got = cmd }}
+	r.d.Term = term
+	if _, err := r.d.Open("judge", drive.Step{}, drive.OpenOptions{Dir: r.w.Root, Account: "other@example.com", Model: "fable", Resume: "sid-1"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "PLANLAB_AGENT_NUDGES=off x-other@example.com --model fable --resume sid-1; exec zsh -l"
+	if len(got) != 3 || got[0] != "/bin/zsh" || got[1] != "-lic" || got[2] != want {
+		t.Fatalf("launch: %q", got)
+	}
+}
+
+type recordingTerm struct {
+	*testkit.World
+	run func([]string)
+}
+
+func (r *recordingTerm) Run(o rex.Open) (string, error) {
+	r.run(o.Command)
+	return r.World.Run(o)
 }

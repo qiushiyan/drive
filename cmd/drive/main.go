@@ -31,7 +31,7 @@ it, so a step decided on an old turn never reaches a new one.
                                            call a prompt waits on, its newest prompt
   drive wait SESSION [--quiet S] [--bg S]  block until its turn ends; prints the reply's end
   drive send VIEW STEP [--queue] [--hold NAME] [--as LABEL]
-  drive open LABEL [STEP] [--dir DIR] [--resume ID] [--account NAME] [--hold NAME]
+  drive open LABEL [STEP] [--dir DIR] [--resume ID] [--account NAME] [--model M] [--hold NAME]
   drive respond VIEW approve|deny|interrupt|clear
   drive watch SESSION | drive watch --sleep SECONDS NOTE
                                            a webhook batch: wake the driver when the turn
@@ -44,7 +44,8 @@ it, so a step decided on an old turn never reaches a new one.
   drive record note [--session S] TEXT…
   drive log [--since TIME] [--json]        the batch's timeline
   drive metrics [BATCH] [--json]           asks, owner wait, merges, sends, failures
-  drive batch [new NAME [--wake webhook|none] [--rex-session S] [--tz ZONE] | use NAME | list]
+  drive batch [new NAME [--wake webhook|none] [--rex-session S] [--tz ZONE] [--after-wake CMD]
+              | use NAME | list]               the current batch; a new one starts with no grants
   drive snippet KEY [DIR] [TEXT…] | drive snippet --list [DIR]
 
 STEP is one of:
@@ -213,7 +214,7 @@ func cmdSend(d *drive.Driver, argv []string) int {
 }
 
 func cmdOpen(d *drive.Driver, argv []string) int {
-	a, code := parseOr(argv, []string{"file", "snippet", "hold", "dir", "resume", "account"}, nil)
+	a, code := parseOr(argv, []string{"file", "snippet", "hold", "dir", "resume", "account", "model"}, nil)
 	if a == nil {
 		return code
 	}
@@ -228,7 +229,7 @@ func cmdOpen(d *drive.Driver, argv []string) int {
 	if dir == "" {
 		dir, _ = os.Getwd()
 	}
-	o, err := d.Open(a.pos[0], s, drive.OpenOptions{Dir: config.Expand(d.Cfg.Home, dir), Resume: a.str("resume"), Account: a.str("account"), Hold: a.str("hold")})
+	o, err := d.Open(a.pos[0], s, drive.OpenOptions{Dir: config.Expand(d.Cfg.Home, dir), Resume: a.str("resume"), Account: a.str("account"), Model: a.str("model"), Hold: a.str("hold")})
 	if o != nil {
 		fmt.Printf("opened %s in block %s on account %s (session %s)\n", o.Label, rex.Short(o.Block), o.Account, o.Session)
 		if o.Sent != nil && o.Sent.Outcome != "" {
