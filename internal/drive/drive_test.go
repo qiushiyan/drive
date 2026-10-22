@@ -380,6 +380,11 @@ func TestTypedOnlySkillInAFileIsRefused(t *testing.T) {
 	if typed, _ := c.Seen(); len(typed) != 0 {
 		t.Fatalf("nothing typed, got %q", typed)
 	}
+	// On an open, the line to type goes on the open.
+	_, err = r.d.Open("sr", drive.Step{File: f}, drive.OpenOptions{Dir: r.w.Root})
+	if !isRefused(err) || !strings.Contains(err.Error(), "drive open sr --dir "+r.w.Root+" '/strategic-review 9531") {
+		t.Fatalf("an open refused for a typed-only skill prints the open to run: %v", err)
+	}
 }
 
 func TestTypedInputIsLeftAlone(t *testing.T) {

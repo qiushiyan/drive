@@ -1,6 +1,7 @@
 package drive
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -33,8 +34,9 @@ type Opened struct {
 
 // Open starts a session in a new block under label and sends it its first
 // step, the notice ahead of it. A label already open in the batch is refused,
-// so two drivers deciding at once open one session, not two. The step is
-// checked before anything opens: a refusal means no block was opened.
+// so two drivers deciding at once open one session, not two. The step and
+// the hold are checked before anything opens: a refusal means no block was
+// opened, and anything that goes wrong after one has is a failure saying so.
 func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, err error) {
 	b, err := d.Batch()
 	if err != nil {
@@ -48,9 +50,10 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return nil, d.refuse(b, label, err)
 	}
 	defer opening.release()
+	again := openCommand(label, opt)
 	if !step.empty() {
 		// The account is the launcher's choice, so skills are read from the default one.
-		if _, err := d.plan(opt.Dir, filepath.Join(d.Cfg.Home, ".claude"), turn.View{Session: label}, step, opt.Resume == ""); err != nil {
+		if _, err := d.plan(opt.Dir, filepath.Join(d.Cfg.Home, ".claude"), again, step, opt.Resume == ""); err != nil {
 			return nil, d.refuse(b, label, err)
 		}
 	}
@@ -66,6 +69,16 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 			if st, err := d.Term.Status(m.Block); err == nil && st != nil {
 				return &Refused{Reason: fmt.Sprintf("%s is already open as block %s (since %s)", label, rex.Short(m.Block), m.Joined.In(b.Zone()).Format("15:04")),
 					Next: fmt.Sprintf("send to it instead: drive read %s", label)}
+			}
+		}
+		if opt.Hold != "" {
+			if h, held := d.holder(evs, batch.Members(evs), opt.Hold, label); held {
+				next := fmt.Sprintf("wait for %s's turn to end (drive wait %s), then open it: %s %s", h.Session, h.Session, again, stepArgs(step))
+				if b.Meta.Wake == "webhook" {
+					next = fmt.Sprintf("%s's wake comes when its turn ends; open %s in the run it starts: %s %s", h.Session, label, again, stepArgs(step))
+				}
+				return &Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), holding(h)),
+					Next: next}
 			}
 		}
 		return b.Append(batch.Event{At: d.now(), Kind: batch.KindOpenIntent, Session: label, Intent: intent, Dir: opt.Dir, Text: clip(stepSummary(step), 200)})
@@ -97,6 +110,14 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return nil, err
 	}
 	out = &Opened{Label: label, Block: block, Account: s.Account, Session: s.ID}
+	// From here the block is open: whatever stops the first step is a
+	// failure that says so, never a refusal, which would mean nothing was done.
+	defer func() {
+		var r *Refused
+		if errors.As(err, &r) {
+			err = &Failed{What: fmt.Sprintf("opened %s in block %s, but its first step was not sent: %s", label, rex.Short(block), r.Reason), Next: r.Next}
+		}
+	}()
 	l, err := d.own(label, block, fmt.Sprintf("sending %s its first step", label))
 	if err != nil {
 		return out, err
@@ -117,10 +138,9 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	f, _ := s.Frontier()
 	o := &Observation{Label: label, Session: s, Frontier: f, View: turn.ViewOf(label, s.ID, f)}
 	// A resumed session read the notice in the conversation it resumes.
-	p, err := d.plan(s.Dir, s.Config, o.View, step, opt.Resume == "")
+	p, err := d.plan(s.Dir, s.Config, "drive send "+o.View.String(), step, opt.Resume == "")
 	if err != nil {
-		return out, &Failed{What: fmt.Sprintf("opened %s, but its first step was refused: %v", label, err),
-			Next: fmt.Sprintf("the session is open and idle; send a step it can take: drive read %s", label)}
+		return out, err
 	}
 	sent, err := d.send(b, o, p, SendOptions{Hold: opt.Hold}, o.View.String())
 	out.Sent = sent
@@ -152,6 +172,17 @@ func (d *Driver) settleOpen(b *batch.Batch, evs []batch.Event, label string) err
 		}
 	}
 	return nil
+}
+
+// openCommand is the drive open that opens label as opt says; its step follows.
+func openCommand(label string, opt OpenOptions) string {
+	c := "drive open " + label
+	for _, f := range [][2]string{{"dir", opt.Dir}, {"resume", opt.Resume}, {"account", opt.Account}, {"model", opt.Model}, {"hold", opt.Hold}} {
+		if f[1] != "" {
+			c += " --" + f[0] + " " + shellQuote(f[1])
+		}
+	}
+	return c
 }
 
 // launch is the command a new block runs: the owner's launcher in a login

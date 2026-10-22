@@ -96,7 +96,7 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 		return nil, d.refuse(b, o.Label, err)
 	}
 	m := batch.Find(members, o.Label)
-	p, err := d.plan(o.Session.Dir, o.Session.Config, o.View, step, m == nil || !m.Noticed && !m.Resumed)
+	p, err := d.plan(o.Session.Dir, o.Session.Config, "drive send "+o.View.String(), step, m == nil || !m.Noticed && !m.Resumed)
 	if err != nil {
 		return nil, d.refuse(b, o.Label, err)
 	}
@@ -241,6 +241,27 @@ type holdRefused struct {
 	step Step
 }
 
+// holding says what keeps a hold taken.
+func holding(h batch.Hold) string {
+	if h.Pending {
+		return "whose send is still under way"
+	}
+	return "whose turn is still running"
+}
+
+// stepArgs is a step as drive send and drive open take it.
+func stepArgs(s Step) string {
+	switch {
+	case s.Key != "" && s.Text != "":
+		return "--snippet " + shellQuote(s.Key) + " " + shellQuote(s.Text)
+	case s.Key != "":
+		return "--snippet " + shellQuote(s.Key)
+	case s.File != "":
+		return "--file " + shellQuote(s.File)
+	}
+	return shellQuote(s.Line)
+}
+
 func (d *Driver) refuse(b *batch.Batch, label string, err error) error {
 	if b == nil {
 		return err
@@ -290,8 +311,10 @@ func (p *plan) mode() string {
 }
 
 // plan turns a step into what will be typed, for a session working in dir
-// on the account whose configuration is config.
-func (d *Driver) plan(dir, config string, view turn.View, step Step, notice bool) (*plan, error) {
+// on the account whose configuration is config. resend is the command that
+// delivers a step, such as "drive send T1@3fa91c07", which a refusal prints
+// with the step it can take instead.
+func (d *Driver) plan(dir, config, resend string, step Step, notice bool) (*plan, error) {
 	p := &plan{step: step, notice: notice}
 	switch {
 	case step.Line != "":
@@ -326,8 +349,8 @@ func (d *Driver) plan(dir, config string, view turn.View, step Step, notice bool
 		if name := skill.Command(first); name != "" && skill.TypedOnly(d.Cfg.Home, config, dir, name) {
 			return nil, &Refused{
 				Reason: fmt.Sprintf("/%s starts only when typed: a session told to run it from a file refuses", name),
-				Next: fmt.Sprintf("type the command and put the rest in a file it points at: drive send %s '%s Read <file> for the rest'",
-					view, clip(first, 120))}
+				Next: fmt.Sprintf("type the command and put the rest in a file it points at: %s %s",
+					resend, shellQuote(first+" Read <file> for the rest"))}
 		}
 	}
 	if notice {
@@ -383,10 +406,7 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 		members := batch.Members(evs)
 		if opt.Hold != "" {
 			if h, held := d.holder(evs, members, opt.Hold, o.Label); held {
-				what := "whose turn is still running"
-				if h.Pending {
-					what = "whose send is still under way"
-				}
+				what := holding(h)
 				next := fmt.Sprintf("send this once %s's turn ends: drive wait %s", h.Session, h.Session)
 				if b.Meta.Wake == "webhook" {
 					next = fmt.Sprintf("%s's wake comes when its turn ends; send this to %s then (drive status lists %s as waiting for %s)",

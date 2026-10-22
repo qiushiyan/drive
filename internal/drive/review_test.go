@@ -481,6 +481,68 @@ func TestAnOpenChecksItsStepFirst(t *testing.T) {
 	}
 }
 
+// An open whose hold another session holds opens nothing, and says how to
+// open it once the hold is free.
+func TestAnOpenChecksItsHoldFirst(t *testing.T) {
+	r := newRig(t, "none")
+	a := adopted(t, r, "T5")
+	a.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} }) // the release runs on
+	if _, err := r.d.Send(r.view("T5"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(r.w.Root, "work")
+	_, err := r.d.Open("T9", drive.Step{Line: "release"}, drive.OpenOptions{Dir: dir, Hold: "release"})
+	if !isRefused(err) || !strings.Contains(err.Error(), "held by T5") || !strings.Contains(err.Error(), "drive open T9 --dir "+dir+" --hold release release") {
+		t.Fatalf("refused, with the open to run once the hold is free: %v", err)
+	}
+	if blocks, _ := r.w.Blocks(""); len(blocks) != 1 {
+		t.Fatalf("no block opened: %d blocks", len(blocks))
+	}
+}
+
+// Once the block is open, a step stopped by a hold another session took
+// meanwhile is a failure that says the block is open, not a refusal.
+func TestAnOpenWhoseHoldIsTakenWhileItOpensFails(t *testing.T) {
+	r := newRig(t, "none")
+	a := adopted(t, r, "T3")
+	a.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} })
+	v := r.view("T3")
+	var taken error
+	r.d.Term = &recordingTerm{World: r.w, run: func([]string) {
+		_, taken = r.d.Send(v, drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"})
+	}}
+	o, err := r.d.Open("T9", drive.Step{Line: "release"}, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work"), Hold: "release"})
+	if taken != nil {
+		t.Fatal(taken)
+	}
+	var f *drive.Failed
+	if isRefused(err) || !errors.As(err, &f) || !strings.Contains(f.What, "held by T3") || o == nil || r.w.Session(o.Block) == nil {
+		t.Fatalf("a failure naming the open block: %+v %v", o, err)
+	}
+}
+
+// Two drivers opening one label at once open one block.
+func TestTwoOpensOfOneLabelOpenOneBlock(t *testing.T) {
+	r := newRig(t, "none")
+	dir := filepath.Join(r.w.Root, "work")
+	var second error
+	r.d.Term = &recordingTerm{World: r.w, run: func([]string) {
+		if second == nil {
+			second = errors.New("not run")
+			_, second = r.d.Open("T9", drive.Step{Line: "go"}, drive.OpenOptions{Dir: dir})
+		}
+	}}
+	if _, err := r.d.Open("T9", drive.Step{Line: "go"}, drive.OpenOptions{Dir: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if !isRefused(second) || !strings.Contains(second.Error(), "another driver is opening T9") {
+		t.Fatalf("the second is refused while the first opens: %v", second)
+	}
+	if blocks, _ := r.w.Blocks(""); len(blocks) != 1 {
+		t.Fatalf("one block: %d", len(blocks))
+	}
+}
+
 func TestASendWhoseWakeFailsSaysSo(t *testing.T) {
 	r := newRig(t, "webhook")
 	c := r.w.Add("T1")
