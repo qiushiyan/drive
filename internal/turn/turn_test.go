@@ -53,6 +53,78 @@ func TestQueuedSlashCommandHasNoText(t *testing.T) {
 	}
 }
 
+// The queue holds as many lines as were typed while the session worked, and
+// each dequeue takes one: a probe session on 2.1.308 queued a line, then
+// /compact, and ran them in that order, one turn each.
+func TestTheQueueHoldsSeveralPrompts(t *testing.T) {
+	rows := []string{
+		`{"type":"user","message":{"role":"user","content":"Write about 500 words on the history of lighthouses, no tools."},"uuid":"q0","timestamp":"2026-10-22T15:52:28.503Z","origin":{"kind":"human"},"promptSource":"typed"}`,
+		`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-22T15:52:31.302Z","content":"Now reply with the word: queued-one"}`,
+		`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-22T15:52:33.006Z"}`,
+		`{"type":"assistant","uuid":"q1","timestamp":"2026-10-22T15:52:41.097Z","message":{"role":"assistant","content":[{"type":"text","text":"Lighthouses are among the oldest deliberate navigation aids."}]}}`,
+		`{"type":"queue-operation","operation":"dequeue","timestamp":"2026-10-22T15:52:41.191Z"}`,
+		`{"type":"system","subtype":"stop_hook_summary","timestamp":"2026-10-22T15:52:41.163Z","uuid":"q2"}`,
+		`{"type":"system","subtype":"turn_duration","durationMs":12666,"timestamp":"2026-10-22T15:52:41.164Z","uuid":"q3","isMeta":false}`,
+		`{"type":"user","message":{"role":"user","content":"Now reply with the word: queued-one"},"uuid":"q4","timestamp":"2026-10-22T15:52:41.196Z","origin":{"kind":"human"},"promptSource":"queued"}`,
+		`{"type":"assistant","uuid":"q5","timestamp":"2026-10-22T15:52:42.190Z","message":{"role":"assistant","content":[{"type":"text","text":"queued-one"}]}}`,
+		`{"type":"queue-operation","operation":"dequeue","timestamp":"2026-10-22T15:52:42.261Z"}`,
+		`{"type":"system","subtype":"stop_hook_summary","timestamp":"2026-10-22T15:52:42.256Z","uuid":"q6"}`,
+		`{"type":"system","subtype":"turn_duration","durationMs":1065,"timestamp":"2026-10-22T15:52:42.256Z","uuid":"q7","isMeta":false}`,
+		`{"type":"user","message":{"role":"user","content":"/compact"},"uuid":"q8","timestamp":"2026-10-22T15:52:42.265Z"}`,
+	}
+	f := read(t, rows[:3]...)
+	if f.Queued == nil || f.Queued.Known || f.Newest() != f.Queued {
+		t.Fatalf("the newest of two queued lines, /compact, is the newest prompt: %+v", f.Queued)
+	}
+	// The first dequeue takes the first line; /compact still waits behind it.
+	for _, n := range []int{5, 8, 9} {
+		if f = read(t, rows[:n]...); f.Queued == nil || f.Queued.Known || f.Answered() {
+			t.Fatalf("after %d rows /compact still waits: queued %+v prompts %+v", n, f.Queued, f.Prompts)
+		}
+	}
+	if f = read(t, rows[:10]...); f.Queued != nil || f.Newest().ID != "q4" || !f.Answered() {
+		t.Fatalf("the second dequeue takes /compact: queued %+v newest %+v", f.Queued, f.Newest())
+	}
+	if f = read(t, rows...); f.Queued != nil || f.Newest().Text != "/compact" {
+		t.Fatalf("/compact is taken: queued %+v newest %+v", f.Queued, f.Newest())
+	}
+}
+
+// Escape while lines wait, or Up to edit them, pops every queued line back
+// into the input box (popAll); a task notification waiting with them stays.
+// Seen on 2.1.286 and 2.1.296 before a line was edited and queued again.
+func TestPoppedLinesLeaveTheQueue(t *testing.T) {
+	note := `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-21T14:38:58.000Z","content":"<task-notification>\n<task-id>b7</task-id>\n<status>completed</status>\n</task-notification>"}`
+	enqueue := `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-21T14:38:59.502Z","content":"/review codex review"}`
+	popAll := `{"type":"queue-operation","operation":"popAll","timestamp":"2026-10-21T14:39:18.699Z","content":"/review codex review"}`
+	if f := read(t, prompt, note, enqueue, popAll); f.Queued != nil || f.Newest().ID != "p1" {
+		t.Fatalf("a popped line no longer waits: %+v", f.Queued)
+	}
+	again := `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-21T14:39:20.000Z","content":"/review codex full review"}`
+	if f := read(t, prompt, note, enqueue, popAll, again); f.Queued == nil || f.Queued.Text != "/review codex full review" {
+		t.Fatalf("the edited line is queued again: %+v", f.Queued)
+	}
+	// A dequeue takes the waiting line before the notification queued ahead
+	// of it, as a /loop wakeup was taken before a waiting Monitor event on
+	// 2.1.296.
+	dequeue := `{"type":"queue-operation","operation":"dequeue","timestamp":"2026-10-21T14:40:20.956Z"}`
+	taken := `{"type":"user","message":{"role":"user","content":"/review codex full review"},"uuid":"p2","timestamp":"2026-10-21T14:40:21.000Z","origin":{"kind":"human"}}`
+	if f := read(t, prompt, note, enqueue, popAll, again, dequeue, taken); f.Queued != nil || f.Newest().ID != "p2" {
+		t.Fatalf("the line is taken, the notification still waits: %+v", f.Queued)
+	}
+}
+
+// Claude Code keeps its queue in memory: a line still queued when it exits
+// is gone, and a prompt the resumed session takes with nothing leaving the
+// queue for it was typed while it was idle, so nothing waits.
+func TestAPromptTypedWhileIdleEmptiesTheQueue(t *testing.T) {
+	enqueue := `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-21T12:32:15Z"}`
+	resumed := `{"type":"user","uuid":"p2","timestamp":"2026-10-21T13:00:00Z","origin":{"kind":"human"},"message":{"role":"user","content":"carry on"}}`
+	if f := read(t, prompt, enqueue, resumed); f.Queued != nil || f.Newest().ID != "p2" {
+		t.Fatalf("a lost queued line does not wait forever: %+v", f.Queued)
+	}
+}
+
 func TestTaskNotificationsAreNotPrompts(t *testing.T) {
 	note := `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-21T12:33:28Z","content":"<task-notification>\n<task-id>b7</task-id>"}`
 	harness := `{"type":"user","uuid":"h","timestamp":"2026-10-21T12:34:00Z","origin":{"kind":"task-notification"},"message":{"role":"user","content":"done"}}`

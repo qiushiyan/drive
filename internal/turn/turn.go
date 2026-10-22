@@ -1,7 +1,7 @@
 // Package turn reads where a Claude Code session's turn stands from its
-// transcript: the prompts it took, one still queued, its newest reply, an API
-// error that ended the turn, and a tool call it waits on. It is pure: a path or
-// bytes in, facts out.
+// transcript: the prompts it took, the newest still queued, its newest
+// reply, an API error that ended the turn, and a tool call it waits on. It is
+// pure: a path or bytes in, facts out.
 package turn
 
 import (
@@ -20,7 +20,7 @@ type Prompt struct {
 	ID     string
 	At     time.Time
 	Text   string
-	Known  bool // false for a slash command typed while busy: Claude Code queues it without its text
+	Known  bool // false for a line Claude Code queued without its text: a slash command typed while busy, most often
 	Queued bool // typed while the session worked and not taken yet
 }
 
@@ -48,7 +48,7 @@ type ToolCall struct {
 // Frontier is where the session's conversation stands.
 type Frontier struct {
 	Prompts     []Prompt  // taken, oldest first
-	Queued      *Prompt   // typed while busy, not yet taken
+	Queued      *Prompt   // the newest line typed while busy and not taken yet; more may wait before it
 	Reply       *Entry    // newest assistant text
 	Last        *Entry    // newest answer of any kind: assistant text, tool call, API error, a local command's output
 	Error       *APIError // an API error after the newest prompt
@@ -110,6 +110,7 @@ type row struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 	Operation  string          `json:"operation"`
+	Reason     string          `json:"reason"`
 	Content    json.RawMessage `json:"content"`
 	Attachment json.RawMessage `json:"attachment"`
 }
@@ -178,6 +179,7 @@ func ReadFile(path string) (Frontier, error) {
 // Read reads a transcript stream.
 func Read(r io.Reader) (Frontier, error) {
 	var f Frontier
+	var q queue
 	pending := map[string]ToolCall{}
 	var order []string
 	sc := bufio.NewScanner(r)
@@ -241,49 +243,57 @@ func Read(r io.Reader) (Frontier, error) {
 				continue
 			}
 			if e.human() && !e.IsMeta && !e.IsCompactSummary && typed(text) {
-				f.take(Prompt{ID: e.UUID, At: e.at(), Text: AsTyped(text), Known: true})
+				f.take(Prompt{ID: e.UUID, At: e.at(), Text: AsTyped(text), Known: true}, &q)
+			} else if !e.human() && !e.IsMeta && text != "" {
+				q.started() // a task notification or another session's message starts a turn
 			}
 		case "system":
 			text, _ := e.text()
-			if e.Subtype == "local_command" {
+			switch e.Subtype {
+			case "local_command":
 				// Some local commands record themselves and their output as
 				// system rows: /clear's output, a refused /compact's, and /cd
 				// or /wt whole.
 				if strings.HasPrefix(strings.TrimLeft(text, " \t\n"), "<command-name>") {
-					f.take(Prompt{ID: e.UUID, At: e.at(), Text: AsTyped(text), Known: true})
+					f.take(Prompt{ID: e.UUID, At: e.at(), Text: AsTyped(text), Known: true}, &q)
 				} else {
 					f.Last = &Entry{ID: e.UUID, At: e.at(), Text: text}
 				}
+			case "scheduled_task_fire":
+				q.started() // a /loop or scheduled prompt starts a turn
 			}
 		case "queue-operation":
-			content, ok := e.text()
+			content, _ := e.text()
 			switch e.Operation {
 			case "enqueue":
-				if !ok {
-					// A slash command typed while busy is enqueued without its text.
-					f.Queued = &Prompt{ID: "queued:" + e.Timestamp, At: e.at(), Queued: true}
-				} else if typed(content) {
-					f.Queued = &Prompt{ID: "queued:" + e.Timestamp, At: e.at(), Text: content, Known: true, Queued: true}
-				}
+				q.enqueue(e)
 			case "dequeue":
-				f.Queued = nil
+				q.dequeue()
 			case "remove":
-				if f.Queued != nil && ok && f.Queued.Known && f.Queued.Text == content {
-					f.Queued = nil
-				}
+				q.remove(content, e.Reason == "absorbed_mid_turn")
+			case "popAll":
+				q.popAll()
 			}
 		case "attachment":
+			// What a running turn absorbed from the queue.
 			var a struct {
 				Type   string                 `json:"type"`
-				Prompt string                 `json:"prompt"`
+				Prompt json.RawMessage        `json:"prompt"`
 				Origin *struct{ Kind string } `json:"origin"`
 			}
-			if json.Unmarshal(e.Attachment, &a) == nil && a.Type == "queued_command" &&
-				(a.Origin == nil || a.Origin.Kind == "" || a.Origin.Kind == "human") && typed(a.Prompt) {
-				f.take(Prompt{ID: e.UUID, At: e.at(), Text: a.Prompt, Known: true})
+			if json.Unmarshal(e.Attachment, &a) != nil || a.Type != "queued_command" {
+				continue
+			}
+			var text string
+			_ = json.Unmarshal(a.Prompt, &text)
+			if (a.Origin == nil || a.Origin.Kind == "" || a.Origin.Kind == "human") && typed(text) {
+				f.take(Prompt{ID: e.UUID, At: e.at(), Text: text, Known: true}, &q)
+			} else {
+				q.started() // a task notification or another session's message
 			}
 		}
 	}
+	f.Queued = q.newest()
 	for i := len(order) - 1; i >= 0; i-- {
 		if c, ok := pending[order[i]]; ok {
 			f.Pending = &c
@@ -293,14 +303,15 @@ func Read(r io.Reader) (Frontier, error) {
 	return f, sc.Err()
 }
 
-func (f *Frontier) take(p Prompt) {
+func (f *Frontier) take(p Prompt, q *queue) {
 	// A typed /compact is recorded as text, then as markup once it ends: one prompt.
 	if n := len(f.Prompts); n > 0 && f.Prompts[n-1].Text == p.Text {
 		f.Prompts[n-1] = p
 	} else {
 		f.Prompts = append(f.Prompts, p)
+		q.taken()
 	}
-	f.Queued, f.Error, f.Interrupted = nil, nil, false
+	f.Error, f.Interrupted = nil, false
 }
 
 func toolInput(raw json.RawMessage) string {
