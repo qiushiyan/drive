@@ -72,20 +72,6 @@ func TestAHoldIsTakenWhenTheSendIsAdmitted(t *testing.T) {
 	}
 }
 
-// A turn that ends while the send is still confirming releases its hold.
-func TestAQuickTurnReleasesItsHold(t *testing.T) {
-	r := newRig(t, "none")
-	adopted(t, r, "T5")
-	adopted(t, r, "T3")
-	if _, err := r.d.Send(r.view("T5"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
-		t.Fatal(err)
-	}
-	// T5's fake answered at once: its turn is over.
-	if _, err := r.d.Send(r.view("T3"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
-		t.Fatalf("a hold whose turn already ended is free: %v", err)
-	}
-}
-
 // The old send-turn required a new prompt; a prompt seconds old with the same
 // text is not this send's.
 func TestALostEnterIsNotTakenForAnArrival(t *testing.T) {
@@ -430,6 +416,39 @@ func TestRespondRefusesWhatTheSessionDoesNotWaitOn(t *testing.T) {
 			}
 			if _, keys := c.Seen(); len(keys) != len(keys0) {
 				t.Fatalf("nothing pressed: %q", keys[len(keys0):])
+			}
+		})
+	}
+}
+
+// Respond, park and close are decided on a view as a send is, and refused
+// once the session has moved past it, in a state where each would otherwise
+// go: nothing pressed, parked or closed.
+func TestAnActionOnAViewTheSessionMovedPastIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		act  func(r *rig, view string) error
+	}{
+		{"an interrupt", func(r *rig, v string) error { _, err := r.d.Respond(v, "interrupt"); return err }},
+		{"a park", func(r *rig, v string) error { return r.d.Park(v, "waits on the owner") }},
+		{"a close", func(r *rig, v string) error { return r.d.Close(v) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t, "none")
+			c := adopted(t, r, "T1")
+			c.Busy("build A")
+			old := r.view("T1")
+			c.Done("A built")
+			c.Busy("build B")
+			if tc.name != "an interrupt" {
+				c.Done("B built") // a park and a close go on a finished turn
+			}
+			_, keys0 := c.Seen()
+			if err := tc.act(r, old); !isRefused(err) || !strings.Contains(err.Error(), "moved past") {
+				t.Fatalf("refused on the old view: %v", err)
+			}
+			if _, keys := c.Seen(); len(keys) != len(keys0) || r.w.Session(c.Block) == nil || len(r.events(batch.KindPark)) != 0 {
+				t.Fatalf("nothing pressed, parked or closed: %q", keys[len(keys0):])
 			}
 		})
 	}

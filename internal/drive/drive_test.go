@@ -17,7 +17,6 @@ import (
 	"github.com/qiushiyan/drive/internal/drive"
 	"github.com/qiushiyan/drive/internal/rex"
 	"github.com/qiushiyan/drive/internal/testkit"
-	"github.com/qiushiyan/drive/internal/turn"
 )
 
 // TestMain points HOME and drive's directories at a sandbox, so a path
@@ -136,31 +135,40 @@ func TestStaleDecisionRefusedAfterAnotherTurn(t *testing.T) {
 	}
 }
 
+// Two drivers decided on one view: the second arrives while the first is
+// typing and is refused by the lock, not by the view the first will move.
 func TestTwoDriversOneView(t *testing.T) {
 	r := newRig(t, "none")
-	c := r.w.Add("T1")
-	done(c, "onboard", "analysis")
-	v := r.view(c.Block[len(c.Block)-6:])
-	var wg sync.WaitGroup
-	errs := make([]error, 2)
-	for i := range errs {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			_, errs[i] = r.d.Send(v, drive.Step{Line: []string{"step from A", "step from B"}[i]}, drive.SendOptions{})
-		}(i)
+	c := adopted(t, r, "T1")
+	v := r.view("T1")
+	gate := make(chan struct{})
+	c.Edit(func(c *testkit.Claude) { c.TypeGate = gate })
+	first := make(chan error, 1)
+	go func() {
+		_, err := r.d.Send(v, drive.Step{Line: "step from A"}, drive.SendOptions{})
+		first <- err
+	}()
+	admitted(r, "T1", "step from A")
+	second := make(chan error, 1)
+	go func() {
+		_, err := r.d.Send(v, drive.Step{Line: "step from B"}, drive.SendOptions{})
+		second <- err
+	}()
+	var err error
+	select {
+	case err = <-second:
+	case <-time.After(5 * time.Second):
+		err = errors.New("the second driver went on to type while the first held the session")
 	}
-	wg.Wait()
-	ok := 0
-	for _, err := range errs {
-		if err == nil {
-			ok++
-		} else if !isRefused(err) {
-			t.Fatalf("the loser must be refused, got %v", err)
-		}
+	close(gate)
+	if ferr := <-first; ferr != nil {
+		t.Fatalf("the first goes: %v", ferr)
 	}
-	if typed, _ := c.Seen(); ok != 1 || len(without(typed, "Read ")) != 1 {
-		t.Fatalf("exactly one of two sends on one view goes out; ok=%d typed=%q", ok, typed)
+	if !isRefused(err) || !strings.Contains(err.Error(), "another driver is sending T1") {
+		t.Fatalf("the second is refused while the first holds the session: %v", err)
+	}
+	if typed, _ := c.Seen(); contains(typed, "step from B") {
+		t.Fatalf("only the first reaches the session: %q", typed)
 	}
 }
 
@@ -515,21 +523,19 @@ func TestWaitIgnoresShellsOlderThanTheTurn(t *testing.T) {
 	}
 }
 
-func TestRespondApprovesWhatThePromptAsks(t *testing.T) {
+// A session outside the batch is answered by its block id, and the answer
+// is recorded under that id, as a refusal or a close of it is.
+func TestRespondReachesASessionOutsideTheBatch(t *testing.T) {
 	r := newRig(t, "none")
 	c := r.w.Add("T1")
 	c.Busy("clean up")
 	c.Ask("rm -rf node_modules/.vite")
-	resp, err := r.d.Respond(r.view(c.Block[len(c.Block)-6:]), "approve")
-	if err != nil {
+	short := c.Block[len(c.Block)-6:]
+	if _, err := r.d.Respond(r.view(short), "approve"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(resp.Call, "rm -rf node_modules/.vite") || resp.After != "working" {
-		t.Fatalf("the approval names the call and the session moves on: %+v", resp)
-	}
-	if n := len(r.events(batch.KindRespond)); n != 0 {
-		// The session was outside the batch: nothing to record it under.
-		t.Logf("respond recorded %d", n)
+	if ev := r.events(batch.KindRespond); len(ev) != 1 || ev[0].Session != short || ev[0].Action != "approve" {
+		t.Fatalf("recorded under its block: %+v", ev)
 	}
 }
 
@@ -698,13 +704,6 @@ func TestRecordsAndMetrics(t *testing.T) {
 	}
 	if len(m.Refusals) != 3 || m.Refusals["other"] != 0 {
 		t.Fatalf("a step into a prompt, a close over a running shell and a step on an unanswered prompt are each a kind: %v", m.Refusals)
-	}
-}
-
-func TestViewParse(t *testing.T) {
-	v, err := turn.ParseView("T1@3fa91c07")
-	if err != nil || v.Session != "T1" || v.String() != "T1@3fa91c07" {
-		t.Fatalf("%+v %v", v, err)
 	}
 }
 

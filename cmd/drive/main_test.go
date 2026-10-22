@@ -50,6 +50,38 @@ func cli(t *testing.T, args ...string) (int, string, string) {
 
 var viewForm = regexp.MustCompile(`view: (\S+@[0-9a-f]{8})`)
 
+// A step answered by a rejected login exits 4, printing the relaunch.
+func TestARejectedLoginExitsFour(t *testing.T) {
+	w := testkit.New(t)
+	notice := filepath.Join(os.Getenv("HOME"), ".agents/skills/drive-session/NOTICE.md")
+	_ = os.MkdirAll(filepath.Dir(notice), 0o755)
+	_ = os.WriteFile(notice, []byte("I am away.\n"), 0o644)
+	_ = os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".claude-accounts", "other@example.com", "sessions"), 0o755)
+	newDriver = func(cfg config.Config) *drive.Driver {
+		return &drive.Driver{Term: w, Host: w, Store: batch.Store{Dir: cfg.StateDir}, Cfg: cfg,
+			Watches: &testkit.Watches{}, Self: "/bin/drive", Now: w.Clock.Now, Sleep: w.Clock.Sleep}
+	}
+	c := w.Add("T4")
+	c.Busy("onboard")
+	c.Done("analysis")
+	c.Reply = func(c *testkit.Claude, _ string) {
+		c.Fail("authentication_failed", "Login expired · Please run /login")
+		c.Set("blocked", "auth", "Login expired · Please run /login")
+	}
+	if code, _, errs := cli(t, "batch", "new", "b4", "--wake", "none"); code != 0 {
+		t.Fatalf("batch new: %d %s", code, errs)
+	}
+	_, out, _ := cli(t, "read", c.Block[len(c.Block)-6:])
+	m := viewForm.FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("no view in %q", out)
+	}
+	code, _, errs := cli(t, "send", m[1], "go", "--as", "T4")
+	if code != 4 || !strings.Contains(errs, "drive close T4@") || !strings.Contains(errs, "--account other@example.com") {
+		t.Fatalf("exit 4 with the relaunch: %d %s", code, errs)
+	}
+}
+
 func TestTheHotPathThroughTheCommand(t *testing.T) {
 	w := testkit.New(t)
 	notice := filepath.Join(os.Getenv("HOME"), ".agents/skills/drive-session/NOTICE.md")
