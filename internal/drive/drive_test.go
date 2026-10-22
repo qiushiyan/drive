@@ -525,7 +525,13 @@ func TestSendArmsTheWakeInAWebhookBatch(t *testing.T) {
 
 func TestRecordsAndMetrics(t *testing.T) {
 	r := newRig(t, "webhook")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	var mu sync.Mutex
+	status := 200
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.WriteHeader(status)
+	}))
 	defer srv.Close()
 	r.d.Cfg.Webhook = config.Webhook{URL: srv.URL}
 	notify := func(c *testkit.Claude, label string) {
@@ -551,17 +557,22 @@ func TestRecordsAndMetrics(t *testing.T) {
 	_, _ = r.d.Ask("T1", "Phase C boxes?", "no", "nothing waits")
 
 	// T1's first wake is handled by re-arming its watch, which wakes the
-	// driver again; its last wake has nothing after it.
+	// driver again; its last wake has nothing after it. Its /compact arrives
+	// without its start, and the driver re-arms the watch on what it made of it.
 	notify(c, "T1")
 	if _, err := r.d.Watch("T1"); err != nil {
 		t.Fatal(err)
 	}
 	notify(c, "T1")
-	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "/compact"}, drive.SendOptions{}); err != nil {
-		t.Fatal(err)
+	c.Edit(func(c *testkit.Claude) { c.DropHead = 3 })
+	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "/compact"}, drive.SendOptions{}); err == nil {
+		t.Fatal("a line that lost its start in a turn that ended is reported")
 	}
 	if m, _ := r.d.Metrics(""); m.Wakes != 2 || m.Unhandled != 0 {
 		t.Fatalf("a wake followed by a re-armed watch was handled: %d of %d unhandled", m.Unhandled, m.Wakes)
+	}
+	if _, err := r.d.Watch("T1"); err != nil {
+		t.Fatal(err)
 	}
 	notify(c, "T1")
 
@@ -584,10 +595,34 @@ func TestRecordsAndMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	notify(c2, "T2")
+	if _, err := r.d.Send(r.view("T2"), drive.Step{Line: "go on"}, drive.SendOptions{}); !isRefused(err) {
+		t.Fatalf("a step into a prompt is refused: %v", err)
+	}
 	if _, err := r.d.Respond(r.view("T2"), "approve"); err != nil {
 		t.Fatal(err)
 	}
 	c2.Done("cleaned, tests pass")
+	c2.Edit(func(c *testkit.Claude) { c.Shells = []time.Time{r.w.Clock.Now()} })
+	if err := r.d.Close(r.view("T2")); !isRefused(err) {
+		t.Fatalf("a close while a background shell runs is refused: %v", err)
+	}
+	c2.Edit(func(c *testkit.Claude) { c.Shells = nil })
+	r.w.Clock.Sleep(time.Minute)
+	c2.Prompt("the owner typed this")
+	if _, err := r.d.Send(r.view("T2"), drive.Step{Line: "go on"}, drive.SendOptions{}); !isRefused(err) {
+		t.Fatalf("a step on a prompt nobody has answered is refused: %v", err)
+	}
+
+	// A timer's wake, and one whose post fails.
+	for i, note := range []string{"veto", "merge window"} {
+		mu.Lock()
+		status = []int{200, 503}[i]
+		mu.Unlock()
+		if err := r.d.Timer(5*time.Minute, note); err != nil {
+			t.Fatal(err)
+		}
+		_ = r.d.Ring("drive-timer-"+strings.ReplaceAll(note, " ", "-"), note)
+	}
 
 	r.w.Clock.Sleep(30 * time.Minute)
 	if _, err := r.d.Note("T1", "the night ends here"); err != nil {
@@ -621,6 +656,15 @@ func TestRecordsAndMetrics(t *testing.T) {
 	}
 	if m.Unwatched != 1 {
 		t.Fatalf("the approval that left T2's turn with no wake after it is counted: %d", m.Unwatched)
+	}
+	if m.Garbled != 1 {
+		t.Fatalf("the /compact that lost its start is counted: %d", m.Garbled)
+	}
+	if m.Timers != 1 || m.WakeFails != 1 {
+		t.Fatalf("a timer's wake is counted, and its failed post with the failures: %d timers, %d failed", m.Timers, m.WakeFails)
+	}
+	if len(m.Refusals) != 3 || m.Refusals["other"] != 0 {
+		t.Fatalf("a step into a prompt, a close over a running shell and a step on an unanswered prompt are each a kind: %v", m.Refusals)
 	}
 }
 

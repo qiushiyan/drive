@@ -126,8 +126,10 @@ type Metrics struct {
 	Failures  []string
 	Unknown   int // sends whose delivery is unknown
 	Recovered int // lines retyped after their start was lost
-	Wakes     int
-	WakeFails int
+	Garbled   int // lines that arrived without their start and stayed so
+	Wakes     int // a session's wakes posted
+	Timers    int // a timer's wakes posted
+	WakeFails int // wakes, a session's or a timer's, whose post failed
 	// Unhandled counts wakes posted that no driver action on their session
 	// followed before its next wake or the batch's end: a send, respond,
 	// park, close, re-armed watch, or a refusal of one.
@@ -220,6 +222,8 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 			switch e.Outcome {
 			case "recovered":
 				m.Recovered++
+			case "garbled":
+				m.Garbled++
 			case "unknown":
 				m.Unknown++
 			}
@@ -237,8 +241,13 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 		case batch.KindFailure:
 			m.Failures = append(m.Failures, e.Session+": "+clip(e.Reason, 120))
 		case batch.KindWake:
-			if e.Session == "" {
-				continue // a timer
+			if e.Session == "" { // a timer
+				if e.HTTP == 0 {
+					m.WakeFails++
+				} else {
+					m.Timers++
+				}
+				continue
 			}
 			unwatched[e.Session] = 0 // its watch saw the turn end, whether or not the post went
 			if e.HTTP == 0 {
@@ -316,6 +325,12 @@ func refusalKind(reason string) string {
 		return "held resource"
 	case strings.Contains(reason, "login was rejected"):
 		return "login rejected"
+	case strings.Contains(reason, " waits on a ") && strings.Contains(reason, " prompt"):
+		return "waiting on a prompt"
+	case strings.Contains(reason, "has a prompt it has not answered"):
+		return "step not yet answered"
+	case strings.Contains(reason, "still runs a background shell"):
+		return "background shell running"
 	case strings.Contains(reason, "is working"):
 		return "still working"
 	case strings.Contains(reason, "already open"):

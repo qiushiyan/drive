@@ -469,8 +469,8 @@ func cmdMetrics(d *drive.Driver, argv []string) int {
 		fmt.Printf("; %d session(s) whose progress could not be read, so this may be short", m.Unread)
 	}
 	fmt.Println()
-	fmt.Printf("sends: %d — %d the owner's snippets, %d slash commands typed, %d the driver's own words; %d retyped after a lost start; %d with delivery unknown\n",
-		m.Sends, m.Snippets, m.Commands, m.OwnWords, m.Recovered, m.Unknown)
+	fmt.Printf("sends: %d — %d the owner's snippets, %d slash commands typed, %d the driver's own words; %d retyped after a lost start, %d left garbled; %d with delivery unknown\n",
+		m.Sends, m.Snippets, m.Commands, m.OwnWords, m.Recovered, m.Garbled, m.Unknown)
 	if len(m.ByKey) > 0 {
 		var keys []string
 		for k, n := range m.ByKey {
@@ -479,8 +479,8 @@ func cmdMetrics(d *drive.Driver, argv []string) int {
 		sort.Strings(keys)
 		fmt.Printf("snippets: %s\n", strings.Join(keys, ", "))
 	}
-	fmt.Printf("wakes: %d posted, %d failed; %d followed by no action on the session before its next wake or the batch's end\n",
-		m.Wakes, m.WakeFails, m.Unhandled)
+	fmt.Printf("wakes: %d posted for sessions and %d for timers, %d failed; %d followed by no action on the session before its next wake or the batch's end\n",
+		m.Wakes, m.Timers, m.WakeFails, m.Unhandled)
 	fmt.Printf("turns left unwatched: %d (a send or respond that no wake, park or close of its session followed)\n", m.Unwatched)
 	if len(m.Refusals) > 0 {
 		var rs []string
