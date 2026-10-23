@@ -336,6 +336,16 @@ func TestABatchWakesItsOwnDriver(t *testing.T) {
 	if !errors.As(err, &f) || !strings.Contains(f.Next, "drive watch T1") || r.watches.Alive("drive-b2-"+c.Block[len(c.Block)-6:]) {
 		t.Fatalf("no wake is armed that cannot post: %v", err)
 	}
+	var rf *drive.Refused
+	if err := r.d.Timer(5*time.Minute, "veto"); !errors.As(err, &rf) ||
+		!strings.Contains(rf.Next, "drive watch --sleep 300 veto") || r.watches.Alive("drive-b2-timer-veto") {
+		t.Fatalf("nor a timer: %v", err)
+	}
+	// A batch that wakes no one arms no timer: its driver sleeps itself.
+	none := newRig(t, "none")
+	if err := none.d.Timer(5*time.Minute, "veto"); !errors.As(err, &rf) || !strings.HasSuffix(rf.Next, ": sleep 300") {
+		t.Fatalf("a timer that would wake no one: %v", err)
+	}
 }
 
 // A post that never reached the driver is a lost wake: the turn it was for

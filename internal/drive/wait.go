@@ -391,11 +391,21 @@ func (d *Driver) Timer(after time.Duration, note string) error {
 	if err != nil {
 		return &Refused{Reason: err.Error()}
 	}
+	secs := fmt.Sprint(int(after.Seconds()))
+	if b.Meta.Wake != "webhook" {
+		return &Refused{Reason: fmt.Sprintf("batch %s wakes no one (wake: %s)", b.Meta.Name, b.Meta.Wake),
+			Next: "wait it out yourself, in the background: sleep " + secs}
+	}
+	if err := d.canPost(b); err != nil {
+		var nw *noWebhook
+		errors.As(err, &nw)
+		return &Refused{Reason: err.Error(), Next: nw.next("drive watch --sleep " + secs + " " + note)}
+	}
 	name := timerName(b, note)
 	if d.Watches.Alive(name) {
 		return &Refused{Reason: fmt.Sprintf("a timer named %q is already running", note), Next: "give this one another note"}
 	}
-	argv := []string{d.Self, "--batch", b.Meta.Name, "wait", "--sleep", fmt.Sprint(int(after.Seconds())), "--note", note, "--notify"}
+	argv := []string{d.Self, "--batch", b.Meta.Name, "wait", "--sleep", secs, "--note", note, "--notify"}
 	if err := d.Watches.Start(name, argv, watchLog(b)); err != nil {
 		return err
 	}
