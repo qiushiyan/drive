@@ -166,7 +166,7 @@ func cmdStatus(d *drive.Driver, argv []string) int {
 		if p.Driver != nil {
 			fmt.Printf("in flight: %s to %s since %s, by pid %d (%s)\n", p.Kind, p.Session, clock(p.At, st.Zone, now), p.Driver.PID, clip(p.Text, 60))
 		} else {
-			fmt.Printf("left unfinished: %s to %s since %s, by a driver that has gone (%s); the next action on %s settles it\n",
+			fmt.Printf("left unfinished: %s to %s since %s, by a driver that has gone (%s); the next send, respond, park or close on %s settles it\n",
 				p.Kind, p.Session, clock(p.At, st.Zone, now), clip(p.Text, 60), p.Session)
 		}
 	}

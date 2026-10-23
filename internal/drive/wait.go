@@ -116,8 +116,12 @@ func (d *Driver) nextFor(o *Observation, state string, capped bool) string {
 	case strings.HasPrefix(state, "blocked"):
 		return answerNext(o.Label, o.View.String(), state)
 	case state == "error" && o.Frontier.Error != nil && o.Frontier.Error.Kind == "rate_limit":
-		return fmt.Sprintf("if its screen says it continues automatically once the limit resets (drive read %s --screen), leave it: the turn resumes by itself; otherwise %s",
-			o.Label, d.retryHint(o, "rate_limit"))
+		back := "read it again after the reset to see it under way"
+		if webhook, _ := d.wakes(o.Session.Block); webhook {
+			back = "drive watch --due arms its wake once it is under way again"
+		}
+		return fmt.Sprintf("if its screen says it continues automatically once the limit resets (drive read %s --screen), leave it: the turn resumes by itself, and %s; otherwise %s",
+			o.Label, back, d.retryHint(o, "rate_limit"))
 	case state == "error":
 		kind := ""
 		if o.Frontier.Error != nil {

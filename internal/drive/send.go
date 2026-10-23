@@ -258,7 +258,7 @@ func (d *Driver) ready(o *Observation, opt SendOptions, step Step) error {
 		queued := opt
 		queued.Queue = true
 		return &Refused{Reason: fmt.Sprintf("%s is working (for %s)", o.Label, since(d.now(), o.Session.Since())),
-			Next: fmt.Sprintf("%s; or have it take this mid-turn: %s", d.whenTurnEnds(o.Label, o.Session.Block), sendCommand(view, step, queued))}
+			Next: fmt.Sprintf("%s, and its step is decided then; only a step meant to reach it mid-turn goes now: %s", d.whenTurnEnds(o.Label, o.Session.Block), sendCommand(view, step, queued))}
 	case !opt.Queue && !o.Frontier.Answered():
 		p := o.Frontier.Newest()
 		return &Refused{Reason: fmt.Sprintf("%s has a prompt it has not answered yet (%s: %s)", o.Label, p.At.In(d.zone()).Format("15:04"), clip(promptText(*p), 80)),
@@ -280,7 +280,7 @@ func (d *Driver) ready(o *Observation, opt SendOptions, step Step) error {
 func answerNext(label, view, state string) string {
 	approve, deny := "drive respond "+view+" approve", "drive respond "+view+" deny"
 	if state == "blocked:question" {
-		return fmt.Sprintf("see the question and its options (drive read %s --screen); %s takes the option it has marked, %s dismisses the question and stops the turn, after which a step can answer it in words",
+		return fmt.Sprintf("see the question and its options (drive read %s --screen); %s takes the option ❯ points at, %s dismisses the question and stops the turn, after which a step can answer it in words",
 			label, approve, deny)
 	}
 	return fmt.Sprintf("see what it asks (drive read %s --pending), then answer it: %s, or %s", label, approve, deny)
