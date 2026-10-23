@@ -23,13 +23,14 @@ make install                                  # builds into ~/.local/bin/drive, 
 
 ## Rules that keep it correct
 
-- **Where a turn stands is `turnState`'s answer** (`internal/drive/driver.go`). Rex's record misses what no hook reports, so code that needs the state calls it or `Observation.State()`.
+- **Where a turn stands is `turnState`'s answer** (`internal/drive/driver.go`): Claude Code's own registry status first, the transcript for how a turn ended, Rex for the kind of prompt. Rex alone misses what no hook reports, so code that needs the state calls it or `Observation.State()`, whether a turn is over `turnOf`, and what to run about it `nextFor`.
 - **An action that changes a session runs under its owner's lock**: own the session, read it, check the view, act, record (`ownView` in `internal/drive/respond.go`, `Send` in `internal/drive/send.go`). A refusal (exit 1) means nothing happened, so checks run before the first effect, and anything that fails after an effect returns `*Failed` saying what did happen.
+- **A session an action touched is watched.** Reach a session's keyboard only through `typeInto` and `press`: the action's lease (`own` in `internal/drive/driver.go`) arms the wake of whatever they reached when it ends, so a chat driver always hears back.
 - **The log is the only state.** An action appends events; what is true now is derived in `internal/batch/events.go`. A send or an open records its intent before its first effect.
 - **Messages are read by an agent.** A `Refused` or `Failed` that leaves something to do says it in `Next`, as a command that runs as written, with a view wherever the command takes one; usage text, refusals and wake text are product.
 - **The fake behaves like the real thing** (`internal/testkit`). A behaviour seen in a real session or transcript goes into the fake first, then into a test that goes red on it before the fix.
 - **Tests never reach live state**: `TestMain` sandboxes `HOME`, `DRIVE_STATE_DIR` and `DRIVE_CONFIG_DIR`; Rex tests start a private server.
-- **A change to the CLI's interface or messages lands with the drive-session skill updated to match**, in the dotfiles repository, so the bot is never taught a command that refuses.
+- **A change to the CLI's interface or messages lands with the drive-session skill updated to match**, in the dotfiles repository, so the bot is never taught a command that refuses. The two divide the work: a message's `next:` carries the command to run now, `--help` the words and flags, the skill the judgment of what to send and when; a mechanism a message states is not explained again in the skill.
 - **The repository is public**: fixtures use `example.com` accounts and invented names.
 
 ## Docs and commits

@@ -22,28 +22,26 @@ import (
 const usage = `drive — drive Claude Code sessions in Rex: read where each stands, send its
 next step, answer its prompts, and be woken when its turn ends.
 
-Every action on a session is decided on a VIEW: read, wait and status print
-one (T1@3fa91c07), and an action is refused once the session has moved past
-it, so a step decided on an old turn never reaches a new one. A working
-session's view changes as it writes: decide on a turn that has ended, or
-send with --queue, which needs only that no prompt came since. One driver
-acts on a session at a time; a second is refused while the first acts.
+Every action on a session is decided on a VIEW, such as T1@3fa91c07, which
+read, wait, status and every wake print, and is refused once the session has
+moved past it: a step decided on an old turn never reaches a new one. A
+working session's view changes as it writes, so decide on a turn that has
+ended, or send with --queue, which needs only that no prompt came since. One
+driver acts on a session at a time.
 
   drive status [--json] [--quick]          every session in the batch, live
-  drive read SESSION [--prompts [N] | --pending | --user | --screen] [--json]
-                                           its newest reply, or what it was told, the
-                                           call a prompt waits on, its newest prompt,
-                                           the end of its screen
+  drive read SESSION [MODE] [--json]       its newest reply, its view, and next: where its
+                                           state decides it; MODE is one of
+           --prompts [N]  what it was told   --pending  the call a prompt waits on
+           --user         its newest prompt  --screen   the end of its screen
   drive wait SESSION [--quiet S] [--bg S]  block until its turn ends; prints the reply's end
   drive send VIEW STEP [--queue] [--hold NAME] [--as LABEL]
   drive open LABEL [STEP] [--dir DIR] [--resume ID] [--account NAME] [--model M] [--hold NAME]
   drive respond VIEW approve|deny|interrupt|clear
-  drive watch SESSION | drive watch --due | drive watch --sleep SECONDS NOTE
-                                           a webhook batch: wake the driver when the turn
-                                           ends; --due arms every session that needs it.
-                                           Any action that types or presses into a session
-                                           arms its wake itself
-  drive park VIEW REASON…                  stop waking for it; the reason is kept
+  drive watch SESSION | --due | --sleep SECONDS NOTE
+                                           a webhook batch: wake the driver when the turn ends;
+                                           --due arms all that need it; --sleep is a timer
+  drive park VIEW REASON…                  no wakes until a step is sent; the reason is kept
   drive close VIEW                         close its block after its last step
   drive record grant --source WORDS --scope WHAT
   drive record ask SESSION --question Q --recommendation R --if-unanswered WHAT
@@ -52,7 +50,8 @@ acts on a session at a time; a second is refused while the first acts.
   drive log [--since TIME] [--json]        the batch's timeline
   drive metrics [BATCH] [--json]           asks, owner wait, merges, sends, failures
   drive batch [new NAME [--wake webhook|none] [--rex-session S] [--tz ZONE] [--after-wake CMD]
-              | use NAME | list]               the current batch; a new one starts with no grants
+              | use NAME | list]               the current batch and its directory; a new one starts
+                                           with no grants and stops the last one's wakes
   drive snippet KEY [DIR] [TEXT…] | drive snippet --list [DIR]
 
 STEP is one of:
@@ -65,27 +64,30 @@ The first step a session gets in a batch carries the notice ahead of it.
 --queue sends to a working session, which takes it mid-turn; a session on a
 prompt takes nothing until it is answered. --hold NAME is for what only one
 session may do at a time, such as a release or commits into a shared
-checkout: it is held from the send until the turn the step starts has ended,
+checkout: held from the send until the turn the step starts has ended,
 background shells that turn started included.
 
-status reads, per session: STATE (working; done; idle; interrupted, its turn
-stopped by an interrupt or a denied prompt; error; blocked:permission|
-question|auth); INPUT (empty; suggestion, Claude Code's dimmed guess, which
-typing replaces; typed, a line someone left unsent); WAKE (armed, its wake
-comes about a minute after the turn ends; stuck; posting, a wake on its
-way; woken HH:MM (nothing done since), a wake that still wants a decision:
-act on it or park it; none, or ended without a wake: no wake will come
-until drive watch --due arms one; parked: why). Hold lines name who holds
-each and who waits for it with the step it was refused. A wake also comes
-when a session stops on a prompt, and ends with what to do next when the
-ending decides it.
+Wakes, in a webhook batch: any send, open or respond arms the session's
+wake. It comes about a minute after the turn ends, at once on an API error
+or an interrupt, and when the session stops on a prompt; it ends with next:
+where the ending decides what to do. A refused action armed nothing.
+
+status columns:
+  STATE  working | done | idle (no prompt yet) | interrupted (an interrupt or a deny)
+         | error | blocked:permission | blocked:question | blocked:auth (a rejected login)
+  INPUT  empty | suggestion (Claude Code's dimmed guess; typing replaces it)
+         | typed (a line left unsent) | prompt (a prompt's options) | unknown (no box on screen)
+  WAKE   armed | stuck | posting | woken HH:MM (nothing done since): act on it or park it
+         | none, ended without a wake: no wake comes until drive watch --due | parked: why
+  hold lines name who holds each hold and who waits for it with the step it was refused
 
 SESSION is a label in the batch (T1) or a block id (its last six characters).
 --batch NAME acts in that batch instead of the current one.
 
-Exit status: 0 done; 1 refused, nothing done (the message says why and what to
-do); 2 usage; 3 tried and did not end as asked, the message saying what did
-happen; 4 the session's login was rejected (the message prints the relaunch).
+Every refusal and failure ends with next:, a command that runs as written on
+the session as it stands. Exit status: 0 done; 1 refused, nothing was done;
+2 usage; 3 tried and did not end as asked, the message saying what did
+happen; 4 the session's login was rejected, the message printing the relaunch.
 `
 
 func main() {
