@@ -8,11 +8,13 @@ Every reader asks one function, `turnState` in `internal/drive/driver.go`, and g
 
 Its sources each answer what only they know:
 
-- **Claude Code's registry** (`<config>/sessions/<pid>.json`, read by `internal/session`): `status` is busy, waiting (with what it waits for) or idle, and changes within a fraction of a second of the session itself. It is the answer to whether the session works, waits or is idle.
+- **Claude Code's registry** (`<config>/sessions/<pid>.json`, read by `internal/session`): `status` is busy, waiting (with what it waits for), idle, or shell, idle at its prompt with a background job running, and changes within a fraction of a second of the session itself. It is the answer to whether the session works, waits or is idle.
 - **The transcript** (`internal/turn`): how an idle session's turn ended — answered, interrupted (a deny or Ctrl+C), or an API error, a rejected login reading `blocked:auth`.
 - **Rex's record**, from Claude Code's hooks through `rex-agent` (dotfiles): what kind of prompt a waiting session shows.
 
 Rex alone is not enough: no hook reports a deny, an interrupt, a typed `/compact`, a queued turn starting after the turn before it stopped, a permission prompt in its first seconds, an approved command before its PostToolUse, a held message from another session (Rex reads blocked while the session sits idle at its input box), or an API error where the StopFailure hook is not registered. A Claude Code that keeps no registry status falls back to folding the transcript into Rex's record.
+
+A session's background jobs are the Bash shells it left running, each known by the command it runs (`session.Shell`): `status` and `read` list them, and a hold, an interrupt or a close a job stands in the way of says which and gives the step that has the session stop it, since the session owns its jobs and a driver only reads and sends.
 
 A session whose process has gone, or whose pid another process now holds, is no session: `Locate` checks the registry's `procStart`, which Claude Code writes as `ps` prints `lstart` in UTC, against the live process, and treats a start it cannot read as a match rather than hide a live session. An API error belongs to the process that wrote it: accounts share one transcript directory (`~/.claude-accounts/*/projects` links to `~/.claude/projects`), so a session resumed on another account reads the error that ended the one it replaced, and an error older than the process's start does not count (`liveError`).
 
