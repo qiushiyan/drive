@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/qiushiyan/drive/internal/batch"
+	"github.com/qiushiyan/drive/internal/config"
 )
 
 // Started reports a batch that started.
@@ -27,10 +29,18 @@ var webhookName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 // in this one. again is the command that starts it, for a refusal to repeat.
 func (d *Driver) StartBatch(m batch.Meta, again string) (*Started, error) {
 	if m.Wake == "webhook" {
-		if !webhookName.MatchString(m.Webhook) {
+		dir := filepath.Join(d.Cfg.ConfigDir, "webhooks")
+		switch base := filepath.Base(m.Webhook); {
+		case m.Webhook == "":
 			return nil, &Refused{Reason: "a batch that wakes a chat driver names that driver's webhook",
-				Next: fmt.Sprintf("add --webhook with the name of your own wake routine's file under %s, which holds its URL= and AUTH= lines, to: %s",
-					filepath.Join(d.Cfg.ConfigDir, "webhooks"), again)}
+				Next: fmt.Sprintf("add --webhook and the name of your own wake routine's file in %s to: %s", dir, again)}
+		case webhookName.MatchString(m.Webhook):
+		case filepath.Dir(config.Expand(d.Cfg.Home, m.Webhook)) == dir && webhookName.MatchString(base):
+			return nil, &Refused{Reason: fmt.Sprintf("--webhook takes the file's name in %s, not its path", dir),
+				Next: strings.Replace(again, m.Webhook, base, 1)}
+		default:
+			return nil, &Refused{Reason: fmt.Sprintf("--webhook %q is not the name of a file in %s", m.Webhook, dir),
+				Next: fmt.Sprintf("name your own wake routine's file there instead, which the owner writes, in: %s", again)}
 		}
 		if err := d.canPost(&batch.Batch{Meta: m}); err != nil {
 			var nw *noWebhook

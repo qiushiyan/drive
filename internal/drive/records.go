@@ -333,7 +333,7 @@ func refusalKind(reason string) string {
 	case strings.Contains(reason, "has a prompt it has not answered"):
 		return "step not yet answered"
 	case strings.Contains(reason, "still runs a background shell"), strings.Contains(reason, "still runs a background job"):
-		return "background shell running"
+		return "background job running"
 	case strings.Contains(reason, "is working"):
 		return "still working"
 	case strings.Contains(reason, "already open"):

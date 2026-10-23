@@ -51,8 +51,8 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 		return nil, err
 	}
 	r := &Reading{Label: o.Label, SID: o.Session.ID, State: o.State(), Account: o.Session.Account, Input: o.Input, Typed: o.Typed, View: o.View}
-	r.Next = d.nextFor(o, r.State, false)
 	r.Jobs = d.Host.Shells(o.Session.Status.PID)
+	r.Next = d.nextFor(o, r.State, r.Jobs)
 	f := o.Frontier
 	switch mode {
 	case ReadPrompts:

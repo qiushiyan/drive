@@ -81,12 +81,8 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		}
 		if opt.Hold != "" {
 			if h, held := d.holder(evs, batch.Members(evs), opt.Hold, label); held {
-				next := fmt.Sprintf("wait for %s's turn to end (drive wait %s), then open it: %s", h.Session, h.Session, whole)
-				if b.Meta.Wake == "webhook" {
-					next = fmt.Sprintf("%s's wake comes when its turn ends; open %s in the run it starts: %s", h.Session, label, whole)
-				}
 				return &holdRefused{Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), h.why),
-					Next: next + stopNote(h)}, opt.Hold, step, whole}
+					Next: holdNext(b, h, label, "", whole, true)}, opt.Hold, step, whole}
 			}
 		}
 		return b.Append(batch.Event{At: d.now(), Kind: batch.KindOpenIntent, Session: label, Intent: intent, Dir: opt.Dir, Text: clip(stepSummary(step), 200)})

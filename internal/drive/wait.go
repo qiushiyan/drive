@@ -26,10 +26,11 @@ type Ending struct {
 	State   string // done, blocked:permission, blocked:question, blocked:auth, error, gone
 	Msg     string // what Rex was told, such as the prompt's question
 	Error   *turn.APIError
-	Shells  int // background shells started in this turn, still running
-	Orphans int // background shells older than this turn's prompt
-	Capped  bool
-	Reply   string // the newest reply's end
+	Shells  int             // background jobs started in this turn, still running
+	Orphans int             // background jobs older than this turn's prompt
+	Capped  bool            // the wait stopped at its limit while this turn's jobs ran
+	Jobs    []session.Shell // every background job the session runs
+	Reply   string          // the newest reply's end
 	Pending *turn.ToolCall
 	Screen  string // the screen's end, for a prompt the transcript does not show
 	View    turn.View
@@ -91,7 +92,7 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 		if ended {
 			e := &Ending{Label: o.Label, Block: o.Session.Block, State: state, Msg: st.Msg, Error: o.Frontier.Error,
 				Shells: t.Shells, Orphans: t.Orphans, Capped: t.Shells > 0, Pending: o.Frontier.Pending, View: o.View,
-				Account: o.Session.Account}
+				Account: o.Session.Account, Jobs: d.Host.Shells(o.Session.Status.PID)}
 			if a, local := o.Frontier.Answer(); a != nil {
 				e.Reply = tail(answerText(o.Frontier, a, local), 2500)
 			}
@@ -100,7 +101,7 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 					e.Screen = lastLines(screen, 25)
 				}
 			}
-			e.Next = d.nextFor(o, state, e.Capped)
+			e.Next = d.nextFor(o, state, e.Jobs)
 			return e, nil
 		}
 		d.sleep(5 * d.poll() / 2)
@@ -109,7 +110,8 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 
 // nextFor is what a driver runs about a session whose turn ended in state,
 // where the ending decides it: the one answer the wake and drive read give.
-func (d *Driver) nextFor(o *Observation, state string, capped bool) string {
+// jobs are the background jobs the session runs.
+func (d *Driver) nextFor(o *Observation, state string, jobs []session.Shell) string {
 	switch {
 	case state == "blocked:auth":
 		return d.relaunchHint(o)
@@ -130,8 +132,13 @@ func (d *Driver) nextFor(o *Observation, state string, capped bool) string {
 		return d.retryHint(o, kind)
 	case state == "interrupted":
 		return fmt.Sprintf("its turn was interrupted; read where it stopped (drive read %s) before its next step", o.Label)
-	case capped:
-		return fmt.Sprintf("if the reply says it waits on its own job, watch it again (drive watch %s); otherwise send its next step", o.Label)
+	case state == "done" && len(jobs) > 0:
+		again := "watch it again (drive watch " + o.Label + ")"
+		if webhook, _ := d.wakes(o.Session.Block); !webhook {
+			again = "wait for it again (drive wait " + o.Label + ")"
+		}
+		return fmt.Sprintf("if the reply says it waits on its job, %s; if the job should have ended, have the session stop it: %s; otherwise send its next step",
+			again, stopJob(o.Label, o.View.String(), jobs[0]))
 	}
 	return ""
 }
@@ -160,11 +167,8 @@ func (e *Ending) Text() string {
 	if e.Error != nil {
 		fmt.Fprintf(&b, "error: %s — %q (account %s)\n", e.Error.Kind, e.Error.Text, e.Account)
 	}
-	if e.Capped {
-		fmt.Fprintf(&b, "background: %d shell(s) this turn started still run; the turn may resume when they finish, or it ended on a question — read the reply\n", e.Shells)
-	}
-	if e.Orphans > 0 {
-		fmt.Fprintf(&b, "background: %d shell(s) older than this turn's prompt (left over, not waited on)\n", e.Orphans)
+	for _, j := range e.Jobs {
+		fmt.Fprintf(&b, "a background job of its runs: %s\n", clip(j.Command, 100))
 	}
 	if e.Pending != nil && strings.HasPrefix(e.State, "blocked") {
 		fmt.Fprintf(&b, "pending %s: %s\n", e.Pending.Name, clip(e.Pending.Input, 400))
@@ -581,16 +585,15 @@ func (d *Driver) waiterLines(b *batch.Batch, label string) string {
 	return out.String()
 }
 
-// holder says whether a hold is taken by a session other than label: its
-// send is still under way, or the turn that send started has not ended. A
-// holder that cannot be read holds; only one that is gone does not.
-// heldBy is a hold as it stands: who holds it and why, and, where a job it
-// started is what holds it, that job and the holder's view.
+// heldBy is a hold as it stands: who holds it and why, whether the holder
+// waits on a prompt, and, where a job it started is what holds it, that job
+// and the holder's view.
 type heldBy struct {
 	batch.Hold
-	why  string
-	job  *session.Shell
-	view string
+	why    string
+	prompt bool
+	job    *session.Shell
+	view   string
 }
 
 // holder says whether a hold is taken by a session other than label. It
@@ -629,7 +632,7 @@ func (d *Driver) holder(evs []batch.Event, members []*batch.Member, name, label 
 		t := d.turnOf(s, f, h.Since)
 		switch {
 		case t.waiting():
-			hb.why = "who waits on a prompt"
+			hb.why, hb.prompt = "who waits on a prompt", true
 			return hb, true
 		case t.State == "working" && sentSince(evs, h):
 			hb.why = "who works on a later step"

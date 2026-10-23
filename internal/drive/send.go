@@ -314,14 +314,51 @@ type holdRefused struct {
 
 func (h *holdRefused) Unwrap() error { return &h.Refused }
 
-// holding says what keeps a hold taken.
-// stopNote is what a waiter's refusal adds when a job the holder started is
-// what holds: the job may be one that should have ended.
-func stopNote(h heldBy) string {
-	if h.job == nil {
-		return ""
+// holdNext is what the driver of a send or open refused on h does
+// meanwhile, from what keeps the hold: a turn ends by itself, a prompt waits
+// for its answer, and a job ends in its own time, its session usually going
+// on after it. view is the refused session's when it can be parked, "" for an
+// open or a session outside the batch; retry is the refused command.
+func holdNext(b *batch.Batch, h heldBy, label, view, retry string, open bool) string {
+	var next string
+	if b.Meta.Wake != "webhook" {
+		wait := fmt.Sprintf("wait for %s's turn to end (drive wait %s)", h.Session, h.Session)
+		switch {
+		case h.prompt:
+			wait = fmt.Sprintf("answer %s's prompt (drive read %s --pending), %s", h.Session, h.Session, wait)
+		case h.job != nil:
+			wait = fmt.Sprintf("wait for %s, which usually goes on once its job ends (drive wait %s)", h.Session, h.Session)
+		}
+		again := "send this again: "
+		if open {
+			again = "open it: "
+		}
+		next = wait + ", then " + again + retry
+	} else {
+		names := fmt.Sprintf("names %s as waiting for %s", label, h.Name)
+		if open {
+			names = "prints this open: " + retry
+		}
+		others := "nothing else wakes you"
+		switch {
+		case h.prompt:
+			next = fmt.Sprintf("%s waits on a prompt, so answer it first (drive read %s --pending); its wake comes when its turn then ends and %s", h.Session, h.Session, names)
+		case h.job != nil && open:
+			next = fmt.Sprintf("nothing to run now: %s usually goes on once its job ends, and the wake of that turn, which drive watch --due arms, %s", h.Session, names)
+		case h.job != nil:
+			next, others = h.Session+" usually goes on once its job ends", "nothing wakes you"
+		default:
+			next = fmt.Sprintf("%s's wake comes when its turn ends and %s", h.Session, names)
+		}
+		if view != "" {
+			next += fmt.Sprintf("; %s for %s, so park it meanwhile: drive park %s %s; drive watch --due wakes it once %s is free",
+				others, label, view, shellQuote("waits for "+h.Name+", held by "+h.Session), h.Name)
+		}
 	}
-	return fmt.Sprintf("; if that job should have ended, have %s stop it: %s", h.Session, stopJob(h.Session, h.view, *h.job))
+	if h.job != nil {
+		next += fmt.Sprintf("; if that job should have ended, have %s stop it: %s", h.Session, stopJob(h.Session, h.view, *h.job))
+	}
+	return next
 }
 
 // stepArgs is a step as drive send and drive open take it.
@@ -484,19 +521,13 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 		members := batch.Members(evs)
 		if opt.Hold != "" {
 			if h, held := d.holder(evs, members, opt.Hold, o.Label); held {
-				what := h.why
-				next := fmt.Sprintf("wait for %s's turn to end (drive wait %s), then send this again: %s", h.Session, h.Session, sendCommand(o.View.String(), p.step, opt))
-				if b.Meta.Wake == "webhook" {
-					// The refused session is left untouched, so no wake of its own comes.
-					next = fmt.Sprintf("%s's wake comes when its turn ends and names %s as waiting for %s", h.Session, o.Label, opt.Hold)
-					if batch.Find(members, o.Label) != nil {
-						next += fmt.Sprintf("; nothing else wakes you for %s, so park it meanwhile: drive park %s %s; drive watch --due wakes it once %s is free",
-							o.Label, o.View, shellQuote("waits for "+opt.Hold+", held by "+h.Session), opt.Hold)
-					}
+				// The refused session is left untouched, so no wake of its own comes: one in the batch is parked.
+				park := ""
+				if batch.Find(members, o.Label) != nil {
+					park = o.View.String()
 				}
-				next += stopNote(h)
-				return &holdRefused{Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), what),
-					Next: next}, opt.Hold, p.step, ""}
+				return &holdRefused{Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), h.why),
+					Next: holdNext(b, h, o.Label, park, sendCommand(o.View.String(), p.step, opt), false)}, opt.Hold, p.step, ""}
 			}
 		}
 		var add []batch.Event

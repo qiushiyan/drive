@@ -212,7 +212,7 @@ func (d *Driver) ownView(v turn.View, what string, promptOnly bool, again string
 }
 
 // Close closes a session's block once its last step has run, decided on
-// view: refused while it works, waits on a prompt, runs a background shell,
+// view: refused while it works, waits on a prompt, runs a background job,
 // or holds typed text.
 func (d *Driver) Close(view string) error {
 	v, err := turn.ParseView(view)
@@ -240,11 +240,12 @@ func (d *Driver) Close(view string) error {
 			Next: "leave the block, as the line may be the owner's, and park it so the report names it: " + park("an unsent line in its input box")})
 	case len(d.Host.Shells(st.PID)) > 0:
 		job := d.Host.Shells(st.PID)[0]
-		next := "its job runs on and nothing wakes you when it ends; park it with why: " + park("a background job still runs")
+		next := "if the job should have ended, have the session stop it, and close it once that turn ends: " + stopJob(o.Label, view, job) +
+			"; if it should run on, park the session with why, as nothing wakes you when the job ends: " + park("a background job still runs")
 		if webhook, _ := d.wakes(o.Session.Block); !webhook {
-			next = fmt.Sprintf("wait for the job (drive wait %s) and close it then, or park it with why: %s", o.Label, park("a background job still runs"))
+			next = "if the job should have ended, have the session stop it, and close it once that turn ends: " + stopJob(o.Label, view, job) +
+				fmt.Sprintf("; if it should run on, wait for it (drive wait %s) and close the session then", o.Label)
 		}
-		next += "; if the job should have ended, have the session stop it first: " + stopJob(o.Label, view, job)
 		return d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s still runs a background job: %s", o.Label, clip(job.Command, 120)), Next: next})
 	}
 	if err := d.Term.Close(o.Session.Block); err != nil {

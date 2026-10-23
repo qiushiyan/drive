@@ -534,8 +534,8 @@ func (d *Driver) relaunch(o *Observation, step string) string {
 	} else {
 		cmd += " " + step
 	}
-	if n := len(d.Host.Shells(o.Session.Status.PID)); n > 0 {
-		return fmt.Sprintf("%s once its %d background shell(s) end, as close refuses until then: %s", what, n, cmd)
+	if jobs := d.Host.Shells(o.Session.Status.PID); len(jobs) > 0 {
+		return fmt.Sprintf("%s once its background job (%s) ends, as close refuses until then: %s", what, clip(jobs[0].Command, 120), cmd)
 	}
-	return what + " (close refuses while a background shell of its runs): " + cmd
+	return what + ": " + cmd
 }

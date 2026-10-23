@@ -49,10 +49,11 @@ driver acts on a session at a time.
   drive record note [--session S] TEXT…
   drive log [--since TIME] [--json]        the batch's timeline
   drive metrics [BATCH] [--json]           asks, owner wait, merges, sends, failures
-  drive batch [new NAME [--wake webhook --webhook FILE | --wake none] [--rex-session S] [--tz ZONE]
-              [--after-wake CMD] | use NAME | list]
-                                           the current batch and its directory; a new one starts
-                                           with no grants and stops the last one's wakes
+  drive batch [new NAME [--webhook DRIVER] [--rex-session S] [--tz ZONE] [--after-wake CMD]
+              | use NAME | list]           the current batch and its directory; a new one starts
+                                           with no grants and stops the last one's wakes; with
+                                           --webhook it wakes that chat driver, without, its
+                                           driver waits itself
   drive snippet KEY [DIR] [TEXT…] | drive snippet --list [DIR]
 
 STEP is one of:
@@ -65,13 +66,14 @@ The first step a session gets in a batch carries the notice ahead of it.
 --queue sends to a working session, which takes it mid-turn; a session on a
 prompt takes nothing until it is answered. --hold NAME is for what only one
 session may do at a time, such as a release or commits into a shared
-checkout: held from the send until the turn the step starts has ended,
-background shells that turn started included.
+checkout: a second send or open naming it is refused, saying why, while the
+holder works, later steps included, waits on a prompt, or runs a background
+job it started.
 
 Wakes, in a webhook batch: any send, open or respond arms the session's
-wake, posted to the batch's own webhook, the URL= and AUTH= lines in
-~/.config/drive/webhooks/FILE, so two drivers on one machine never wake each
-other. It comes about a minute after the turn ends, at once on an API error
+wake, posted to the driver the batch names, the URL= and AUTH= lines in
+~/.config/drive/webhooks/DRIVER, so a driver hears only of its own batches.
+It comes about a minute after the turn ends, at once on an API error
 or an interrupt, and when the session stops on a prompt; it ends with next:
 where the ending decides what to do. A refused action armed nothing.
 

@@ -319,7 +319,7 @@ func cmdWait(d *drive.Driver, argv []string) int {
 	}
 	if a.on("json") {
 		printJSON(map[string]any{"session": e.Label, "block": rex.Short(e.Block), "state": e.State, "error": e.Error,
-			"shells": e.Shells, "orphans": e.Orphans, "reply": e.Reply, "screen": e.Screen, "view": e.View.String(), "next": e.Next})
+			"shells": e.Shells, "orphans": e.Orphans, "jobs": e.Jobs, "reply": e.Reply, "screen": e.Screen, "view": e.View.String(), "next": e.Next})
 		return 0
 	}
 	fmt.Print(e.Text())
@@ -533,10 +533,14 @@ func cmdBatch(d *drive.Driver, argv []string) int {
 			orDash(b.Meta.TZ), len(batch.Members(evs)), b.Dir)
 	case a.pos[0] == "new" && len(a.pos) == 2:
 		wake := a.str("wake")
-		if wake == "" {
+		switch {
+		case wake == "" && a.str("webhook") != "":
+			wake = "webhook"
+		case wake == "":
 			wake = "none"
-		}
-		if wake != "webhook" && wake != "none" {
+		case wake == "none" && a.str("webhook") != "":
+			return bad("--webhook wakes a chat driver, and --wake none wakes no one: give one of them")
+		case wake != "webhook" && wake != "none":
 			return bad("--wake is webhook (a chat driver woken by its webhook) or none (a driver that waits itself)")
 		}
 		tz := a.str("tz")
