@@ -1,18 +1,20 @@
 # Acting on a session
 
-`drive` is the mechanics of driving Claude Code sessions in Rex for a driver standing in for their owner: a chat bot woken by webhook, or a Claude Code session. It reads where a session stands, sends its next step, answers its prompts and says when its turn ends. What to send, and when, stays the driver's judgment; the drive-session skill in the dotfiles repository carries the owner's intent and preferences. This doc is how one action on one session works; `docs/batches.md` is the record those actions keep and the wakes that bring the driver back.
+`drive` is the mechanics of driving Claude Code sessions in Rex for a driver standing in for their owner: a chat bot woken by webhook, or a Claude Code session. It reads where a session stands, sends its next step, answers its prompts and says when its turn ends. What to send, and when, stays the driver's judgment, which the drive-session skill in the dotfiles repository teaches; drive's side of that division is the `next:` each message ends with, the command to run on the session as it stands. This doc is how one action on one session works; `docs/batches.md` is the record those actions keep and the wakes that bring the driver back.
 
 ## Where a turn stands
 
-Every reader asks one function, `turnState` in `internal/drive/driver.go`, and gets one word: working, done, idle, interrupted, error, blocked:permission, blocked:question, blocked:auth. A second, local answer to that question is how drive goes wrong, so a new reader of session state calls it rather than reading Rex's record directly.
+Every reader asks one function, `turnState` in `internal/drive/driver.go`, and gets one word: working, done, idle, interrupted, error, blocked:permission, blocked:question, blocked:auth. A second, local answer to that question is how drive goes wrong, so a new reader of session state calls it, `turnOf` for whether the turn is over, and `nextFor` for what to run about it.
 
-Two sources feed it. Rex holds what Claude Code's hooks report through `rex-agent` (dotfiles): a prompt submitted, a tool run, a prompt shown, a turn stopped, an API failure. The transcript (`internal/turn`) covers what no hook reports:
+Its sources each answer what only they know:
 
-- **An interrupt or a denied prompt:** no hook fires, so Rex keeps reading working or blocked; the transcript's `[Request interrupted by user…]` with nothing after it reads `interrupted`.
-- **An API error in a session started before the StopFailure hook:** Rex keeps reading working; the error row reads `error`, or `blocked:auth` for a rejected login.
-- **A local command such as `/compact`:** it answers with its output, not an assistant entry, and that output counts as the answer.
+- **Claude Code's registry** (`<config>/sessions/<pid>.json`, read by `internal/session`): `status` is busy, waiting (with what it waits for) or idle, and changes within a fraction of a second of the session itself. It is the answer to whether the session works, waits or is idle.
+- **The transcript** (`internal/turn`): how an idle session's turn ended — answered, interrupted (a deny or Ctrl+C), or an API error, a rejected login reading `blocked:auth`.
+- **Rex's record**, from Claude Code's hooks through `rex-agent` (dotfiles): what kind of prompt a waiting session shows.
 
-An API error belongs to the process that wrote it. Accounts share one transcript directory (`~/.claude-accounts/*/projects` links to `~/.claude/projects`), so a session resumed on another account reads the error that ended the process it replaced; an error older than Rex's record of the new process starting does not count (`liveError`).
+Rex alone is not enough: no hook reports a deny, an interrupt, a typed `/compact`, a queued turn starting after the turn before it stopped, a permission prompt in its first seconds, an approved command before its PostToolUse, a held message from another session (Rex reads blocked while the session sits idle at its input box), or an API error where the StopFailure hook is not registered. A Claude Code that keeps no registry status falls back to folding the transcript into Rex's record.
+
+A session whose process has gone, or whose pid another process now holds, is no session: `Locate` checks the registry's `procStart`, which Claude Code writes as `ps` prints `lstart` in UTC, against the live process, and treats a start it cannot read as a match rather than hide a live session. An API error belongs to the process that wrote it: accounts share one transcript directory (`~/.claude-accounts/*/projects` links to `~/.claude/projects`), so a session resumed on another account reads the error that ended the one it replaced, and an error older than the process's start does not count (`liveError`).
 
 ## Views
 
@@ -22,38 +24,37 @@ A working session's view changes as it writes, so a send is decided on a turn th
 
 ## One driver at a time
 
-An action owns its session from the read it is decided on to the record of how it went: an exclusive lock per block under the state directory's `locks/` (`Store.Own` in `internal/batch/lock.go`). A second driver is refused with what the first is doing, never queued behind it, because whatever it decided it decided on what the first is changing. `open` owns the label it opens under the same way.
+An action owns its session through a lease (`own` in `internal/drive/driver.go`), from the read it is decided on to the record of how it went: an exclusive lock per block under the state directory's `locks/` (`Store.Own` in `internal/batch/lock.go`). A second driver is refused with what the first is doing, never queued behind it, because whatever it decided it decided on what the first is changing. `open` owns the label it opens under the same way. Checking a hold, or listing what is in flight, probes another driver's lock for an instant; `Own` retries briefly before refusing, which is what tells a probe from a driver that holds the lock for seconds.
 
-Checking a hold, or listing what is in flight, probes another driver's lock for an instant; `Own` retries briefly before refusing, which is what tells a probe from a driver that holds the lock for seconds.
+An action reaches the session's keyboard only through `typeInto` and `press`, and the lease arms the wake of whatever they reached when it ends (`docs/batches.md` § Wakes).
 
 ## Delivering a step
 
 A step is a short typed line (a slash command too), a file the session is told to read, or one of the owner's TabType snippets (`internal/snippet`). Its path through `internal/drive/send.go`:
 
-1. **Plan, with no effect.** The step is checked whole first: a typed line is one line of at most 500 bytes, since Claude Code keeps only the end of long typing; a skill that starts only when typed is never sent inside a file; the notice exists. A refusal (exit 1) therefore always means nothing reached the session.
-2. **Admit.** Under the batch's lock: the hold is free, the session joins the batch if it was outside it, the file a step sends is saved under the batch's `sends/` (never overwritten), and an intent is recorded before anything is typed.
-3. **Type and confirm.** The line is typed, Enter pressed, and arrival confirmed from the transcript by a prompt the session did not have before; a prompt already there, however recent and alike, is never taken for this one. The first seconds of the new turn are watched for an API error, a rejected login most often.
-4. **Record** the outcome: `arrived`, `queued`, `recovered`, `garbled` or `unknown`; in a batch that wakes its driver, arm the session's wake.
+1. **Plan, with no effect.** The step is checked whole first: a typed line is one trimmed line of at most 500 bytes with no control character and no leading `!` or `#`, since Claude Code keeps only the end of long typing and takes those as keys, a shell command or a memory; a skill that starts only when typed is never sent inside a file; the notice exists. A refusal (exit 1) therefore always means nothing reached the session.
+2. **Admit.** Under the batch's lock: the hold is free, the session joins the batch if it was outside it, the file a step sends is saved under the batch's `sends/` (never overwritten), and the step's intent is recorded before anything is typed, the notice's beside it under its own.
+3. **Type and confirm.** Only into an input box that reads empty or holds Claude Code's suggestion: nothing is typed into a prompt, whose Enter would answer it, or into a screen with no box. The line is typed, Enter pressed, and arrival confirmed from the transcript by a prompt the session did not have before; a prompt already there, however recent and alike, is never taken for this one. The first seconds of the new turn are watched for an API error, a rejected login most often.
+4. **Record** the outcome: `arrived`, `queued`, `recovered`, `garbled`, `other` (it received something else, and the step reached it) or `unknown`.
 
-The first step a session gets in a batch carries the notice (`~/.agents/skills/drive-session/NOTICE.md` by default). A file step carries it at its head; a typed step goes after the notice, which is sent alone in its own turn. A session resumed with `--resume` read the notice in the conversation it resumes and does not get it again.
-
-Nothing is typed into a prompt: Enter there would answer it, so a session on a permission or question prompt takes no step, queued or not, until `respond` answers it.
+The first step a session gets in a batch carries the notice (`~/.agents/skills/drive-session/NOTICE.md` by default), and so does each step after it until a notice has reached the session. A file step carries it at its head; a typed step goes after the notice, which is sent alone in its own turn. A session resumed with `--resume` is spared it only if this batch saw that session read it.
 
 ## When delivery goes wrong
 
-- **The line's start is lost in typing:** the garbled turn is interrupted and the line typed again behind eight spaces, which absorb the loss and change nothing the session reads. Only while that turn is the one running: Ctrl+C stops whatever turn runs, so a garbled turn that already ended, or a garbled line still queued behind the session's own work, is reported `garbled` for the driver to read.
+- **The line's start is lost in typing:** it comes back as a line break where the start was. The garbled turn is interrupted and the line typed again, prose behind eight spaces that absorb the loss, a slash command as it is, since one behind spaces is only words. Only while that turn is the one running: Ctrl+C stops whatever turn runs, so a garbled turn that already ended, or a garbled line still queued behind the session's own work, is reported `garbled` for the driver to read.
+- **The session received something else:** whitespace or a typed line Claude Code recorded its own way. It is `other`, a send that reached the session, so its hold stands, and the message says to read it before interrupting.
 - **Nothing new reaches the transcript in time:** the send is `unknown`, and the message says whether the line still sits in the input box. A line left there blocks the next send until someone clears it, since it may be the owner's.
-- **The login was rejected:** a send to a session already showing it is refused; one whose step the rejection answers fails with exit 4. Either message prints the relaunch: close the block and open the session again on another account with `--resume` and the step. The account offered is one this batch has not seen rejected; with none left, the message says to tell the owner.
+- **The login was rejected:** a send to a session already showing it is refused; one whose step the rejection answers fails with exit 4; a wake for it ends the same way. Each prints the relaunch, close on the view the session stands at and open again on another account with `--resume` and the step it was last sent. The account offered is one this batch has not seen rejected, the primary among them under the launcher name `primary_name` gives (`internal/config`); with none left, the message says to tell the owner.
 
 ## Testing
 
-The suite drives a fake Rex and fake Claude Code sessions (`internal/testkit`) that write real transcript files. A bug hides wherever the fake is kinder than the real thing, so it models what real sessions were seen to do:
+The suite drives a fake Rex and fake Claude Code sessions (`internal/testkit`) that write real transcript files and keep a registry status. A bug hides wherever the fake is kinder than the real thing, so it models what real sessions were seen to do:
 
-- **A slash command typed while busy** is queued without its text.
-- **Escape and Ctrl+C** write the transcript rows a deny and an interrupt write, and leave Rex's record as it was.
+- **The registry moves with the session, Rex only with a hook:** Rex lags a permission prompt (`AskQuietly`), reads blocked through an approved slow command (`SlowTool`, `ToolDone`), reads done through a queued turn, hears nothing of a `/compact` (`SlowCompact`, `Compacted`), a deny or an interrupt, and can be told of a held message the session does not show (`HoldMessage`); a crash leaves Rex's record behind (`Crash`).
+- **A slash command typed while busy** is queued without its text; one behind spaces is words.
 - **A resume** carries on in the shared transcript, on the account the launch names.
 - **A rejected login** answers with an API error row and no Stop.
-- **Typing** can lose a line's start, Enter can be lost, and a send can be caught mid-typing (`TypeGate`).
+- **Typing** can lose a line's start to a line break, Enter can be lost, a send can be caught mid-typing (`TypeGate`), a prompt draws its options where the input box would be, and Rex can fail a read or a key (`StatusFails`, `KeyFails`).
 - **A watch name** already running is refused.
 
 `TestMain` points `HOME`, `DRIVE_STATE_DIR` and `DRIVE_CONFIG_DIR` at a temporary directory, so no test reaches live state. `cmd/drive/main_test.go` runs the command itself against the fake world through `newDriver`.
