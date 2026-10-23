@@ -84,10 +84,11 @@ status columns:
 SESSION is a label in the batch (T1) or a block id (its last six characters).
 --batch NAME acts in that batch instead of the current one.
 
-Every refusal and failure ends with next:, a command that runs as written on
-the session as it stands. Exit status: 0 done; 1 refused, nothing was done;
-2 usage; 3 tried and did not end as asked, the message saying what did
-happen; 4 the session's login was rejected, the message printing the relaunch.
+A refusal or failure that leaves something to do ends with next:, a command
+that runs as written on the session as it stands. Exit status: 0 done;
+1 refused, nothing was done; 2 usage; 3 tried and did not end as asked, the
+message saying what did happen; 4 the session's login was rejected, the
+message printing the relaunch.
 `
 
 func main() {
