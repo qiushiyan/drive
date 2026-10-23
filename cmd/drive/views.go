@@ -230,7 +230,7 @@ func cmdRead(d *drive.Driver, argv []string) int {
 	}
 	if a.on("json") {
 		printJSON(map[string]any{"session": r.Label, "sid": r.SID, "state": r.State, "account": r.Account, "input": r.Input,
-			"input_text": r.Typed, "text": r.Text, "at": r.At, "view": r.View.String()})
+			"input_text": r.Typed, "text": r.Text, "at": r.At, "view": r.View.String(), "next": r.Next})
 		return 0
 	}
 	fmt.Println(r.Text)
@@ -244,6 +244,9 @@ func cmdRead(d *drive.Driver, argv []string) int {
 	}
 	fmt.Println(line)
 	fmt.Printf("view: %s\n", r.View)
+	if r.Next != "" {
+		fmt.Printf("next: %s\n", r.Next)
+	}
 	return 0
 }
 

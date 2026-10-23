@@ -126,6 +126,12 @@ func TestDueArmsWhatHasNoWake(t *testing.T) {
 	if armed, _ := r.d.Due(); len(armed) != 1 || armed[0].Label != "A" {
 		t.Fatalf("a wake is re-posted once per view: %+v", armed)
 	}
+	// B then moves on by itself, as a usage limit's reset continues a turn:
+	// that turn's end is news the driver has had no wake for.
+	b.Busy("Your usage limit has reset. Continue the task.")
+	if armed, _ := r.d.Due(); len(armed) != 1 || armed[0].Label != "B" {
+		t.Fatalf("a session that moved on by itself since its wake is due: %+v", armed)
+	}
 	_ = p
 }
 

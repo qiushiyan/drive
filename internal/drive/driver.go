@@ -355,11 +355,11 @@ func (d *Driver) observe(members []*batch.Member, ref string) (*Observation, err
 	s, err := session.Locate(d.Term, d.Host, block)
 	if errors.Is(err, session.ErrNoClaude) {
 		return nil, &Refused{Reason: fmt.Sprintf("%s (block %s) has no Claude Code session running", o.Label, rex.Short(block)),
-			Next: "it may have exited; `drive status` lists the sessions that are running"}
+			Next: "it may have exited; drive status lists the sessions that are running"}
 	}
 	if err != nil {
 		return nil, &Refused{Reason: fmt.Sprintf("%s (block %s) cannot be read: %v", o.Label, rex.Short(block), err),
-			Next: "the block may be gone; `drive status` lists what is running"}
+			Next: "the block may be gone; drive status lists what is running"}
 	}
 	o.Session = s
 	if o.Frontier, err = s.Frontier(); err != nil {
@@ -389,7 +389,7 @@ func (d *Driver) findBlock(ref string) (string, error) {
 		return hits[0], nil
 	case 0:
 		return "", &Refused{Reason: fmt.Sprintf("no session or block named %q", ref),
-			Next: "`drive status` lists the batch's sessions by label and the other Claude sessions by block"}
+			Next: "drive status lists the batch's sessions by label and the other Claude sessions by block"}
 	default:
 		return "", &Refused{Reason: fmt.Sprintf("%q names %d blocks", ref, len(hits)), Next: "give more of the block id"}
 	}
@@ -500,7 +500,7 @@ func (d *Driver) lastStep(label string) string {
 			return shellQuote(e.Text)
 		}
 	}
-	return "'<the step>'"
+	return ""
 }
 
 // relaunch says how to carry a session whose login was rejected over to
@@ -512,10 +512,16 @@ func (d *Driver) relaunch(o *Observation, step string) string {
 		return "every other account's login was rejected in this batch too: tell the owner, and park the session until they log in again"
 	}
 	// Claude Code finds a session to resume under its working directory's project.
-	cmd := fmt.Sprintf("drive close %s && %s %s", viewNow(o),
-		openCommand(o.Label, OpenOptions{Dir: o.Session.Dir, Resume: o.Session.ID, Account: others[0]}), step)
-	if n := len(d.Host.Shells(o.Session.Status.PID)); n > 0 {
-		return fmt.Sprintf("relaunch it on another account with the step it was to take once its %d background shell(s) end, as close refuses until then: %s", n, cmd)
+	cmd := fmt.Sprintf("drive close %s && %s", viewNow(o),
+		openCommand(o.Label, OpenOptions{Dir: o.Session.Dir, Resume: o.Session.ID, Account: others[0]}))
+	what := "relaunch it on another account with the step it was to take"
+	if step == "" {
+		what = "relaunch it on another account, then send it the step it was to take on the view the open prints"
+	} else {
+		cmd += " " + step
 	}
-	return "relaunch it on another account with the step it was to take (close refuses while a background shell of its runs): " + cmd
+	if n := len(d.Host.Shells(o.Session.Status.PID)); n > 0 {
+		return fmt.Sprintf("%s once its %d background shell(s) end, as close refuses until then: %s", what, n, cmd)
+	}
+	return what + " (close refuses while a background shell of its runs): " + cmd
 }

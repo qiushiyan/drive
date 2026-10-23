@@ -35,6 +35,7 @@ type Reading struct {
 	Text    string
 	View    turn.View
 	At      time.Time // when the text was written
+	Next    string    // what to run, where the state decides it
 }
 
 // Read reads a session and returns the view to act on.
@@ -48,6 +49,7 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 		return nil, err
 	}
 	r := &Reading{Label: o.Label, SID: o.Session.ID, State: o.State(), Account: o.Session.Account, Input: o.Input, Typed: o.Typed, View: o.View}
+	r.Next = d.nextFor(o, r.State, false)
 	f := o.Frontier
 	switch mode {
 	case ReadPrompts:
@@ -295,10 +297,15 @@ func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, zone *time.Locat
 	case m.Posting.After(m.Watched) && m.Posting.After(m.Woken) && m.Posting.After(m.WakeFailed):
 		return "posting since " + m.Posting.In(zone).Format("15:04"), false, ""
 	case woken && m.Woken.After(m.LastAction):
-		// The driver owes it a decision. Remind it once per view: a wake
-		// lost to a run that died is posted again; one it chose to leave is not.
+		// The driver owes it a decision. A session that moved on by itself
+		// since, such as one a usage limit's reset continued, is woken again
+		// when that turn ends; otherwise the wake is posted once more, so one
+		// lost to a run that died is not lost, and never again for one view.
 		word = "woken " + m.Woken.In(zone).Format("15:04") + " (nothing done since)"
-		if d.now().Sub(m.Woken) > 10*time.Minute && m.WokenView != m.PrevView {
+		switch {
+		case r.View.Session != "" && m.WokenView != "" && r.View.String() != m.WokenView:
+			due = "it moved on by itself since its last wake"
+		case d.now().Sub(m.Woken) > 10*time.Minute && m.WokenView != m.PrevView:
 			due = "woken " + ago(d.now().Sub(m.Woken)) + " ago with nothing done since"
 		}
 		return word, true, due

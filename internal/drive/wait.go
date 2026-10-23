@@ -100,22 +100,36 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 					e.Screen = lastLines(screen, 25)
 				}
 			}
-			switch {
-			case state == "blocked:auth":
-				e.Next = d.relaunchHint(o)
-			case strings.HasPrefix(state, "blocked"):
-				e.Next = answerNext(o.Label, o.View.String(), state)
-			case state == "error":
-				e.Next = fmt.Sprintf("read it (drive read %s); send its step again once the API recovers", o.Label)
-			case state == "interrupted":
-				e.Next = fmt.Sprintf("its turn was interrupted; read where it stopped (drive read %s) before its next step", o.Label)
-			case e.Capped:
-				e.Next = fmt.Sprintf("if the reply says it waits on its own job, watch it again (drive watch %s); otherwise send its next step", o.Label)
-			}
+			e.Next = d.nextFor(o, state, e.Capped)
 			return e, nil
 		}
 		d.sleep(5 * d.poll() / 2)
 	}
+}
+
+// nextFor is what a driver runs about a session whose turn ended in state,
+// where the ending decides it: the one answer the wake and drive read give.
+func (d *Driver) nextFor(o *Observation, state string, capped bool) string {
+	switch {
+	case state == "blocked:auth":
+		return d.relaunchHint(o)
+	case strings.HasPrefix(state, "blocked"):
+		return answerNext(o.Label, o.View.String(), state)
+	case state == "error" && o.Frontier.Error != nil && o.Frontier.Error.Kind == "rate_limit":
+		return fmt.Sprintf("if its screen says it continues automatically once the limit resets (drive read %s --screen), leave it: the turn resumes by itself; otherwise %s",
+			o.Label, d.retryHint(o, "rate_limit"))
+	case state == "error":
+		kind := ""
+		if o.Frontier.Error != nil {
+			kind = o.Frontier.Error.Kind
+		}
+		return d.retryHint(o, kind)
+	case state == "interrupted":
+		return fmt.Sprintf("its turn was interrupted; read where it stopped (drive read %s) before its next step", o.Label)
+	case capped:
+		return fmt.Sprintf("if the reply says it waits on its own job, watch it again (drive watch %s); otherwise send its next step", o.Label)
+	}
+	return ""
 }
 
 func lastLines(s string, n int) string {
@@ -217,7 +231,7 @@ func (d *Driver) Watch(ref string) (*Watched, error) {
 	}
 	if b.Meta.Wake != "webhook" {
 		return nil, &Refused{Reason: fmt.Sprintf("batch %s wakes no one (wake: %s)", b.Meta.Name, b.Meta.Wake),
-			Next: "run `drive wait SESSION` in the background instead"}
+			Next: "wait for it yourself, in the background: drive wait " + ref}
 	}
 	if d.Cfg.Webhook.URL == "" {
 		return nil, &Refused{Reason: "no webhook is configured", Next: "write URL= and AUTH= lines to " + d.Cfg.WebhookPath()}
