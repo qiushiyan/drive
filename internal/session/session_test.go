@@ -38,3 +38,11 @@ func TestAProcessIsKnownByItsStart(t *testing.T) {
 		t.Fatal("a start in a form drive cannot read is not taken for another process")
 	}
 }
+
+// The job a Claude Code Bash shell runs, out of the setup Claude Code wraps it in (2.1.308).
+func TestAJobIsWhatItsShellEvals(t *testing.T) {
+	line := `/bin/zsh -c source /Users/example/.claude/shell-snapshots/snapshot-zsh-1.sh 2>/dev/null || true && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && eval 'find ~ -name twin.toml; echo '\''done'\''' < /dev/null && pwd -P >| /tmp/claude-1-cwd`
+	if got := JobCommand(line); got != `find ~ -name twin.toml; echo 'done'` {
+		t.Fatalf("%q", got)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/progress"
 	"github.com/qiushiyan/drive/internal/rex"
+	"github.com/qiushiyan/drive/internal/session"
 	"github.com/qiushiyan/drive/internal/turn"
 )
 
@@ -34,8 +35,9 @@ type Reading struct {
 	Typed   string
 	Text    string
 	View    turn.View
-	At      time.Time // when the text was written
-	Next    string    // what to run, where the state decides it
+	At      time.Time       // when the text was written
+	Next    string          // what to run, where the state decides it
+	Jobs    []session.Shell // background jobs it runs
 }
 
 // Read reads a session and returns the view to act on.
@@ -50,6 +52,7 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 	}
 	r := &Reading{Label: o.Label, SID: o.Session.ID, State: o.State(), Account: o.Session.Account, Input: o.Input, Typed: o.Typed, View: o.View}
 	r.Next = d.nextFor(o, r.State, false)
+	r.Jobs = d.Host.Shells(o.Session.Status.PID)
 	f := o.Frontier
 	switch mode {
 	case ReadPrompts:
@@ -92,8 +95,8 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 	default:
 		if f.Error != nil {
 			r.Text, r.At = fmt.Sprintf("[%s] %s", f.Error.Kind, f.Error.Text), f.Error.At
-		} else if f.Reply != nil {
-			r.Text, r.At = f.Reply.Text, f.Reply.At
+		} else if a, local := f.Answer(); a != nil {
+			r.Text, r.At = answerText(f, a, local), a.At
 		} else {
 			r.Text = "(no reply yet)"
 		}
@@ -121,10 +124,11 @@ type Row struct {
 	Watch     string // armed, woken at …, parked: why, none
 	View      turn.View
 	Member    bool
-	Name      string // the block's Rex label, for sessions outside the batch
-	Error     string // what kept the row from being read
-	Unhandled bool   // a wake was posted after the driver last acted on it
-	Due       string // why the watchdog should arm its wake; "" when nothing is due
+	Name      string          // the block's Rex label, for sessions outside the batch
+	Error     string          // what kept the row from being read
+	Unhandled bool            // a wake was posted after the driver last acted on it
+	Due       string          // why the watchdog should arm its wake; "" when nothing is due
+	Jobs      []session.Shell // background jobs it runs
 }
 
 // Status is the batch at a glance.
@@ -234,7 +238,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 			line := name + ": free"
 			hh, held := d.holder(evs, members, name, "")
 			if held {
-				line = fmt.Sprintf("%s: held by %s since %s", name, hh.Session, hh.Since.In(out.Zone).Format("15:04"))
+				line = fmt.Sprintf("%s: held by %s since %s, %s", name, hh.Session, hh.Since.In(out.Zone).Format("15:04"), hh.why)
 			}
 			var waiting []string
 			for _, w := range batch.Waiting(evs) {
@@ -365,6 +369,7 @@ func (d *Driver) row(members []*batch.Member, label string, withProgress bool) R
 	}
 	r.Block, r.SID, r.State, r.For, r.Account = o.Session.Block, o.Session.ID, o.State(), d.now().Sub(o.Session.Since()), o.Session.Account
 	r.Input, r.Typed, r.View = o.Input, o.Typed, o.View
+	r.Jobs = d.Host.Shells(o.Session.Status.PID)
 	if strings.HasPrefix(r.State, "blocked") && r.Input == turn.InputTyped {
 		r.Input, r.Typed = turn.InputPrompt, "" // the ❯ is the prompt's, not the input box's
 	}
@@ -381,4 +386,17 @@ func (d *Driver) row(members []*batch.Member, label string, withProgress bool) R
 		}
 	}
 	return r
+}
+
+// answerText is an answer as a driver reads it; a local command's output
+// says which command it answers, since it is no reply.
+func answerText(f turn.Frontier, a *turn.Entry, local bool) string {
+	if !local {
+		return a.Text
+	}
+	cmd := "the command"
+	if p := f.Newest(); p != nil && p.Known {
+		cmd = p.Text
+	}
+	return cmd + " finished: " + a.Text
 }

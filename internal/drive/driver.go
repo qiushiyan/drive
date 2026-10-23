@@ -150,7 +150,7 @@ func turnState(s *session.Session, f turn.Frontier) string {
 			return "blocked:permission"
 		}
 		return "blocked:question"
-	case "idle":
+	case "idle", "shell": // shell: idle at its prompt with a background job running
 		e := liveError(s, f)
 		switch {
 		case e != nil && e.Kind == "authentication_failed", st.State == "blocked" && st.Kind == "auth":
@@ -185,9 +185,10 @@ func turnState(s *session.Session, f turn.Frontier) string {
 // through, and the notice's turn reaches before its step goes.
 type Turn struct {
 	State   string
-	Over    bool // it ended: answered, on a prompt, an API error, an interrupt
-	Shells  int  // background shells started since the turn began, still running
-	Orphans int  // older background shells, left over and not waited on
+	Over    bool            // it ended: answered, on a prompt, an API error, an interrupt
+	Shells  int             // background shells started since the turn began, still running
+	Orphans int             // older background shells, left over and not waited on
+	Jobs    []session.Shell // the shells it started, still running
 }
 
 // turnOf reads a session's turn; shells started before since are not its.
@@ -200,14 +201,22 @@ func (d *Driver) turnOf(s *session.Session, f turn.Frontier, since time.Time) Tu
 	default:
 		t.Over = true
 	}
-	for _, at := range d.Host.Shells(s.Status.PID) {
-		if !since.IsZero() && at.Before(since) {
+	for _, sh := range d.Host.Shells(s.Status.PID) {
+		if !since.IsZero() && sh.Started.Before(since) {
 			t.Orphans++
 		} else {
 			t.Shells++
+			t.Jobs = append(t.Jobs, sh)
 		}
 	}
 	return t
+}
+
+// stopJob is the step that has a session stop a background job of its own:
+// the session knows its jobs and can end them, where a driver's shell would
+// be reaching into a session it only reads and sends to.
+func stopJob(label, view string, job session.Shell) string {
+	return fmt.Sprintf("drive send %s %s", view, shellQuote(fmt.Sprintf("Stop your background job (%s): it should have ended.", clip(job.Command, 120))))
 }
 
 // waiting says the turn stopped on a prompt someone has to answer, a
@@ -341,7 +350,12 @@ func (d *Driver) press(block string, keys ...string) error {
 
 // wakeFailed is an action that did what it was asked whose wake did not start.
 func wakeFailed(label string, err error) *Failed {
-	return &Failed{What: fmt.Sprintf("%s's wake did not start: %v", label, err), Next: fmt.Sprintf("start it: drive watch %s", label)}
+	f := &Failed{What: fmt.Sprintf("%s's wake did not start: %v", label, err), Next: fmt.Sprintf("start it: drive watch %s", label)}
+	var nw *noWebhook
+	if errors.As(err, &nw) {
+		f.Next = nw.next("drive watch " + label)
+	}
+	return f
 }
 
 // observe reads one session. ref is a label in the batch or a block id.

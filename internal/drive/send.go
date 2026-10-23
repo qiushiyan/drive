@@ -315,11 +315,13 @@ type holdRefused struct {
 func (h *holdRefused) Unwrap() error { return &h.Refused }
 
 // holding says what keeps a hold taken.
-func holding(h batch.Hold) string {
-	if h.Pending {
-		return "whose send is still under way"
+// stopNote is what a waiter's refusal adds when a job the holder started is
+// what holds: the job may be one that should have ended.
+func stopNote(h heldBy) string {
+	if h.job == nil {
+		return ""
 	}
-	return "whose turn is still running"
+	return fmt.Sprintf("; if that job should have ended, have %s stop it: %s", h.Session, stopJob(h.Session, h.view, *h.job))
 }
 
 // stepArgs is a step as drive send and drive open take it.
@@ -482,7 +484,7 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 		members := batch.Members(evs)
 		if opt.Hold != "" {
 			if h, held := d.holder(evs, members, opt.Hold, o.Label); held {
-				what := holding(h)
+				what := h.why
 				next := fmt.Sprintf("wait for %s's turn to end (drive wait %s), then send this again: %s", h.Session, h.Session, sendCommand(o.View.String(), p.step, opt))
 				if b.Meta.Wake == "webhook" {
 					// The refused session is left untouched, so no wake of its own comes.
@@ -492,6 +494,7 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 							o.Label, o.View, shellQuote("waits for "+opt.Hold+", held by "+h.Session), opt.Hold)
 					}
 				}
+				next += stopNote(h)
 				return &holdRefused{Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), what),
 					Next: next}, opt.Hold, p.step, ""}
 			}

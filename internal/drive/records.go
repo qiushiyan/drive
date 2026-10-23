@@ -252,11 +252,11 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 				}
 				continue
 			}
-			unwatched[e.Session] = 0 // its watch saw the turn end, whether or not the post went
 			if e.HTTP == 0 {
-				m.WakeFails++
+				m.WakeFails++ // the driver never heard: the turn is still unwatched
 				continue
 			}
+			unwatched[e.Session] = 0
 			m.Wakes++
 			if woken[e.Session] {
 				m.Unhandled++
@@ -332,7 +332,7 @@ func refusalKind(reason string) string {
 		return "waiting on a prompt"
 	case strings.Contains(reason, "has a prompt it has not answered"):
 		return "step not yet answered"
-	case strings.Contains(reason, "still runs a background shell"):
+	case strings.Contains(reason, "still runs a background shell"), strings.Contains(reason, "still runs a background job"):
 		return "background shell running"
 	case strings.Contains(reason, "is working"):
 		return "still working"

@@ -17,6 +17,7 @@ import (
 	"github.com/qiushiyan/drive/internal/config"
 	"github.com/qiushiyan/drive/internal/drive"
 	"github.com/qiushiyan/drive/internal/progress"
+	"github.com/qiushiyan/drive/internal/session"
 	"github.com/qiushiyan/drive/internal/testkit"
 )
 
@@ -834,7 +835,9 @@ func TestAHoldLastsWhileItsTurnsShellRuns(t *testing.T) {
 	adopted(t, r, "T5")
 	a.Edit(func(c *testkit.Claude) {
 		c.Reply = func(c *testkit.Claude, _ string) {
-			c.Edit(func(c *testkit.Claude) { c.Shells = append(c.Shells, r.w.Clock.Now()) })
+			c.Edit(func(c *testkit.Claude) {
+				c.Shells = append(c.Shells, session.Shell{Started: r.w.Clock.Now(), Command: "gh pr checks --watch"})
+			})
 			c.Done("waiting on the required checks in the background")
 		}
 	})

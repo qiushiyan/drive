@@ -67,6 +67,28 @@ func (f Frontier) Newest() *Prompt {
 	return nil
 }
 
+// Answer is the newest answer as a reader is shown it: the newest reply, or
+// a local command's output when that came after it, as /compact answers.
+// Local says it is such an output.
+func (f Frontier) Answer() (e *Entry, local bool) {
+	if f.Last != nil && (f.Reply == nil || f.Last.At.After(f.Reply.At)) {
+		if out, ok := localOutput(f.Last.Text); ok {
+			return &Entry{ID: f.Last.ID, At: f.Last.At, Text: out}, true
+		}
+	}
+	return f.Reply, false
+}
+
+var localTags = regexp.MustCompile(`</?local-command-std(out|err)>|\x1b\[[0-9;]*m`)
+
+func localOutput(text string) (string, bool) {
+	t := strings.TrimSpace(text)
+	if !strings.HasPrefix(t, "<local-command-stdout>") && !strings.HasPrefix(t, "<local-command-stderr>") {
+		return "", false
+	}
+	return strings.TrimSpace(localTags.ReplaceAllString(t, "")), true
+}
+
 // Answered says whether the newest prompt's turn is over: an answer came
 // after it, or it was interrupted.
 func (f Frontier) Answered() bool {

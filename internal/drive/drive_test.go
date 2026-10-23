@@ -16,6 +16,7 @@ import (
 	"github.com/qiushiyan/drive/internal/config"
 	"github.com/qiushiyan/drive/internal/drive"
 	"github.com/qiushiyan/drive/internal/rex"
+	"github.com/qiushiyan/drive/internal/session"
 	"github.com/qiushiyan/drive/internal/testkit"
 )
 
@@ -61,6 +62,10 @@ func newRig(t *testing.T, wake string) *rig {
 	d := &drive.Driver{Term: w, Host: w, Store: store, Watches: watches, Self: "/bin/drive",
 		Cfg: config.Config{Home: home, StateDir: store.Dir, Notice: notice, Launcher: "x"},
 		Now: w.Clock.Now, Sleep: w.Clock.Sleep, Poll: 2 * time.Second}
+	if wake == "webhook" {
+		// A batch that wakes its driver has somewhere to post; a test that reads the posts brings its own server.
+		d.Cfg.Webhook = config.Webhook{URL: "http://127.0.0.1:9/unused"}
+	}
 	return &rig{t: t, w: w, d: d, watches: watches, b: b}
 }
 
@@ -510,7 +515,7 @@ func TestWaitIgnoresShellsOlderThanTheTurn(t *testing.T) {
 	r := newRig(t, "none")
 	c := r.w.Add("T2")
 	old := r.w.Clock.Now().Add(-9 * time.Hour)
-	c.Edit(func(c *testkit.Claude) { c.Shells = []time.Time{old} })
+	c.Edit(func(c *testkit.Claude) { c.Shells = []session.Shell{{Started: old, Command: "sleep 600"}} })
 	r.w.Clock.Sleep(time.Second)
 	done(c, "build", "build report done")
 	start := r.w.Clock.Now()
@@ -641,7 +646,9 @@ func TestRecordsAndMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	c2.Done("cleaned, tests pass")
-	c2.Edit(func(c *testkit.Claude) { c.Shells = []time.Time{r.w.Clock.Now()} })
+	c2.Edit(func(c *testkit.Claude) {
+		c.Shells = []session.Shell{{Started: r.w.Clock.Now(), Command: "pnpm test --watch"}}
+	})
 	if err := r.d.Close(r.view("T2")); !isRefused(err) {
 		t.Fatalf("a close while a background shell runs is refused: %v", err)
 	}

@@ -60,7 +60,12 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 		keys = []string{map[string]string{"approve": "enter", "deny": "escape"}[action]}
 	case "interrupt":
 		if before != "working" {
-			return nil, d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s is %s; there is no turn to interrupt", o.Label, before)})
+			r := &Refused{Reason: fmt.Sprintf("%s is %s; there is no turn to interrupt", o.Label, before)}
+			if jobs := d.Host.Shells(o.Session.Status.PID); len(jobs) > 0 {
+				r.Reason += fmt.Sprintf(", but a background job of its runs: %s", clip(jobs[0].Command, 120))
+				r.Next = "an interrupt stops a turn, not a job; if the job should have ended, have the session stop it: " + stopJob(o.Label, o.View.String(), jobs[0])
+			}
+			return nil, d.refuse(b, o.Label, r)
 		}
 		keys = []string{"ctrl+c"} // once: a second press quits Claude Code
 	case "clear":
@@ -234,11 +239,13 @@ func (d *Driver) Close(view string) error {
 		return d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s's input box holds an unsent line: %q", o.Label, clip(o.Typed, 80)),
 			Next: "leave the block, as the line may be the owner's, and park it so the report names it: " + park("an unsent line in its input box")})
 	case len(d.Host.Shells(st.PID)) > 0:
+		job := d.Host.Shells(st.PID)[0]
 		next := "its job runs on and nothing wakes you when it ends; park it with why: " + park("a background job still runs")
 		if webhook, _ := d.wakes(o.Session.Block); !webhook {
 			next = fmt.Sprintf("wait for the job (drive wait %s) and close it then, or park it with why: %s", o.Label, park("a background job still runs"))
 		}
-		return d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s still runs a background shell", o.Label), Next: next})
+		next += "; if the job should have ended, have the session stop it first: " + stopJob(o.Label, view, job)
+		return d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s still runs a background job: %s", o.Label, clip(job.Command, 120)), Next: next})
 	}
 	if err := d.Term.Close(o.Session.Block); err != nil {
 		return &Refused{Reason: fmt.Sprintf("Rex did not close %s's block: %v", o.Label, err), Next: "try it again: drive close " + view}

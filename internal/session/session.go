@@ -62,9 +62,15 @@ type Host interface {
 	Started(pid int) string
 	// Cwd is a process's working directory.
 	Cwd(pid int) string
-	// Shells are the background shells a Claude Code process runs, with
-	// when each started.
-	Shells(pid int) []time.Time
+	// Shells are the background shells a Claude Code process runs.
+	Shells(pid int) []Shell
+}
+
+// Shell is a background shell a Claude Code session runs: a Bash call it
+// left running, such as a wait on checks.
+type Shell struct {
+	Started time.Time `json:"started"`
+	Command string    `json:"command"` // what it runs
 }
 
 // Locate finds the session in a block. A record whose process has gone, or
@@ -236,25 +242,41 @@ func (Machine) Cwd(pid int) string {
 // Shells implements Host: Claude Code runs each Bash call as a child shell
 // that sources its snapshot, so a turn that ended with background jobs still
 // has such children.
-func (Machine) Shells(pid int) []time.Time {
+func (Machine) Shells(pid int) []Shell {
 	kids, err := exec.Command("pgrep", "-P", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return nil
 	}
-	var starts []time.Time
+	var out []Shell
 	for _, k := range strings.Fields(string(kids)) {
-		out, err := exec.Command("ps", "-o", "lstart=,command=", "-p", k).Output()
-		if err != nil || !strings.Contains(string(out), "shell-snapshots") {
+		cmd := exec.Command("ps", "-ww", "-o", "lstart=,command=", "-p", k)
+		cmd.Env = append(os.Environ(), "LC_ALL=C")
+		line, err := cmd.Output()
+		if err != nil || !strings.Contains(string(line), "shell-snapshots") {
 			continue
 		}
-		f := strings.Fields(string(out))
-		if len(f) < 5 {
+		f := strings.Fields(string(line))
+		if len(f) < 6 {
 			continue
 		}
 		// lstart reads like "Thu Oct 22 10:52:29 2026".
-		if at, err := time.ParseInLocation("Mon Jan 2 15:04:05 2006", strings.Join(f[:5], " "), time.Local); err == nil {
-			starts = append(starts, at)
+		at, err := time.ParseInLocation(lstart, strings.Join(f[:5], " "), time.Local)
+		if err != nil {
+			continue
 		}
+		out = append(out, Shell{Started: at, Command: JobCommand(strings.Join(f[5:], " "))})
 	}
-	return starts
+	return out
+}
+
+// JobCommand is the command a Claude Code Bash shell runs, from its command
+// line: the snapshot it sources and the setup around it are Claude Code's,
+// and the job is what it evals.
+func JobCommand(line string) string {
+	i := strings.Index(line, "eval '")
+	j := strings.LastIndex(line, "' < /dev/null")
+	if i < 0 || j <= i {
+		return line
+	}
+	return strings.ReplaceAll(line[i+len("eval '"):j], `'\''`, "'")
 }

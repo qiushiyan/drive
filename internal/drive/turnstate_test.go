@@ -136,3 +136,60 @@ func TestACrashedSessionIsGone(t *testing.T) {
 		t.Fatal("the wait never ended: Rex still reads working")
 	}
 }
+
+// A turn that ended with a background job running is done, the job named;
+// a hold that job keeps says so, and the refusal of a waiter gives the step
+// that has the holder stop it, where an interrupt cannot.
+func TestABackgroundJobIsShownAndStoppedBySession(t *testing.T) {
+	r := newRig(t, "none")
+	a, b := adopted(t, r, "T1"), adopted(t, r, "T2")
+	a.Edit(func(c *testkit.Claude) {
+		c.Reply = func(c *testkit.Claude, _ string) { c.Job("find ~ -name twin.toml"); c.Done("merged") }
+	})
+	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "close it out"}, drive.SendOptions{Hold: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	a.HoldMessage() // Rex is told something else; the session's own record reads shell
+	rd, _ := r.d.Read("T1", drive.ReadLast, 1)
+	if rd.State != "done" || len(rd.Jobs) != 1 || rd.Jobs[0].Command != "find ~ -name twin.toml" {
+		t.Fatalf("done, its job named: %+v", rd)
+	}
+	_, err := r.d.Send(r.view("T2"), drive.Step{Line: "close it out"}, drive.SendOptions{Hold: "main"})
+	if !isRefused(err) || !strings.Contains(err.Error(), "find ~ -name twin.toml") || !strings.Contains(err.Error(), "drive send "+r.view("T1")) {
+		t.Fatalf("the hold names the job that keeps it, and the step that stops it: %v", err)
+	}
+	if _, err := r.d.Respond(r.view("T1"), "interrupt"); !isRefused(err) || !strings.Contains(err.Error(), "drive send "+r.view("T1")) {
+		t.Fatalf("an interrupt stops no job, and says what does: %v", err)
+	}
+	_ = b
+}
+
+// A hold its holder keeps through a later step says so: a follow-up to a
+// closeout is still the closeout.
+func TestAHoldKeptForALaterStepSaysSo(t *testing.T) {
+	r := newRig(t, "none")
+	a := adopted(t, r, "T1")
+	adopted(t, r, "T2")
+	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "close it out"}, drive.SendOptions{Hold: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	a.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} })
+	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "skip the push"}, drive.SendOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.Send(r.view("T2"), drive.Step{Line: "close it out"}, drive.SendOptions{Hold: "main"}); !isRefused(err) || !strings.Contains(err.Error(), "later step") {
+		t.Fatalf("the hold stands while its holder works on, and says why: %v", err)
+	}
+}
+
+// A compaction answers with its output, not a reply; read shows it.
+func TestACompactionsOutputIsItsAnswer(t *testing.T) {
+	r := newRig(t, "none")
+	adopted(t, r, "T1")
+	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "/compact"}, drive.SendOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if rd, _ := r.d.Read("T1", drive.ReadLast, 1); !strings.Contains(rd.Text, "/compact finished") || !strings.Contains(rd.Text, "Compacted") {
+		t.Fatalf("read shows the compaction's output: %q", rd.Text)
+	}
+}

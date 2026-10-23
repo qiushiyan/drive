@@ -1,6 +1,7 @@
 package drive_test
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -285,5 +286,69 @@ func TestALoginWakeRelaunchesWithTheLastStep(t *testing.T) {
 	}
 	if !strings.Contains(e.Next, "--account other@example.com implement-spec") || strings.Contains(e.Next, "<the step>") {
 		t.Fatalf("the relaunch carries the last step: %s", e.Next)
+	}
+}
+
+// A batch that wakes a chat driver is bound to that driver's webhook: it
+// does not start without one that can post, and its wakes go there only.
+func TestABatchWakesItsOwnDriver(t *testing.T) {
+	r := newRig(t, "none")
+	r.d.Cfg.ConfigDir = filepath.Join(r.w.Root, "config")
+	meta := batch.Meta{Name: "b2", Started: r.w.Clock.Now(), Wake: "webhook", RexSession: "dogfood"}
+	if _, err := r.d.StartBatch(meta, "drive batch new b2 --wake webhook"); !isRefused(err) || !strings.Contains(err.Error(), "--webhook") {
+		t.Fatalf("a webhook batch names its webhook: %v", err)
+	}
+	meta.Webhook = "drive-test"
+	if _, err := r.d.StartBatch(meta, "drive batch new b2 --wake webhook --webhook drive-test"); !isRefused(err) ||
+		!strings.Contains(err.Error(), filepath.Join("webhooks", "drive-test")) {
+		t.Fatalf("a webhook with no URL starts no batch, and says where it goes: %v", err)
+	}
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		got = req.Header.Get("Authorization")
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+	_ = os.MkdirAll(filepath.Join(r.d.Cfg.ConfigDir, "webhooks"), 0o700)
+	hook := filepath.Join(r.d.Cfg.ConfigDir, "webhooks", "drive-test")
+	if err := os.WriteFile(hook, []byte("URL="+srv.URL+"\nAUTH=Bearer mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.d.Cfg.Webhook = config.Webhook{URL: "http://127.0.0.1:9/another-driver"}
+	st, err := r.d.StartBatch(meta, "drive batch new b2 --wake webhook --webhook drive-test")
+	if err != nil || !st.RexStarted {
+		t.Fatalf("started, its Rex session with it: %+v %v", st, err)
+	}
+	c := r.w.Add("T1")
+	done(c, "onboard", "analysis")
+	if sent, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "go"}, drive.SendOptions{Label: "T1"}); err != nil || !sent.Watched {
+		t.Fatalf("a send arms the wake: %+v %v", sent, err)
+	}
+	e, _ := r.d.Wait("T1", time.Minute, 10*time.Minute)
+	if err := r.d.Wake("T1", e, ""); err != nil || got != "Bearer mine" {
+		t.Fatalf("the wake goes to this batch's driver: %q %v", got, err)
+	}
+	// Emptied later, the webhook arms nothing and says so.
+	_ = os.WriteFile(hook, nil, 0o600)
+	r.watches.Retire("drive-b2-" + c.Block[len(c.Block)-6:])
+	_, err = r.d.Send(r.view("T1"), drive.Step{Line: "next"}, drive.SendOptions{})
+	var f *drive.Failed
+	if !errors.As(err, &f) || !strings.Contains(f.Next, "drive watch T1") || r.watches.Alive("drive-b2-"+c.Block[len(c.Block)-6:]) {
+		t.Fatalf("no wake is armed that cannot post: %v", err)
+	}
+}
+
+// A post that never reached the driver is a lost wake: the turn it was for
+// is still unwatched.
+func TestAFailedPostLeavesTheTurnUnwatched(t *testing.T) {
+	r := newRig(t, "webhook")
+	adopted(t, r, "T1")
+	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "T1", Reason: "no webhook configured"})
+	if m, _ := r.d.Metrics(""); m.Unwatched != 1 {
+		t.Fatalf("failed: %d", m.Unwatched)
+	}
+	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "T1", HTTP: 204})
+	if m, _ := r.d.Metrics(""); m.Unwatched != 0 {
+		t.Fatalf("posted: %d", m.Unwatched)
 	}
 }

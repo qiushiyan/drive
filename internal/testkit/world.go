@@ -47,6 +47,7 @@ type World struct {
 	// presses, fail, as a busy Rex server sometimes does.
 	StatusFails int
 	KeyFails    int
+	sessions    map[string]bool // Rex sessions by label
 	// Primary is the name the owner's shell gives the primary account's
 	// launcher: x-<Primary> starts a session under ~/.claude, which its
 	// session reports as account "primary".
@@ -90,7 +91,7 @@ type Claude struct {
 	LoseEnter bool // Enter does not reach the session: the line stays in the box
 	// TypeGate, when set, holds every Type until it is closed: a send caught mid-delivery.
 	TypeGate chan struct{}
-	Shells   []time.Time
+	Shells   []session.Shell // background jobs it left running
 
 	tool  string   // the tool call a permission prompt asks about
 	stale bool     // the turn ended without a hook firing, so Rex's record is old
@@ -571,6 +572,20 @@ func (w *World) Run(o rex.Open) (string, error) {
 	return c.Block, nil
 }
 
+// EnsureSession records the Rex sessions a test's batches start in.
+func (w *World) EnsureSession(label string) (bool, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.sessions == nil {
+		w.sessions = map[string]bool{"work": true}
+	}
+	if w.sessions[label] {
+		return false, nil
+	}
+	w.sessions[label] = true
+	return true, nil
+}
+
 func (w *World) Close(block string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -588,7 +603,11 @@ func (w *World) Registry(pid int) (session.Registration, error) {
 	defer w.mu.Unlock()
 	for _, c := range w.blocks {
 		if c.PID == pid {
-			return session.Registration{ID: c.SID, Config: c.Config, Status: c.Activity, WaitingFor: c.WaitingFor,
+			status := c.Activity
+			if status == "idle" && len(c.Shells) > 0 {
+				status = "shell" // idle at its prompt, a background job still running
+			}
+			return session.Registration{ID: c.SID, Config: c.Config, Status: status, WaitingFor: c.WaitingFor,
 				StatusAt: c.ActivityAt, ProcStart: c.ProcStart}, nil
 		}
 	}
@@ -624,7 +643,7 @@ func (w *World) Cwd(pid int) string {
 	return ""
 }
 
-func (w *World) Shells(pid int) []time.Time {
+func (w *World) Shells(pid int) []session.Shell {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for _, c := range w.blocks {
@@ -679,4 +698,12 @@ func (w *Watches) Retire(name string) bool {
 	_, ok := w.Running[name]
 	delete(w.Running, name)
 	return ok
+}
+
+// Job leaves a background job running, started now, as a Bash call run in
+// the background does.
+func (c *Claude) Job(command string) {
+	c.w.mu.Lock()
+	defer c.w.mu.Unlock()
+	c.Shells = append(c.Shells, session.Shell{Started: c.w.now(), Command: command})
 }

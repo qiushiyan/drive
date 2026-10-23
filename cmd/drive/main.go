@@ -49,8 +49,9 @@ driver acts on a session at a time.
   drive record note [--session S] TEXT…
   drive log [--since TIME] [--json]        the batch's timeline
   drive metrics [BATCH] [--json]           asks, owner wait, merges, sends, failures
-  drive batch [new NAME [--wake webhook|none] [--rex-session S] [--tz ZONE] [--after-wake CMD]
-              | use NAME | list]               the current batch and its directory; a new one starts
+  drive batch [new NAME [--wake webhook --webhook FILE | --wake none] [--rex-session S] [--tz ZONE]
+              [--after-wake CMD] | use NAME | list]
+                                           the current batch and its directory; a new one starts
                                            with no grants and stops the last one's wakes
   drive snippet KEY [DIR] [TEXT…] | drive snippet --list [DIR]
 
@@ -68,13 +69,16 @@ checkout: held from the send until the turn the step starts has ended,
 background shells that turn started included.
 
 Wakes, in a webhook batch: any send, open or respond arms the session's
-wake. It comes about a minute after the turn ends, at once on an API error
+wake, posted to the batch's own webhook, the URL= and AUTH= lines in
+~/.config/drive/webhooks/FILE, so two drivers on one machine never wake each
+other. It comes about a minute after the turn ends, at once on an API error
 or an interrupt, and when the session stops on a prompt; it ends with next:
 where the ending decides what to do. A refused action armed nothing.
 
 status columns:
   STATE  working | done | idle (no prompt yet) | interrupted (an interrupt or a deny)
-         | error | blocked:permission | blocked:question | blocked:auth (a rejected login)
+         | error | blocked:permission | blocked:question | blocked:auth (a rejected login);
+         a background job a session still runs is listed under the table
   INPUT  empty | suggestion (Claude Code's dimmed guess; typing replaces it)
          | typed (a line left unsent) | prompt (a prompt's options) | unknown (no box on screen)
   WAKE   armed | stuck | posting | woken HH:MM (nothing done since): act on it or park it

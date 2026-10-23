@@ -27,6 +27,9 @@ type Meta struct {
 	Wake       string    `json:"wake"`        // "webhook": drive wakes a chat driver; "none": the driver waits itself
 	RexSession string    `json:"rex_session"` // where its sessions open
 	TZ         string    `json:"tz"`
+	// Webhook names the file that wakes this batch's driver, so two
+	// drivers on one machine never wake each other.
+	Webhook string `json:"webhook,omitempty"`
 	// AfterWake runs after each wake is posted, such as archiving the chat it went to.
 	AfterWake []string `json:"after_wake,omitempty"`
 }

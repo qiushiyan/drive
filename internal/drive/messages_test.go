@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/qiushiyan/drive/internal/drive"
+	"github.com/qiushiyan/drive/internal/session"
 	"github.com/qiushiyan/drive/internal/testkit"
 )
 
@@ -84,7 +85,9 @@ func TestEveryNextRunsAsWritten(t *testing.T) {
 			return nextOf(r.d.Close(r.view("T1")))
 		}, []string{"drive park T1@"}},
 		{"a close over a background job", "webhook", func(r *rig, c *testkit.Claude) string {
-			c.Edit(func(c *testkit.Claude) { c.Shells = []time.Time{r.w.Clock.Now()} })
+			c.Edit(func(c *testkit.Claude) {
+				c.Shells = []session.Shell{{Started: r.w.Clock.Now(), Command: "pnpm test --watch"}}
+			})
 			return nextOf(r.d.Close(r.view("T1")))
 		}, []string{"drive park T1@"}},
 		{"a send whose Enter was lost", "none", func(r *rig, c *testkit.Claude) string {

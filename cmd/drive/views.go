@@ -91,7 +91,8 @@ func cmdStatus(d *drive.Driver, argv []string) int {
 			for _, r := range rs {
 				m := map[string]any{"label": r.Label, "sid": r.SID, "block": rex.Short(r.Block), "window": r.Window, "state": r.State,
 					"for_seconds": int(r.For.Seconds()), "account": r.Account, "input": r.Input, "stage": r.Stage,
-					"watch": r.Watch, "unhandled_wake": r.Unhandled, "wake_due": r.Due, "last_sent": r.LastSent, "error": r.Error}
+					"watch": r.Watch, "unhandled_wake": r.Unhandled, "wake_due": r.Due, "last_sent": r.LastSent, "error": r.Error,
+					"jobs": r.Jobs}
 				if r.View.Session != "" {
 					m["view"] = r.View.String()
 				}
@@ -143,6 +144,9 @@ func cmdStatus(d *drive.Driver, argv []string) int {
 	for _, r := range st.Rows {
 		if r.Input == "typed" {
 			fmt.Printf("%s's input box holds typed text nobody sent: %q\n", r.Label, r.Typed)
+		}
+		for _, j := range r.Jobs {
+			fmt.Printf("%s runs a background job since %s: %s\n", r.Label, clock(j.Started, st.Zone, now), clip(j.Command, 100))
 		}
 	}
 	if len(st.Others) > 0 {
@@ -230,7 +234,7 @@ func cmdRead(d *drive.Driver, argv []string) int {
 	}
 	if a.on("json") {
 		printJSON(map[string]any{"session": r.Label, "sid": r.SID, "state": r.State, "account": r.Account, "input": r.Input,
-			"input_text": r.Typed, "text": r.Text, "at": r.At, "view": r.View.String(), "next": r.Next})
+			"input_text": r.Typed, "text": r.Text, "at": r.At, "view": r.View.String(), "next": r.Next, "jobs": r.Jobs})
 		return 0
 	}
 	fmt.Println(r.Text)
@@ -241,6 +245,9 @@ func cmdRead(d *drive.Driver, argv []string) int {
 		line += fmt.Sprintf("; its input box holds typed text nobody sent: %q", r.Typed)
 	case "suggestion":
 		line += "; its input box shows only Claude Code's suggestion"
+	}
+	for _, j := range r.Jobs {
+		line += "; a background job of its runs: " + clip(j.Command, 100)
 	}
 	fmt.Println(line)
 	fmt.Printf("view: %s\n", r.View)
@@ -510,7 +517,7 @@ func cmdMetrics(d *drive.Driver, argv []string) int {
 }
 
 func cmdBatch(d *drive.Driver, argv []string) int {
-	a, code := parseOr(argv, []string{"wake", "rex-session", "tz", "after-wake"}, nil)
+	a, code := parseOr(argv, []string{"wake", "webhook", "rex-session", "tz", "after-wake"}, nil)
 	if a == nil {
 		return code
 	}
@@ -552,21 +559,21 @@ func cmdBatch(d *drive.Driver, argv []string) int {
 		if c := a.str("after-wake"); c != "" {
 			after = []string{c}
 		}
-		prev, _ := d.Batch()
-		b, err := d.Store.New(batch.Meta{Name: a.pos[1], Started: time.Now(), Wake: wake, RexSession: rs, TZ: tz, AfterWake: after})
+		again := "drive batch"
+		for _, w := range argv {
+			again += " " + shellWord(w)
+		}
+		st, err := d.StartBatch(batch.Meta{Name: a.pos[1], Started: time.Now(), Wake: wake, Webhook: a.str("webhook"),
+			RexSession: rs, TZ: tz, AfterWake: after}, again)
 		if err != nil {
-			return fail(&drive.Refused{Reason: err.Error()})
+			return fail(err)
 		}
-		fmt.Printf("batch %s started and current (%s)\n", b.Meta.Name, b.Dir)
-		if prev != nil {
-			if n, err := d.StopWatches(prev); err != nil {
-				fmt.Printf("note: the watches of batch %s were not stopped: %v\n", prev.Meta.Name, err)
-			} else if n > 0 {
-				fmt.Printf("stopped %d watches of batch %s\n", n, prev.Meta.Name)
-			}
+		fmt.Printf("batch %s started and current (%s)\n", st.Batch.Meta.Name, st.Batch.Dir)
+		if st.RexStarted {
+			fmt.Printf("started Rex session %s for its sessions\n", rs)
 		}
-		if wake == "webhook" && d.Cfg.Webhook.URL == "" {
-			fmt.Printf("note: no webhook in %s, so no wake can be posted until one is written\n", d.Cfg.WebhookPath())
+		if st.Stopped > 0 {
+			fmt.Printf("stopped %d watches of batch %s\n", st.Stopped, st.Prev.Meta.Name)
 		}
 	case a.pos[0] == "use" && len(a.pos) == 2:
 		if err := d.Store.Use(a.pos[1]); err != nil {
@@ -625,4 +632,12 @@ func cmdSnippet(d *drive.Driver, argv []string) int {
 	fmt.Fprintf(os.Stderr, "from: %s\n", s.From)
 	fmt.Println(s.Text)
 	return 0
+}
+
+// shellWord quotes an argument so a command printed for a driver runs as written.
+func shellWord(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@._-/=:") == "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

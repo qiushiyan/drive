@@ -1,8 +1,10 @@
 // Package config finds drive's directories and reads its settings.
 //
-// Settings live in ~/.config/drive/config.toml, every key optional; the
-// webhook that wakes a chat driver lives beside it in `webhook`, mode 0600,
-// as two lines: URL=<url> and AUTH=<the full Authorization header value>.
+// Settings live in ~/.config/drive/config.toml, every key optional. The
+// webhook that wakes a chat driver is a file per driver under `webhooks/`,
+// named by the batch it drives (`drive batch new … --webhook NAME`), mode
+// 0600, as two lines: URL=<url> and AUTH=<the full Authorization header
+// value>; a batch that names none reads `webhook` beside config.toml.
 // DRIVE_CONFIG_DIR and DRIVE_STATE_DIR move both directories, which is how
 // tests keep away from the real ones.
 package config
@@ -116,5 +118,20 @@ func readWebhook(path string) (Webhook, error) {
 	return w, sc.Err()
 }
 
-// WebhookPath is where the webhook file is read from.
-func (c Config) WebhookPath() string { return filepath.Join(c.ConfigDir, "webhook") }
+// WebhookPath is where the webhook file a batch names is read from; "" is
+// the one file a batch that names none reads.
+func (c Config) WebhookPath(name string) string {
+	if name == "" {
+		return filepath.Join(c.ConfigDir, "webhook")
+	}
+	return filepath.Join(c.ConfigDir, "webhooks", name)
+}
+
+// LoadWebhook reads the webhook a batch names, fresh each time, so a file
+// written after the batch started is the one its wakes use.
+func (c Config) LoadWebhook(name string) (Webhook, error) {
+	if name == "" {
+		return c.Webhook, nil
+	}
+	return readWebhook(c.WebhookPath(name))
+}

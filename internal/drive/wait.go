@@ -92,8 +92,8 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 			e := &Ending{Label: o.Label, Block: o.Session.Block, State: state, Msg: st.Msg, Error: o.Frontier.Error,
 				Shells: t.Shells, Orphans: t.Orphans, Capped: t.Shells > 0, Pending: o.Frontier.Pending, View: o.View,
 				Account: o.Session.Account}
-			if o.Frontier.Reply != nil {
-				e.Reply = tail(o.Frontier.Reply.Text, 2500)
+			if a, local := o.Frontier.Answer(); a != nil {
+				e.Reply = tail(answerText(o.Frontier, a, local), 2500)
 			}
 			if strings.HasPrefix(state, "blocked") {
 				if screen, err := d.Term.Capture(o.Session.Block, false); err == nil {
@@ -207,6 +207,9 @@ func (d *Driver) arm(b *batch.Batch, label, block string) error {
 	if d.Watches == nil {
 		return fmt.Errorf("this driver runs no watches")
 	}
+	if err := d.canPost(b); err != nil {
+		return err
+	}
 	name := watchName(b, block)
 	if d.Watches.Alive(name) {
 		return nil
@@ -237,8 +240,10 @@ func (d *Driver) Watch(ref string) (*Watched, error) {
 		return nil, &Refused{Reason: fmt.Sprintf("batch %s wakes no one (wake: %s)", b.Meta.Name, b.Meta.Wake),
 			Next: "wait for it yourself, in the background: drive wait " + ref}
 	}
-	if d.Cfg.Webhook.URL == "" {
-		return nil, &Refused{Reason: "no webhook is configured", Next: "write URL= and AUTH= lines to " + d.Cfg.WebhookPath()}
+	if err := d.canPost(b); err != nil {
+		var nw *noWebhook
+		errors.As(err, &nw)
+		return nil, &Refused{Reason: err.Error(), Next: nw.next("drive watch " + ref)}
 	}
 	evs, err := b.Events()
 	if err != nil {
@@ -273,6 +278,29 @@ func (d *Driver) Watch(ref string) (*Watched, error) {
 		return &Watched{Label: o.Label, Restarted: true}, d.arm(b, o.Label, o.Session.Block)
 	}
 	return &Watched{Label: o.Label}, d.arm(b, o.Label, o.Session.Block)
+}
+
+// noWebhook is a webhook batch whose driver's webhook holds no URL: no wake
+// of it can post.
+type noWebhook struct {
+	batch, path string
+}
+
+func (e *noWebhook) Error() string {
+	return fmt.Sprintf("batch %s has no webhook to wake its driver: %s holds no URL", e.batch, e.path)
+}
+
+// next is what to run once the webhook is written.
+func (e *noWebhook) next(then string) string {
+	return fmt.Sprintf("the owner writes its URL= and AUTH= lines, mode 0600, to %s; then: %s", e.path, then)
+}
+
+// canPost says whether a wake of the batch can reach its driver.
+func (d *Driver) canPost(b *batch.Batch) error {
+	if hook, err := d.Cfg.LoadWebhook(b.Meta.Webhook); err == nil && hook.URL != "" {
+		return nil
+	}
+	return &noWebhook{batch: b.Meta.Name, path: d.Cfg.WebhookPath(b.Meta.Webhook)}
 }
 
 // Rearmed is a session whose wake Due armed, and why it was due.
@@ -458,7 +486,8 @@ func (d *Driver) Wake(label string, e *Ending, note string) error {
 		payload["kind"], payload["output"] = "timer", "timer done: "+note
 	}
 	body, _ := json.Marshal(payload)
-	poster := webhook.Poster{URL: d.Cfg.Webhook.URL, Auth: d.Cfg.Webhook.Auth, Sleep: d.Sleep}
+	hook, _ := d.Cfg.LoadWebhook(b.Meta.Webhook)
+	poster := webhook.Poster{URL: hook.URL, Auth: hook.Auth, Sleep: d.Sleep}
 	var last webhook.Attempt
 	err = poster.Post(body, func(a webhook.Attempt) { last = a })
 	ev := batch.Event{At: d.now(), Kind: batch.KindWake, Session: label, HTTP: last.HTTP, Try: last.Try, Note: note}
@@ -545,41 +574,87 @@ func (d *Driver) waiterLines(b *batch.Batch, label string) string {
 // holder says whether a hold is taken by a session other than label: its
 // send is still under way, or the turn that send started has not ended. A
 // holder that cannot be read holds; only one that is gone does not.
-func (d *Driver) holder(evs []batch.Event, members []*batch.Member, name, label string) (batch.Hold, bool) {
+// heldBy is a hold as it stands: who holds it and why, and, where a job it
+// started is what holds it, that job and the holder's view.
+type heldBy struct {
+	batch.Hold
+	why  string
+	job  *session.Shell
+	view string
+}
+
+// holder says whether a hold is taken by a session other than label. It
+// holds while the send that took it is under way, while its holder works,
+// later steps included, since a follow-up to a closeout is still the
+// closeout, while it waits on a prompt, and while background jobs it started
+// since run. A holder that cannot be read holds; only one that is gone or
+// never received the send does not.
+func (d *Driver) holder(evs []batch.Event, members []*batch.Member, name, label string) (heldBy, bool) {
 	for _, h := range batch.Holds(evs) {
 		if h.Name != name || h.Session == label {
 			continue
 		}
+		hb := heldBy{Hold: h, why: "whose turn is still running"}
 		m := batch.Find(members, h.Session)
 		if m == nil || m.Closed {
-			return h, false
+			return hb, false
 		}
 		if h.Pending && d.Store.Busy(m.Block) != nil {
-			return h, true
+			hb.why = "whose send is still under way"
+			return hb, true
 		}
 		s, err := session.Locate(d.Term, d.Host, m.Block)
 		if errors.Is(err, session.ErrNoClaude) || err != nil && !d.blockExists(m.Block) {
-			return h, false
+			return hb, false
 		}
 		if err != nil {
-			return h, true
+			hb.why = "whose session cannot be read"
+			return hb, true
 		}
 		f, err := s.Frontier()
 		if err != nil {
-			return h, true
+			hb.why = "whose session cannot be read"
+			return hb, true
 		}
 		t := d.turnOf(s, f, h.Since)
-		if t.State == "working" || t.waiting() {
-			return h, true
+		switch {
+		case t.waiting():
+			hb.why = "who waits on a prompt"
+			return hb, true
+		case t.State == "working" && sentSince(evs, h):
+			hb.why = "who works on a later step"
+			return hb, true
+		case t.State == "working":
+			return hb, true
 		}
 		if p := f.Newest(); p == nil || p.At.Before(h.Since) {
-			return h, false // the send never reached it
+			return hb, false // the send never reached it
 		}
-		// A turn that ended while a shell it started runs, such as a wait on
-		// checks before a merge, resumes when the shell ends.
-		return h, !t.Over || t.Shells > 0
+		// A turn that ended while a job it started runs, such as a wait on
+		// checks before a merge, resumes when the job ends.
+		if t.Over && len(t.Jobs) > 0 {
+			hb.job, hb.view = &t.Jobs[0], turn.ViewOf(m.Label, s.ID, f).String()
+			hb.why = "whose turn ended, but a background job it started still runs: " + clip(t.Jobs[0].Command, 120)
+		}
+		return hb, !t.Over || t.Shells > 0
 	}
-	return batch.Hold{}, false
+	return heldBy{}, false
+}
+
+// sentSince says whether the holder was sent a step after the one that
+// took the hold.
+func sentSince(evs []batch.Event, h batch.Hold) bool {
+	var took time.Time
+	for _, e := range evs {
+		switch {
+		case e.Kind != batch.KindSend || e.Session != h.Session || e.Outcome == "":
+		case e.Intent == h.Intent:
+			took = e.At
+		case !took.IsZero() && e.Mode != "notice" && e.At.After(took):
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Driver) blockExists(block string) bool {

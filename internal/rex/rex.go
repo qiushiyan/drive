@@ -65,6 +65,9 @@ type Terminal interface {
 	Run(o Open) (string, error)
 	// Close closes a block.
 	Close(block string) error
+	// EnsureSession starts a Rex session by its label unless one runs, and
+	// says whether it started it.
+	EnsureSession(label string) (bool, error)
 }
 
 // CLI runs the rex command.
@@ -227,6 +230,24 @@ func (c CLI) Run(o Open) (string, error) {
 		return "", fmt.Errorf("rex run printed no block id: %s", firstLine(string(out)))
 	}
 	return res.BlockIDs[0], nil
+}
+
+// EnsureSession implements Terminal.
+func (c CLI) EnsureSession(label string) (bool, error) {
+	out, err := c.run("session", "ls")
+	if err != nil {
+		return false, err
+	}
+	sc := bufio.NewScanner(bytes.NewReader(out))
+	for first := true; sc.Scan(); first = false {
+		if f := strings.Fields(sc.Text()); !first && len(f) > 0 && f[0] == label {
+			return false, nil
+		}
+	}
+	if _, err := c.run("session", "new", label); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Close implements Terminal.
