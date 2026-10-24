@@ -2,16 +2,13 @@ $ drive wait T1 --json
 exit 0
 --- stdout
 {
-  "block": "a00001",
-  "error": null,
-  "jobs": null,
-  "next": "",
-  "orphans": 0,
-  "reply": "ok",
-  "screen": "",
   "session": "T1",
-  "shells": 0,
+  "block": "a00001",
   "state": "done",
+  "shells": 0,
+  "orphans": 0,
+  "jobs": [],
+  "reply": "ok",
   "view": "T1@fefb9f5c"
 }
 --- stderr

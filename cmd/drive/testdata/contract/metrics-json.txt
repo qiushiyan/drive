@@ -2,42 +2,42 @@ $ drive metrics --json
 exit 0
 --- stdout
 {
-  "Batch": "b1",
-  "From": "2026-10-23T01:00:00Z",
-  "To": "2026-10-23T01:02:12Z",
-  "Asks": 2,
-  "Answered": 1,
-  "Took": {
+  "batch": "b1",
+  "from": "2026-10-23T01:00:00Z",
+  "to": "2026-10-23T01:02:12Z",
+  "sessions": 2,
+  "asks": 2,
+  "answered": 1,
+  "unanswered": 1,
+  "took": {
     "amended": 1
   },
-  "Explained": 1,
-  "Unanswered": 1,
-  "OwnerWait": 8000000000,
-  "MedianAnswer": 0,
-  "Sessions": 2,
-  "Merged": null,
-  "Unread": 0,
-  "PerMerge": 0,
-  "Sends": 2,
-  "Snippets": 1,
-  "ByKey": {
+  "explained": 1,
+  "owner_wait_seconds": 8,
+  "median_answer_seconds": 0,
+  "merged": [],
+  "per_merge_seconds": 0,
+  "unread": 0,
+  "sends": 2,
+  "snippets": 1,
+  "by_key": {
     "land-pr": 1
   },
-  "Commands": 0,
-  "OwnWords": 1,
-  "Refusals": {
+  "commands": 0,
+  "own_words": 1,
+  "recovered": 0,
+  "garbled": 0,
+  "other": 0,
+  "unknown": 0,
+  "refusals": {
     "already open": 1,
     "stale view": 1
   },
-  "Failures": null,
-  "Unknown": 0,
-  "Recovered": 0,
-  "Garbled": 0,
-  "Other": 0,
-  "Wakes": 0,
-  "Timers": 0,
-  "WakeFails": 0,
-  "Unhandled": 0,
-  "Unwatched": 0
+  "failures": [],
+  "wakes": 0,
+  "timers": 0,
+  "wake_fails": 0,
+  "unhandled": 0,
+  "unwatched": 0
 }
 --- stderr

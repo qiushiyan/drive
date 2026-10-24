@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -192,6 +193,58 @@ func TestContracts(t *testing.T) {
 	c.run("send-dash-line-after-dashes", "send", "J1@00000000", "--", "- a dash line")
 	c.run("unknown-command", "frobnicate")
 	c.run("bare")
+}
+
+// Each --json page's JSON section names every key the command prints, so
+// the page an agent parses it from cannot fall behind the shape.
+func TestTheJSONIsDescribed(t *testing.T) {
+	c := newContract(t)
+	t1 := c.w.Add("T1")
+	t1.Busy("onboard")
+	t1.Done("analysis")
+	cli(c.app, "batch", "new", "b1", "--tz", "Europe/London")
+	_, out, _ := cli(c.app, "read", t1.Block[len(t1.Block)-6:])
+	cli(c.app, "send", view(t, out), "--as", "T1", "go")
+	cli(c.app, "record", "ask", "T1", "--question", "q", "--recommendation", "r", "--if-unanswered", "u")
+	cli(c.app, "record", "grant", "--source", "s", "--scope", "x")
+	for _, args := range [][]string{{"status", "--quick"}, {"read", "T1"}, {"wait", "T1"}, {"log"}, {"metrics"}} {
+		_, out, errs := cli(c.app, append(args, "--json")...)
+		var doc any
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("%v --json: %v\n%s%s", args, err, out, errs)
+		}
+		_, page, _ := cli(c.app, args[0], "--help")
+		_, section, ok := strings.Cut(page, "\nJSON:\n")
+		section, _, _ = strings.Cut(section, "\n\n")
+		if !ok {
+			t.Fatalf("drive %s --help has no JSON section", args[0])
+		}
+		for _, key := range keys(doc) {
+			if !regexp.MustCompile(`\b` + key + `\b`).MatchString(section) {
+				t.Errorf("drive %s --help's JSON section does not name %q:\n%s", args[0], key, section)
+			}
+		}
+	}
+}
+
+// keys are every key a JSON document holds, at any depth, but for the
+// counts whose keys are data: took, by_key, refusals.
+func keys(doc any) []string {
+	var out []string
+	switch d := doc.(type) {
+	case map[string]any:
+		for k, v := range d {
+			out = append(out, k)
+			if k != "took" && k != "by_key" && k != "refusals" {
+				out = append(out, keys(v)...)
+			}
+		}
+	case []any:
+		for _, v := range d {
+			out = append(out, keys(v)...)
+		}
+	}
+	return out
 }
 
 // A step a rejected login answers exits 4 and prints the relaunch.

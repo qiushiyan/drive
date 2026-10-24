@@ -1,26 +1,190 @@
 $ drive log --json
 exit 0
 --- stdout
-{"at":"2026-10-23T01:00:00Z","kind":"batch","note":"started"}
-{"at":"2026-10-23T01:00:00Z","kind":"adopt","session":"T1","block":"block:00000000-0000-0000-0000-000000a00001","sid":"sid-1","account":"acct@example.com","dir":"$ROOT/work"}
-{"at":"2026-10-23T01:00:00Z","kind":"send-intent","session":"T1","intent":"intent-1","mode":"file","key":"land-pr","path":"$HOME/state/batches/b1/sends/T1-1.md","text":"Read $HOME/state/batches/b1/sends/T1-1.md and do what it asks.","notice":true,"view":"a00001@e274d317"}
-{"at":"2026-10-23T01:00:03Z","kind":"send","session":"T1","intent":"intent-1","mode":"file","key":"land-pr","path":"$HOME/state/batches/b1/sends/T1-1.md","text":"Read $HOME/state/batches/b1/sends/T1-1.md and do what it asks.","notice":true,"outcome":"arrived","view":"a00001@e274d317"}
-{"at":"2026-10-23T01:02:03Z","kind":"refused","session":"T1","reason":"T1 has moved past view T1@00000000: it has received another prompt since: the land-pr snippet drive sent at 02:00"}
-{"at":"2026-10-23T01:02:04Z","kind":"respond","session":"a00002","outcome":"working","view":"a00002@46abfde4","action":"approve","call":"Bash: pnpm install"}
-{"at":"2026-10-23T01:02:04Z","kind":"grant","id":"G1","source":"\"you can merge on my behalf\" (02:08)","scope":"merge this batch's PRs"}
-{"at":"2026-10-23T01:02:04Z","kind":"ask","session":"T1","id":"A1","question":"Take the lab host down?","recommendation":"yes, after the read","if_unanswered":"it keeps running"}
-{"at":"2026-10-23T01:02:04Z","kind":"ask","id":"A2","question":"Release tonight?","if_unanswered":"it waits"}
-{"at":"2026-10-23T01:02:04Z","kind":"answer","ref":"A1","source":"yes","took":"amended","explained":true}
-{"at":"2026-10-23T01:02:04Z","kind":"note","id":"N1","note":"plan: T1 land-pr; T2 approve and build"}
-{"at":"2026-10-23T01:02:04Z","kind":"note","session":"T2","id":"N2","note":"told the user"}
-{"at":"2026-10-23T01:02:04Z","kind":"park","session":"T1","reason":"design checkpoint","view":"T1@fefb9f5c"}
-{"at":"2026-10-23T01:02:04Z","kind":"open-intent","session":"J1","dir":"$ROOT/work","intent":"intent-2","text":"Review the spec in docs/spec.md"}
-{"at":"2026-10-23T01:02:04Z","kind":"open","session":"J1","block":"block:00000000-0000-0000-0000-000000a00003","dir":"$ROOT/work","intent":"intent-2","outcome":"starting"}
-{"at":"2026-10-23T01:02:04Z","kind":"open","session":"J1","block":"block:00000000-0000-0000-0000-000000a00003","sid":"sid-3","account":"acct@example.com","dir":"$ROOT/work"}
-{"at":"2026-10-23T01:02:04Z","kind":"send-intent","session":"J1","intent":"intent-3","mode":"notice","text":"Read $HOME/state/batches/b1/sends/J1-1.md and do what it asks.","notice":true,"view":"J1@bd50bd50"}
-{"at":"2026-10-23T01:02:04Z","kind":"send-intent","session":"J1","intent":"intent-4","mode":"typed","text":"Review the spec in docs/spec.md","view":"J1@bd50bd50"}
-{"at":"2026-10-23T01:02:07Z","kind":"send","session":"J1","intent":"intent-3","mode":"notice","text":"Read $HOME/state/batches/b1/sends/J1-1.md and do what it asks.","notice":true,"outcome":"arrived","view":"J1@bd50bd50"}
-{"at":"2026-10-23T01:02:12Z","kind":"send","session":"J1","intent":"intent-4","mode":"typed","text":"Review the spec in docs/spec.md","outcome":"arrived","view":"J1@bd50bd50"}
-{"at":"2026-10-23T01:02:12Z","kind":"refused","session":"J1","reason":"J1 is already open as block a00003 (since 02:02)"}
-{"at":"2026-10-23T01:02:12Z","kind":"close","session":"T1","block":"block:00000000-0000-0000-0000-000000a00001","view":"T1@fefb9f5c"}
+[
+  {
+    "at": "2026-10-23T01:00:00Z",
+    "kind": "batch",
+    "note": "started"
+  },
+  {
+    "at": "2026-10-23T01:00:00Z",
+    "kind": "adopt",
+    "session": "T1",
+    "block": "block:00000000-0000-0000-0000-000000a00001",
+    "sid": "sid-1",
+    "account": "acct@example.com",
+    "dir": "$ROOT/work"
+  },
+  {
+    "at": "2026-10-23T01:00:00Z",
+    "kind": "send-intent",
+    "session": "T1",
+    "intent": "intent-1",
+    "mode": "file",
+    "key": "land-pr",
+    "path": "$HOME/state/batches/b1/sends/T1-1.md",
+    "text": "Read $HOME/state/batches/b1/sends/T1-1.md and do what it asks.",
+    "notice": true,
+    "view": "a00001@e274d317"
+  },
+  {
+    "at": "2026-10-23T01:00:03Z",
+    "kind": "send",
+    "session": "T1",
+    "intent": "intent-1",
+    "mode": "file",
+    "key": "land-pr",
+    "path": "$HOME/state/batches/b1/sends/T1-1.md",
+    "text": "Read $HOME/state/batches/b1/sends/T1-1.md and do what it asks.",
+    "notice": true,
+    "outcome": "arrived",
+    "view": "a00001@e274d317"
+  },
+  {
+    "at": "2026-10-23T01:02:03Z",
+    "kind": "refused",
+    "session": "T1",
+    "reason": "T1 has moved past view T1@00000000: it has received another prompt since: the land-pr snippet drive sent at 02:00"
+  },
+  {
+    "at": "2026-10-23T01:02:04Z",
+    "kind": "respond",
+    "session": "a00002",
+    "outcome": "working",
+    "view": "a00002@46abfde4",
+    "action": "approve",
+    "call": "Bash: pnpm install"
+  },
+  {
+    "at": "2026-10-23T01:02:04Z",
+    "kind": "grant",
+    "id": "G1",
+    "source": "\"you can merge on my behalf\" (02:08)",
+    "scope": "merge this batch's PRs"
+  },
+  {
+    "at": "2026-10-23T01:02:04Z",
+    "kind": "ask",
+    "session": "T1",
+    "id": "A1",
+    "question": "Take the lab host down?",
+    "recommendation": "yes, after the read",
+    "if_unanswered": "it keeps running"
+  },
+  {
+    "at": "2026-10-23T01:02:04Z",
+    "kind": "ask",
+    "id": "A2",
+    "question": "Release tonight?",
+    "if_unanswered": "it waits"
+  },
+  {
+    "at": "2026-10-23T01:02:04Z",
+    "kind": "answer",
+    "ref": "A1",
+    "source": "yes",
+    "took": "amended",
+    "explained": true
+  },
+  {
+    "at": "2026-10-23T01:02:04Z",
+    "kind": "note",
+    "id": "N1",
+    "note": "plan: T1 land-pr; T2 approve and build"
+  },
+  {
+    "at": "2026-10-23T01:02:04Z",
+    "kind": "note",
+    "session": "T2",
+    "id": "N2",
+    "note": "told the user"
+  },
+  {
+    "at": "2026-10-23T01:02:04Z",
+    "kind": "park",
+    "session": "T1",
+    "reason": "design checkpoint",
+    "view": "T1@fefb9f5c"
+  },
+  {
+    "at": "2026-10-23T01:02:04Z",
+    "kind": "open-intent",
+    "session": "J1",
+    "dir": "$ROOT/work",
+    "intent": "intent-2",
+    "text": "Review the spec in docs/spec.md"
+  },
+  {
+    "at": "2026-10-23T01:02:04Z",
+    "kind": "open",
+    "session": "J1",
+    "block": "block:00000000-0000-0000-0000-000000a00003",
+    "dir": "$ROOT/work",
+    "intent": "intent-2",
+    "outcome": "starting"
+  },
+  {
+    "at": "2026-10-23T01:02:04Z",
+    "kind": "open",
+    "session": "J1",
+    "block": "block:00000000-0000-0000-0000-000000a00003",
+    "sid": "sid-3",
+    "account": "acct@example.com",
+    "dir": "$ROOT/work"
+  },
+  {
+    "at": "2026-10-23T01:02:04Z",
+    "kind": "send-intent",
+    "session": "J1",
+    "intent": "intent-3",
+    "mode": "notice",
+    "text": "Read $HOME/state/batches/b1/sends/J1-1.md and do what it asks.",
+    "notice": true,
+    "view": "J1@bd50bd50"
+  },
+  {
+    "at": "2026-10-23T01:02:04Z",
+    "kind": "send-intent",
+    "session": "J1",
+    "intent": "intent-4",
+    "mode": "typed",
+    "text": "Review the spec in docs/spec.md",
+    "view": "J1@bd50bd50"
+  },
+  {
+    "at": "2026-10-23T01:02:07Z",
+    "kind": "send",
+    "session": "J1",
+    "intent": "intent-3",
+    "mode": "notice",
+    "text": "Read $HOME/state/batches/b1/sends/J1-1.md and do what it asks.",
+    "notice": true,
+    "outcome": "arrived",
+    "view": "J1@bd50bd50"
+  },
+  {
+    "at": "2026-10-23T01:02:12Z",
+    "kind": "send",
+    "session": "J1",
+    "intent": "intent-4",
+    "mode": "typed",
+    "text": "Review the spec in docs/spec.md",
+    "outcome": "arrived",
+    "view": "J1@bd50bd50"
+  },
+  {
+    "at": "2026-10-23T01:02:12Z",
+    "kind": "refused",
+    "session": "J1",
+    "reason": "J1 is already open as block a00003 (since 02:02)"
+  },
+  {
+    "at": "2026-10-23T01:02:12Z",
+    "kind": "close",
+    "session": "T1",
+    "block": "block:00000000-0000-0000-0000-000000a00001",
+    "view": "T1@fefb9f5c"
+  }
+]
 --- stderr

@@ -10,6 +10,13 @@ Inherited flags:
       --batch=NAME    Act in this batch instead of the current one, which stays current. It may
                       stand anywhere on the line.
 
+JSON:
+  batch, from, to, sessions; asks, answered, unanswered, took (counts of recommended,
+  amended, delegated, moot), explained; owner_wait_seconds, median_answer_seconds,
+  per_merge_seconds; merged (repo, number or branch and commit, at, sessions), unread;
+  sends, snippets, by_key, commands, own_words, recovered, garbled, other, unknown;
+  refusals (counts by kind), failures; wakes, timers, wake_fails, unhandled, unwatched
+
 Exit codes:
   0    success
   1    refused: nothing was done; next: says what to run instead

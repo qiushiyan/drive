@@ -412,3 +412,44 @@ func TestAWakeNobodyActedOnSaysWhenItComesAgain(t *testing.T) {
 		t.Fatalf("and nothing more comes for that view: %q", st.Rows[0].Watch)
 	}
 }
+
+// --due arms one session after another: once one is armed, a later one that
+// cannot be is a failure that says so, never a refusal, which would claim
+// nothing was done.
+func TestDueThatArmsSomeIsNoRefusal(t *testing.T) {
+	r := newRig(t, "webhook")
+	a, b := adopted(t, r, "A"), adopted(t, r, "B")
+	r.watches.Stop(watchOf(a))
+	r.watches.Stop(watchOf(b))
+	r.watches.Refuse = func(name string) error {
+		if name == watchOf(b) {
+			return errors.New("fork: resource temporarily unavailable")
+		}
+		return nil
+	}
+	armed, _, err := r.d.Due()
+	var f *drive.Failed
+	if len(armed) != 1 || armed[0].Label != "A" || !errors.As(err, &f) || !strings.Contains(f.What, "armed the wakes above, then B's") {
+		t.Fatalf("A armed, then B's failure says so: %+v %v", armed, err)
+	}
+}
+
+// A batch that cannot start changes nothing, and the batch whose wakes a
+// new one stops is the current one, whatever batch the run was pointed at.
+func TestABatchStartRefusesBeforeItsFirstEffect(t *testing.T) {
+	r := newRig(t, "none")
+	if _, err := r.d.StartBatch(drive.BatchOptions{Name: "b1", Wake: "none", RexSession: "fresh"}); !isRefused(err) {
+		t.Fatalf("a taken name is refused: %v", err)
+	}
+	if started, _ := r.w.EnsureSession("fresh"); !started {
+		t.Fatal("the refused start started its Rex session")
+	}
+	if _, err := r.d.Store.New(batch.Meta{Name: "b2", Started: r.w.Clock.Now(), Wake: "none"}); err != nil {
+		t.Fatal(err)
+	}
+	r.d.BatchName = "b1"
+	st, err := r.d.StartBatch(drive.BatchOptions{Name: "b3", Wake: "none"})
+	if err != nil || st.Prev == nil || st.Prev.Meta.Name != "b2" {
+		t.Fatalf("b3 takes over from the current batch, b2: %+v %v", st, err)
+	}
+}

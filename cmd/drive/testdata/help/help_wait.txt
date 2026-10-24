@@ -23,6 +23,11 @@ Inherited flags:
       --batch=NAME       Act in this batch instead of the current one, which stays current. It may
                          stand anywhere on the line.
 
+JSON:
+  session, block, state, error (kind, text, at: the API error that ended the turn), shells
+  (jobs this turn started, still running), orphans (older jobs), jobs (started, command),
+  reply (its end), screen (its end, for a prompt the transcript does not show), view, next
+
 Exit codes:
   0    success
   1    refused: nothing was done; next: says what to run instead

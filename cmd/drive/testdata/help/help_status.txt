@@ -29,6 +29,22 @@ Columns:
          | none, or ended without a wake: no wake comes until drive watch --due | parked: why
   Hold lines name who holds each hold, and who waits for it with the step it was refused.
 
+JSON:
+  batch       name, started, wake, webhook, rex_session, tz; null with no current batch
+  sessions    a row per session in the batch; others, a row per Claude session outside it:
+              label, sid (Claude Code's session id), block, window, name (Rex's label, outside
+              the batch), state, for_seconds (in that state), account, input, input_text (a
+              typed or suggested line), stage, pr (number, state, draft, merge, review, passed,
+              failed, pending), last_sent, watch, unhandled_wake, wake_due (why the watchdog
+              would arm its wake), view, error (why the row could not be read), jobs (started,
+              command)
+  closed      the batch's sessions closed since
+  holds       a line per hold, as the table prints it
+  open_asks   id, session, at, question, recommendation, if_unanswered
+  grants      id, at, scope, source
+  in_flight   actions admitted with no outcome yet: kind, session, at, text, driver_pid (left
+              out once that driver has gone)
+
 Exit codes:
   0    success
   1    refused: nothing was done; next: says what to run instead

@@ -104,53 +104,12 @@ func (r *Reading) Text() string {
 	return b.String()
 }
 
-// JSON is what read --json prints.
-func (r *Reading) JSON() map[string]any {
-	return map[string]any{"session": r.Label, "sid": r.SID, "state": r.State, "account": r.Account, "input": r.Input,
-		"input_text": r.Typed, "text": r.Body, "at": r.At, "view": viewOrEmpty(r.View), "next": r.Next, "jobs": r.Jobs}
-}
-
-// JSON is what wait --json prints.
-func (e *Ending) JSON() map[string]any {
-	return map[string]any{"session": e.Label, "block": rex.Short(e.Block), "state": e.State, "error": e.Error,
-		"shells": e.Shells, "orphans": e.Orphans, "jobs": e.Jobs, "reply": e.Reply, "screen": e.Screen, "view": e.View.String(), "next": e.Next}
-}
-
 // viewOrEmpty is a view as JSON gives it: "" for a closed or gone session, which has none.
 func viewOrEmpty(v turn.View) string {
 	if v.Session == "" {
 		return ""
 	}
 	return v.String()
-}
-
-// JSON is what status --json prints.
-func (st *Status) JSON() map[string]any {
-	rows := func(rs []Row) []map[string]any {
-		var out []map[string]any
-		for _, r := range rs {
-			m := map[string]any{"label": r.Label, "sid": r.SID, "block": rex.Short(r.Block), "window": r.Window, "state": r.State,
-				"for_seconds": int(r.For.Seconds()), "account": r.Account, "input": r.Input, "stage": r.Stage,
-				"watch": r.Watch, "unhandled_wake": r.Unhandled, "wake_due": r.Due, "last_sent": r.LastSent, "error": r.Error,
-				"jobs": r.Jobs}
-			if r.View.Session != "" {
-				m["view"] = r.View.String()
-			}
-			if r.Input == "typed" || r.Input == "suggestion" {
-				m["input_text"] = r.Typed
-			}
-			if r.PR != nil {
-				m["pr"] = r.PR
-			}
-			if r.Name != "" {
-				m["name"] = r.Name
-			}
-			out = append(out, m)
-		}
-		return out
-	}
-	return map[string]any{"batch": st.Batch, "sessions": rows(st.Rows), "closed": st.Closed, "others": rows(st.Others),
-		"holds": st.Holds, "open_asks": st.Asks, "grants": st.Grants, "in_flight": st.InFlight}
 }
 
 // Text is what status prints: the batch, a row per session, then what
@@ -176,7 +135,7 @@ func (st *Status) Text(now time.Time) string {
 				sent += " " + clock(r.SentAt, st.Zone, now)
 			}
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Label, orDash(r.Window), rex.Short(r.Block), r.State,
-				column(r.For), r.Input, r.Stage, prText(r), sent, r.Watch, r.View)
+				ago(r.For), r.Input, r.Stage, prText(r), sent, r.Watch, r.View)
 		}
 		w.Flush()
 	} else if st.Batch != nil && st.Closed > 0 {
@@ -196,7 +155,7 @@ func (st *Status) Text(now time.Time) string {
 		b.WriteString("\nother Claude sessions in Rex:\n")
 		w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 		for _, r := range st.Others {
-			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\n", orDash(r.Window), r.Label, r.State, column(r.For), r.Name)
+			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\n", orDash(r.Window), r.Label, r.State, ago(r.For), r.Name)
 		}
 		w.Flush()
 	}
@@ -221,7 +180,7 @@ func (st *Status) Text(now time.Time) string {
 		fmt.Fprintf(&b, "grant %s (%s): %s — %s\n", g.ID, clock(g.At, st.Zone, now), g.Scope, g.Source)
 	}
 	for _, q := range st.Asks {
-		fmt.Fprintf(&b, "open ask %s for %s, %s: %s — unanswered: %s\n", q.ID, orDash(q.Session), column(now.Sub(q.At)), q.Question, q.IfUnanswered)
+		fmt.Fprintf(&b, "open ask %s for %s, %s: %s — unanswered: %s\n", q.ID, orDash(q.Session), ago(now.Sub(q.At)), q.Question, q.IfUnanswered)
 	}
 	return b.String()
 }
@@ -239,8 +198,9 @@ func clock(t time.Time, zone *time.Location, now time.Time) string {
 	return t.Format("01-02 15:04")
 }
 
-// column is a duration as status's FOR column gives it.
-func column(d time.Duration) string {
+// ago is how long ago something was, as status's FOR column and every
+// message give it.
+func ago(d time.Duration) string {
 	switch {
 	case d < time.Minute:
 		return "<1m"

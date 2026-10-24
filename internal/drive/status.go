@@ -384,13 +384,6 @@ func stuck(state string, since, watched, now time.Time) bool {
 	return ended && now.Sub(since) > 15*time.Minute
 }
 
-func ago(d time.Duration) string {
-	if d < time.Hour {
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	}
-	return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
-}
-
 func sortedKeys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

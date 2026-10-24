@@ -63,6 +63,17 @@ func (r *Refused) Error() string {
 	return r.Reason + "\nnext: " + r.Next
 }
 
+// explain splits an error into what happened and the next it gives.
+func explain(err error) (why, next string) {
+	if r, ok := errors.AsType[*Refused](err); ok {
+		return r.Reason, r.Next
+	}
+	if f, ok := errors.AsType[*Failed](err); ok {
+		return f.What, f.Next
+	}
+	return err.Error(), ""
+}
+
 // Failed is an action that was tried and did not end as asked.
 type Failed struct {
 	What  string

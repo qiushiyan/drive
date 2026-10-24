@@ -56,6 +56,9 @@ func (d *Driver) batchCommand(opt BatchOptions) string {
 // in this one.
 func (d *Driver) StartBatch(opt BatchOptions) (*Started, error) {
 	again := d.batchCommand(opt)
+	if err := d.Store.Free(opt.Name); err != nil {
+		return nil, &Refused{Reason: err.Error()}
+	}
 	m := batch.Meta{Name: opt.Name, Started: d.now(), Wake: opt.Wake, Webhook: opt.Webhook,
 		RexSession: cmp.Or(opt.RexSession, d.Cfg.RexSession), TZ: cmp.Or(opt.TZ, d.Cfg.TZ), AfterWake: opt.AfterWake}
 	if m.Wake == "webhook" {
@@ -87,10 +90,17 @@ func (d *Driver) StartBatch(opt BatchOptions) (*Started, error) {
 		}
 		out.RexStarted = started
 	}
-	out.Prev, _ = d.Batch()
+	// The batch that stops is the current one, whichever batch this run
+	// was pointed at.
+	out.Prev, _ = d.Store.Current()
 	b, err := d.Store.New(m)
 	if err != nil {
-		return nil, &Refused{Reason: err.Error()}
+		// Free found the name unused, so this is the store failing midway.
+		what := fmt.Sprintf("batch %s did not start: %v", m.Name, err)
+		if out.RexStarted {
+			what += fmt.Sprintf("; Rex session %s was started for it and runs", m.RexSession)
+		}
+		return nil, &Failed{What: what, Next: "look at " + filepath.Join(d.Store.Dir, "batches", m.Name) + ", then try it again: " + again}
 	}
 	out.Batch = b
 	if out.Prev != nil {

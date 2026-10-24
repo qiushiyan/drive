@@ -169,7 +169,12 @@ func (d *Driver) Due() (armed, later []Rearmed, err error) {
 			continue
 		}
 		if _, err := d.Watch(r.Label); err != nil {
-			return out, later, err
+			if len(out) == 0 {
+				return out, later, err
+			}
+			// The wakes armed so far stay armed, so this is no refusal.
+			why, next := explain(err)
+			return out, later, &Failed{What: fmt.Sprintf("armed the wakes above, then %s's did not arm: %s", r.Label, why), Next: next}
 		}
 		n := 0
 		for _, e := range evs {

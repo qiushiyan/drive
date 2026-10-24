@@ -677,6 +677,9 @@ type Watches struct {
 	mu      sync.Mutex
 	Running map[string][]string
 	Fail    error // what Start returns, when set
+	// Refuse, when set, is what Start returns for one watch name: a watch
+	// that cannot start while others do, as a process table near its limit.
+	Refuse func(name string) error
 }
 
 func (w *Watches) Start(name string, argv []string, log string) error {
@@ -684,6 +687,11 @@ func (w *Watches) Start(name string, argv []string, log string) error {
 	defer w.mu.Unlock()
 	if w.Fail != nil {
 		return w.Fail
+	}
+	if w.Refuse != nil {
+		if err := w.Refuse(name); err != nil {
+			return err
+		}
 	}
 	if w.Running == nil {
 		w.Running = map[string][]string{}

@@ -26,6 +26,11 @@ Inherited flags:
 Constraints:
   At most one of --prompts, --pending, --user, --screen.
 
+JSON:
+  session, sid, state, account, input, input_text (a typed or suggested line), text (what was
+  read), at (when it was written), view (left out for a closed or gone session), next, jobs
+  (started, command)
+
 Exit codes:
   0    success
   1    refused: nothing was done; next: says what to run instead

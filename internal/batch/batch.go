@@ -50,10 +50,22 @@ var nameForm = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 // ErrNoBatch is a store with no current batch.
 var ErrNoBatch = errors.New("no current batch: start one with `drive batch new NAME`")
 
+// Free says whether a batch could start under name: a name of the right
+// form that no batch has, checked before anything is made for it.
+func (s Store) Free(name string) error {
+	if !nameForm.MatchString(name) {
+		return fmt.Errorf("batch name %q: use letters, digits, '.', '_' or '-', such as 2026-10-23", name)
+	}
+	if _, err := os.Stat(filepath.Join(s.Dir, "batches", name)); err == nil {
+		return fmt.Errorf("batch %q exists; `drive batch use %s` makes it current", name, name)
+	}
+	return nil
+}
+
 // New starts a batch and makes it current. A name already used is refused.
 func (s Store) New(m Meta) (*Batch, error) {
-	if !nameForm.MatchString(m.Name) {
-		return nil, fmt.Errorf("batch name %q: use letters, digits, '.', '_' or '-', such as 2026-10-23", m.Name)
+	if err := s.Free(m.Name); err != nil {
+		return nil, err
 	}
 	dir := filepath.Join(s.Dir, "batches", m.Name)
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {

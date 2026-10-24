@@ -5,12 +5,18 @@ Print the batch's timeline: what was sent, answered, opened, parked and closed, 
 Flags:
       --since=TIME    Print only what happened from this time on, a date or a date and time such as
                       "2026-10-22 16:00", read in the zone drive prints times in.
-      --json          Print the events as recorded, one JSON object per line.
+      --json          Print the events as the batch recorded them, as one JSON array.
 
 Inherited flags:
   -h, --help          Show context-sensitive help.
       --batch=NAME    Act in this batch instead of the current one, which stays current. It may
                       stand anywhere on the line.
+
+JSON:
+  The batch's events, oldest first, as recorded: at, kind, and the fields its kind carries,
+  among session, block, sid, account, dir, intent, mode, key, path, text, notice, outcome,
+  reason, hold, view, action, call, id, ref, source, scope, question, recommendation,
+  if_unanswered, took, explained, note, http, try.
 
 Exit codes:
   0    success

@@ -62,7 +62,22 @@ INPUT  empty | suggestion (Claude Code's dimmed guess; typing replaces it)
 WAKE   armed | stuck | posting | woken HH:MM (nothing done since: act on it or park it,
        or drive watch --due posts it once more, at the time it says)
        | none, or ended without a wake: no wake comes until drive watch --due | parked: why
-Hold lines name who holds each hold, and who waits for it with the step it was refused.`}}
+Hold lines name who holds each hold, and who waits for it with the step it was refused.`},
+		{Title: "JSON", Body: `
+batch       name, started, wake, webhook, rex_session, tz; null with no current batch
+sessions    a row per session in the batch; others, a row per Claude session outside it:
+            label, sid (Claude Code's session id), block, window, name (Rex's label, outside
+            the batch), state, for_seconds (in that state), account, input, input_text (a
+            typed or suggested line), stage, pr (number, state, draft, merge, review, passed,
+            failed, pending), last_sent, watch, unhandled_wake, wake_due (why the watchdog
+            would arm its wake), view, error (why the row could not be read), jobs (started,
+            command)
+closed      the batch's sessions closed since
+holds       a line per hold, as the table prints it
+open_asks   id, session, at, question, recommendation, if_unanswered
+grants      id, at, scope, source
+in_flight   actions admitted with no outcome yet: kind, session, at, text, driver_pid (left
+            out once that driver has gone)`}}
 }
 
 func (c *StatusCmd) act(ctx *kong.Context, d *drive.Driver) error {
@@ -91,6 +106,13 @@ func (c *ReadCmd) Help() string {
 	return `
 A closed or gone session is read from its transcript as it ended, with no
 view, since there is nothing left to act on.`
+}
+
+func (c *ReadCmd) HelpSections() []clikit.Section {
+	return []clikit.Section{{Title: "JSON", Body: `
+session, sid, state, account, input, input_text (a typed or suggested line), text (what was
+read), at (when it was written), view (left out for a closed or gone session), next, jobs
+(started, command)`}}
 }
 
 func (c *ReadCmd) Validate() error {
@@ -138,6 +160,13 @@ stops on a prompt; at once on an API error or an interrupt. It prints the
 end of the reply, the view to act on, and next: where the ending decides
 what to do. A driver that waits itself runs it in the background; a chat
 driver is woken instead (drive watch).`
+}
+
+func (c *WaitCmd) HelpSections() []clikit.Section {
+	return []clikit.Section{{Title: "JSON", Body: `
+session, block, state, error (kind, text, at: the API error that ended the turn), shells
+(jobs this turn started, still running), orphans (older jobs), jobs (started, command),
+reply (its end), screen (its end, for a prompt the transcript does not show), view, next`}}
 }
 
 func (c *WaitCmd) Validate() error {
@@ -468,7 +497,15 @@ func (c *NoteCmd) act(ctx *kong.Context, d *drive.Driver) error {
 type LogCmd struct {
 	runs
 	Since string `placeholder:"TIME" help:"Print only what happened from this time on, a date or a date and time such as \"2026-10-22 16:00\", read in the zone drive prints times in."`
-	JSON  bool   `help:"Print the events as recorded, one JSON object per line."`
+	JSON  bool   `help:"Print the events as the batch recorded them, as one JSON array."`
+}
+
+func (c *LogCmd) HelpSections() []clikit.Section {
+	return []clikit.Section{{Title: "JSON", Body: `
+The batch's events, oldest first, as recorded: at, kind, and the fields its kind carries,
+among session, block, sid, account, dir, intent, mode, key, path, text, notice, outcome,
+reason, hold, view, action, call, id, ref, source, scope, question, recommendation,
+if_unanswered, took, explained, note, http, try.`}}
 }
 
 func (c *LogCmd) act(ctx *kong.Context, d *drive.Driver) error {
@@ -489,14 +526,7 @@ func (c *LogCmd) act(ctx *kong.Context, d *drive.Driver) error {
 		return err
 	}
 	if c.JSON {
-		for _, e := range evs {
-			line, err := json.Marshal(e)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintln(ctx.Stdout, string(line))
-		}
-		return nil
+		return writeJSON(ctx.Stdout, drive.LogJSON(evs))
 	}
 	_, err = io.WriteString(ctx.Stdout, drive.LogText(b, evs, d.Time()))
 	return err
@@ -516,13 +546,22 @@ type MetricsCmd struct {
 	JSON bool `help:"Print one JSON document instead of text."`
 }
 
+func (c *MetricsCmd) HelpSections() []clikit.Section {
+	return []clikit.Section{{Title: "JSON", Body: `
+batch, from, to, sessions; asks, answered, unanswered, took (counts of recommended,
+amended, delegated, moot), explained; owner_wait_seconds, median_answer_seconds,
+per_merge_seconds; merged (repo, number or branch and commit, at, sessions), unread;
+sends, snippets, by_key, commands, own_words, recovered, garbled, other, unknown;
+refusals (counts by kind), failures; wakes, timers, wake_fails, unhandled, unwatched`}}
+}
+
 func (c *MetricsCmd) act(ctx *kong.Context, d *drive.Driver) error {
 	m, err := d.Metrics()
 	if err != nil {
 		return err
 	}
 	if c.JSON {
-		return writeJSON(ctx.Stdout, m)
+		return writeJSON(ctx.Stdout, m.JSON())
 	}
 	_, err = io.WriteString(ctx.Stdout, m.Text())
 	return err
