@@ -352,7 +352,7 @@ func (d *Driver) Wake(label string, e *Ending, note string) error {
 	err = poster.Post(body, func(a webhook.Attempt) { last = a })
 	ev := batch.Event{At: d.now(), Kind: batch.KindWake, Session: label, HTTP: last.HTTP, Try: last.Try, Note: note}
 	if e != nil {
-		ev.Block, ev.Outcome, ev.View = e.Block, e.State, e.View.String()
+		ev.Block, ev.Outcome, ev.View = e.Block, string(e.State), e.View.String()
 	}
 	if err != nil {
 		ev.HTTP, ev.Reason = 0, clip(err.Error(), 200)

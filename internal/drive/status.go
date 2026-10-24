@@ -30,7 +30,7 @@ const (
 type Reading struct {
 	Label   string
 	SID     string // the Claude Code session id, which claude-steps takes
-	State   string
+	State   State
 	Account string
 	Input   turn.InputKind
 	Typed   string
@@ -77,7 +77,7 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 // readEnded reads a member whose session has ended, its block closed or its
 // process gone, from its transcript, which outlives both: a report run after
 // a reset still has its recap. It has no screen, prompt or view to act on.
-func (d *Driver) readEnded(m *batch.Member, state string, mode ReadMode, n int) (*Reading, error) {
+func (d *Driver) readEnded(m *batch.Member, state State, mode ReadMode, n int) (*Reading, error) {
 	path := ""
 	if m.SID != "" {
 		path = d.Host.Transcript(m.SID)
@@ -150,7 +150,7 @@ type Row struct {
 	SID       string
 	Block     string
 	Window    string
-	State     string
+	State     State
 	For       time.Duration // since its state last changed
 	Account   string
 	Input     turn.InputKind
@@ -376,8 +376,8 @@ func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, zone *time.Locat
 // wait returns a minute after a turn ends, or ten after one that left its
 // own background jobs running, counted from when the watch was armed if
 // that was later.
-func stuck(state string, since, watched, now time.Time) bool {
-	ended := state == "done" || state == "idle" || state == "error" || state == "interrupted" || strings.HasPrefix(state, "blocked")
+func stuck(state State, since, watched, now time.Time) bool {
+	ended := state == "done" || state == "idle" || state == "error" || state == "interrupted" || state.blocked()
 	if watched.After(since) {
 		since = watched
 	}

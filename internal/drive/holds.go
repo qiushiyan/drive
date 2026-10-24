@@ -147,7 +147,7 @@ func (d *Driver) holder(evs []batch.Event, members []*batch.Member, name, label 
 		}
 		t := d.turnOf(s, f, h.Since)
 		switch {
-		case t.waiting():
+		case t.State.onPrompt():
 			hb.why, hb.prompt = "who waits on a prompt", true
 			return hb, true
 		case t.State == "working" && sentSince(evs, h):

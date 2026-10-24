@@ -15,7 +15,7 @@ type Responded struct {
 	Label   string
 	Action  string
 	Call    string // the tool call the prompt asked about
-	After   string // the state the session reached
+	After   State  // the state the session reached
 	Watched bool   // its wake is armed
 }
 
@@ -56,7 +56,7 @@ func (d *Driver) Respond(view, response string) (res *Responded, err error) {
 	var keys []string
 	switch response {
 	case "approve", "deny":
-		if !strings.HasPrefix(before, "blocked") || before == "blocked:auth" {
+		if !before.onPrompt() {
 			return nil, &Refused{Reason: fmt.Sprintf("%s is %s, not waiting on a prompt", o.Label, before)}
 		}
 		keys = []string{map[string]string{"approve": "enter", "deny": "escape"}[response]}
@@ -71,9 +71,9 @@ func (d *Driver) Respond(view, response string) (res *Responded, err error) {
 		}
 		keys = []string{"ctrl+c"} // once: a second press quits Claude Code
 	case "clear":
-		if strings.HasPrefix(before, "blocked") && before != "blocked:auth" {
+		if before.onPrompt() {
 			// A prompt draws its options behind the box's ❯, which reads as typed text.
-			return nil, &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: what reads as typed text is the prompt's options", o.Label, strings.TrimPrefix(before, "blocked:")),
+			return nil, &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: what reads as typed text is the prompt's options", o.Label, before.promptKind()),
 				Next: d.answerNext(o.Label, o.View.String(), before)}
 		}
 		if o.Input != turn.InputTyped {
@@ -125,7 +125,7 @@ func (d *Driver) Respond(view, response string) (res *Responded, err error) {
 		moved = out.After != before || turn.ViewOf(o.Label, s.ID, f) != o.View
 	}
 	if b != nil {
-		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindRespond, Session: o.Label, Action: response, Call: call, View: v.String(), Outcome: out.After})
+		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindRespond, Session: o.Label, Action: response, Call: call, View: v.String(), Outcome: string(out.After)})
 	}
 	if uncleared != nil {
 		return out, uncleared
@@ -207,8 +207,8 @@ func (d *Driver) Close(view string) (err error) {
 	case state == "working":
 		return &Refused{Reason: fmt.Sprintf("%s is working", o.Label),
 			Next: d.whenTurnEnds(o.Label, o.Session.Block) + "; close it then, on the view that comes with it"}
-	case strings.HasPrefix(state, "blocked") && state != "blocked:auth":
-		return &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: its turn has not ended", o.Label, strings.TrimPrefix(state, "blocked:")),
+	case state.onPrompt():
+		return &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: its turn has not ended", o.Label, state.promptKind()),
 			Next: d.answerNext(o.Label, view, state)}
 	case o.Input == turn.InputTyped:
 		return &Refused{Reason: fmt.Sprintf("%s's input box holds an unsent line: %q", o.Label, clip(o.Typed, 80)),

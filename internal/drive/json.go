@@ -96,7 +96,7 @@ func (st *Status) JSON() any {
 	rows := func(rs []Row) []rowDoc {
 		out := []rowDoc{}
 		for _, r := range rs {
-			d := rowDoc{Label: r.Label, SID: r.SID, Block: rex.Short(r.Block), Window: r.Window, Name: r.Name, State: r.State,
+			d := rowDoc{Label: r.Label, SID: r.SID, Block: rex.Short(r.Block), Window: r.Window, Name: r.Name, State: string(r.State),
 				ForSeconds: int(r.For.Seconds()), Account: r.Account, Input: string(r.Input), Stage: r.Stage, LastSent: r.LastSent,
 				Watch: r.Watch, UnhandledWake: r.Unhandled, WakeDue: r.Due, View: viewOrEmpty(r.View), Error: r.Error, Jobs: jobs(r.Jobs)}
 			if r.Input == "typed" || r.Input == "suggestion" {
@@ -146,7 +146,7 @@ type readDoc struct {
 
 // JSON is what read --json prints.
 func (r *Reading) JSON() any {
-	d := readDoc{Session: r.Label, SID: r.SID, State: r.State, Account: r.Account, Input: string(r.Input), Text: r.Body,
+	d := readDoc{Session: r.Label, SID: r.SID, State: string(r.State), Account: r.Account, Input: string(r.Input), Text: r.Body,
 		View: viewOrEmpty(r.View), Next: r.Next, Jobs: jobs(r.Jobs)}
 	if r.Input == "typed" || r.Input == "suggestion" {
 		d.InputText = r.Typed
@@ -179,7 +179,7 @@ type apiErrorDoc struct {
 
 // JSON is what wait --json prints.
 func (e *Ending) JSON() any {
-	d := endingDoc{Session: e.Label, Block: rex.Short(e.Block), State: e.State, Shells: e.Shells, Orphans: e.Orphans,
+	d := endingDoc{Session: e.Label, Block: rex.Short(e.Block), State: string(e.State), Shells: e.Shells, Orphans: e.Orphans,
 		Jobs: jobs(e.Jobs), Reply: e.Reply, Screen: e.Screen, View: viewOrEmpty(e.View), Next: e.Next}
 	if e.Error != nil {
 		d.Error = &apiErrorDoc{Kind: e.Error.Kind, Text: e.Error.Text, At: e.Error.At}

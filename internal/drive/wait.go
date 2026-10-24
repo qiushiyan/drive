@@ -15,7 +15,7 @@ import (
 type Ending struct {
 	Label   string
 	Block   string
-	State   string // done, blocked:permission, blocked:question, blocked:auth, error, gone
+	State   State  // done, blocked:permission, blocked:question, blocked:auth, error, gone
 	Msg     string // what Rex was told, such as the prompt's question
 	Error   *turn.APIError
 	Shells  int             // background jobs started in this turn, still running
@@ -63,7 +63,7 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 		}
 		misses = 0
 		st := o.Session.Status
-		key := o.State() + o.Session.Since().String()
+		key := string(o.State()) + o.Session.Since().String()
 		if key != last {
 			last, stable = key, d.now()
 		}
@@ -79,7 +79,7 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 		case !t.Over:
 		case state == "blocked:auth" || state == "error" || state == "interrupted":
 			ended = true // nothing will happen until someone acts
-		case t.waiting() || t.Shells == 0:
+		case state.onPrompt() || t.Shells == 0:
 			ended = held >= quiet
 		default:
 			ended = held >= bgCap
@@ -91,7 +91,7 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 			if a, local := o.Frontier.Answer(); a != nil {
 				e.Reply = tail(answerText(o.Frontier, a, local), 2500)
 			}
-			if strings.HasPrefix(state, "blocked") {
+			if state.blocked() {
 				if screen, err := d.Term.Capture(o.Session.Block, false); err == nil {
 					e.Screen = lastLines(screen, 25)
 				}
@@ -106,11 +106,11 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 // nextFor is what a driver runs about a session whose turn ended in state,
 // where the ending decides it: the one answer the wake and drive read give.
 // jobs are the background jobs the session runs.
-func (d *Driver) nextFor(o *Observation, state string, jobs []session.Shell) string {
+func (d *Driver) nextFor(o *Observation, state State, jobs []session.Shell) string {
 	switch {
 	case state == "blocked:auth":
 		return d.relaunchHint(o)
-	case strings.HasPrefix(state, "blocked"):
+	case state.onPrompt():
 		return d.answerNext(o.Label, o.View.String(), state)
 	case state == "error" && o.Frontier.Error != nil && o.Frontier.Error.Kind == "rate_limit":
 		back := "read it again after the reset to see it under way"
@@ -149,14 +149,14 @@ func lastLines(s string, n int) string {
 // Text renders an ending for a reader deciding the next step.
 func (e *Ending) Text() string {
 	var b strings.Builder
-	what := map[string]string{
+	what := map[State]string{
 		"done": "its turn ended", "blocked:permission": "it waits on a permission prompt",
 		"blocked:question": "it waits on a question", "blocked:auth": "its login was rejected",
 		"error": "an API error ended its turn", "gone": "its session is gone",
 		"interrupted": "its turn was interrupted",
 	}[e.State]
 	if what == "" {
-		what = e.State
+		what = string(e.State)
 	}
 	fmt.Fprintf(&b, "%s (%s): %s\n", e.Label, rex.Short(e.Block), what)
 	if e.Error != nil {
@@ -165,10 +165,10 @@ func (e *Ending) Text() string {
 	for _, j := range e.Jobs {
 		fmt.Fprintf(&b, "a background job of its runs: %s\n", clip(j.Command, 100))
 	}
-	if e.Pending != nil && strings.HasPrefix(e.State, "blocked") {
+	if e.Pending != nil && e.State.blocked() {
 		fmt.Fprintf(&b, "pending %s: %s\n", e.Pending.Name, clip(e.Pending.Input, 400))
 	}
-	if e.Msg != "" && strings.HasPrefix(e.State, "blocked") {
+	if e.Msg != "" && e.State.blocked() {
 		fmt.Fprintf(&b, "prompt: %s\n", e.Msg)
 	}
 	if e.Msg != "" && e.State == "gone" {

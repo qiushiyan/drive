@@ -138,116 +138,7 @@ type Observation struct {
 }
 
 // State is where the session's turn stands, in one word.
-func (o *Observation) State() string { return turnState(o.Session, o.Frontier) }
-
-// turnState is where a session's turn stands, the one answer every action
-// reads: working; done or idle; interrupted; error; blocked:permission,
-// blocked:question or blocked:auth. Claude Code's own registry says what
-// the session is doing the moment it changes: busy through a queued turn, a
-// compaction and an approved command, waiting on a prompt the moment it
-// opens, idle once a turn is over however it ended. The transcript then says
-// how it ended, and Rex what kind of prompt it waits on. Rex alone hears
-// only what a hook reports, which misses all of those; it decides only for a
-// Claude Code that keeps no such record.
-func turnState(s *session.Session, f turn.Frontier) string {
-	st := s.Status
-	switch s.Activity {
-	case "busy":
-		return "working"
-	case "waiting":
-		if st.State == "blocked" && st.Kind != "" && st.Kind != "auth" {
-			return "blocked:" + st.Kind
-		}
-		if strings.Contains(s.WaitingFor, "permission") {
-			return "blocked:permission"
-		}
-		return "blocked:question"
-	case "idle", "shell": // shell: idle at its prompt with a background job running
-		e := liveError(s, f)
-		switch {
-		case e != nil && e.Kind == "authentication_failed", st.State == "blocked" && st.Kind == "auth":
-			return "blocked:auth"
-		case e != nil:
-			return "error"
-		case f.Interrupted:
-			return "interrupted"
-		case f.Newest() == nil:
-			return "idle"
-		}
-		return "done"
-	}
-	// No registry status: fold what no hook reports into Rex's record.
-	open := st.State == "working" || st.State == "blocked" && st.Kind != "auth"
-	e := liveError(s, f)
-	switch {
-	case e != nil && e.Kind == "authentication_failed":
-		return "blocked:auth"
-	case e != nil && open:
-		return "error"
-	case f.Interrupted && open:
-		return "interrupted"
-	case st.State == "blocked" && st.Kind != "":
-		return "blocked:" + st.Kind
-	}
-	return st.State
-}
-
-// Turn is where the turn a session's newest prompt started stands: the one
-// answer to whether it is over, which a wait waits for, a hold lasts
-// through, and the notice's turn reaches before its step goes.
-type Turn struct {
-	State   string
-	Over    bool            // it ended: answered, on a prompt, an API error, an interrupt
-	Shells  int             // background shells started since the turn began, still running
-	Orphans int             // older background shells, left over and not waited on
-	Jobs    []session.Shell // the shells it started, still running
-}
-
-// turnOf reads a session's turn; shells started before since are not its.
-func (d *Driver) turnOf(s *session.Session, f turn.Frontier, since time.Time) Turn {
-	t := Turn{State: turnState(s, f)}
-	switch t.State {
-	case "working", "idle":
-	case "done":
-		t.Over = f.Answered()
-	default:
-		t.Over = true
-	}
-	for _, sh := range d.Host.Shells(s.Status.PID) {
-		if !since.IsZero() && sh.Started.Before(since) {
-			t.Orphans++
-		} else {
-			t.Shells++
-			t.Jobs = append(t.Jobs, sh)
-		}
-	}
-	return t
-}
-
-// waiting says the turn stopped on a prompt someone has to answer, a
-// rejected login aside, which only a relaunch moves.
-func (t Turn) waiting() bool {
-	return strings.HasPrefix(t.State, "blocked") && t.State != "blocked:auth"
-}
-
-// liveError is the API error that ended the newest prompt's turn, unless it
-// ended an earlier process: accounts share one transcript directory, so a
-// session resumed on another account reads the error that ended the one it
-// replaced, written before this process started.
-func liveError(s *session.Session, f turn.Frontier) *turn.APIError {
-	e := f.Error
-	switch {
-	case e == nil:
-		return nil
-	case !s.Started.IsZero():
-		if e.At.Before(s.Started) {
-			return nil
-		}
-	case s.Status.State == "idle" && s.Status.UpdatedAt.After(e.At):
-		return nil // Rex has heard the new process start since
-	}
-	return e
-}
+func (o *Observation) State() State { return turnState(o.Session, o.Frontier) }
 
 // target resolves a label in the batch or a block id to the session's
 // label and block, without reading the session.
@@ -300,7 +191,7 @@ func (d *Driver) observe(members []*batch.Member, ref string) (*Observation, err
 	if screen, err := d.Term.Capture(block, true); err == nil {
 		o.Input, o.Typed = turn.InputBox(screen)
 	}
-	if st := o.State(); strings.HasPrefix(st, "blocked") && st != "blocked:auth" && o.Input == turn.InputTyped {
+	if o.State().onPrompt() && o.Input == turn.InputTyped {
 		o.Input, o.Typed = turn.InputPrompt, "" // a prompt draws its options behind the box's ❯
 	}
 	return o, nil

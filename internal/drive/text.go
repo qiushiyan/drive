@@ -51,7 +51,7 @@ func (r *Responded) Text() string {
 	if r.Call != "" {
 		s += " (" + r.Call + ")"
 	}
-	return s + "; it now reads " + r.After + "\n"
+	return s + "; it now reads " + string(r.After) + "\n"
 }
 
 // Text is the line a watch prints.

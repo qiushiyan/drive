@@ -216,12 +216,12 @@ func (d *Driver) ready(o *Observation, opt SendOptions, step Step) error {
 		}
 		return &Refused{Reason: fmt.Sprintf("%s's login was rejected (account %s)%s", o.Label, o.Session.Account, msg),
 			Next: d.relaunch(o, step), account: o.Session.Account}
-	case strings.HasPrefix(state, "blocked"):
+	case state.onPrompt():
 		call := ""
 		if p := o.Frontier.Pending; p != nil {
 			call = fmt.Sprintf(" for %s: %s", p.Name, clip(p.Input, 120))
 		}
-		return &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt%s", o.Label, strings.TrimPrefix(state, "blocked:"), call),
+		return &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt%s", o.Label, state.promptKind(), call),
 			Next: "answer it first; " + d.answerNext(o.Label, view, state)}
 	case state == "working" && !opt.Queue:
 		queued := opt
@@ -246,7 +246,7 @@ func (d *Driver) ready(o *Observation, opt SendOptions, step Step) error {
 
 // answerNext says how to answer the prompt a session waits on, decided on
 // view: two whole commands, and on a question what each does there.
-func (d *Driver) answerNext(label, view, state string) string {
+func (d *Driver) answerNext(label, view string, state State) string {
 	approve, deny := d.run("respond", view, "approve"), d.run("respond", view, "deny")
 	if state == "blocked:question" {
 		return fmt.Sprintf("see the question and its options (%s); %s takes the option ❯ points at, %s dismisses the question and stops the turn, after which a step can answer it in words",
