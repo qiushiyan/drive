@@ -48,6 +48,14 @@ The first step a session gets in a batch carries the notice (`~/.agents/skills/d
 - **Nothing new reaches the transcript in time:** the send is `unknown`, and the message says whether the line still sits in the input box. A line left there blocks the next send until someone clears it, since it may be the owner's.
 - **The login was rejected:** a send to a session already showing it is refused; one whose step the rejection answers fails with exit 4; a wake for it ends the same way. Each prints the relaunch, close on the view the session stands at and open again on another account with `--resume` and the step it was last sent. The account offered is one this batch has not seen rejected, the primary among them under the launcher name `primary_name` gives (`internal/config`); with none left, the message says to tell the owner.
 
+## What a driver reads
+
+Every message drive prints is read by an agent, so drive's half of the division is exact: a result, refusal or failure that leaves something to do ends with `next:`, prose around whole commands that run as written on the session as it stands. Each command in it is built by `run` (`internal/drive/command.go`), which quotes every word, puts the driver's free text after the flags and behind `--` when it starts with a dash, since drive would read it as a flag, and names `--batch` when the action ran in a batch that is not the current one, since the driver's next command acts in the current batch. A command written into a message by hand skips all of that; `TestEveryCommandAMessageNamesExists` catches it, and any command or flag the grammar lacks.
+
+The exit status says what happened: 0 done, 1 refused with nothing done, 2 a command line drive could not use, 3 tried and did not end as asked, 4 a rejected login, whose `next:` is the relaunch. One runner in `cmd/drive/main.go` maps `*Refused` and a login `*Failed` for every command, so no command can let a refusal exit as a failure. Checks the grammar's tags cannot state run in each command's `Validate`, before the configuration loads, so help and usage errors work whatever state it is in.
+
+The grammar runs on clikit (`~/dev/clikit`): help is rendered from each command's declaration, and how an argv error reads and which errors are usage errors are clikit's, so a change there is a clikit release and a `go.mod` bump, reviewed through the help pages `TestHelp` pins (`make golden`). What a driver reads is a contract with the drive-session skill: `TestContracts` pins every command line the skill teaches, and each refusal and failure, byte for byte (`cmd/drive/testdata/contract`), and `--json` prints one document per command (`internal/drive/json.go`), each key named on that command's help page.
+
 ## Testing
 
 The suite drives a fake Rex and fake Claude Code sessions (`internal/testkit`) that write real transcript files and keep a registry status. A bug hides wherever the fake is kinder than the real thing, so it models what real sessions were seen to do:
@@ -57,7 +65,7 @@ The suite drives a fake Rex and fake Claude Code sessions (`internal/testkit`) t
 - **A resume** carries on in the shared transcript, on the account the launch names.
 - **A rejected login** answers with an API error row and no Stop.
 - **Typing** can lose a line's start to a line break, Enter can be lost, a send can be caught mid-typing (`TypeGate`), a prompt draws its options where the input box would be, and Rex can fail a read or a key (`StatusFails`, `KeyFails`).
-- **A watch name** already running is refused.
+- **A watch name** already running is refused, and one watch can fail to start while others do (`Watches.Refuse`).
 - **A closed block** leaves its transcript behind, as the real one does.
 
-`TestMain` points `HOME`, `DRIVE_STATE_DIR` and `DRIVE_CONFIG_DIR` at a temporary directory, so no test reaches live state. `cmd/drive/main_test.go` runs the command itself against the fake world through `newDriver`.
+`TestMain` points `HOME`, `DRIVE_STATE_DIR` and `DRIVE_CONFIG_DIR` at a temporary directory, so no test reaches live state. The command tests run drive as `main` does, through clikit's App with the driver's wiring bound to the fake world (`fake` in `cmd/drive/main_test.go`). The contract runs on a fixed clock (`NewClockAt`) under a home of its own, and each fake world counts its own transcript entries, so a view's hash, and the output that prints it, never depends on which tests ran first.
