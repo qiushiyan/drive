@@ -189,8 +189,8 @@ func TestACompactionsOutputIsItsAnswer(t *testing.T) {
 	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "/compact"}, drive.SendOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if rd, _ := r.d.Read("T1", drive.ReadLast, 1); !strings.Contains(rd.Text, "/compact finished") || !strings.Contains(rd.Text, "Compacted") {
-		t.Fatalf("read shows the compaction's output: %q", rd.Text)
+	if rd, _ := r.d.Read("T1", drive.ReadLast, 1); !strings.Contains(rd.Body, "/compact finished") || !strings.Contains(rd.Body, "Compacted") {
+		t.Fatalf("read shows the compaction's output: %q", rd.Body)
 	}
 }
 
@@ -204,10 +204,10 @@ func TestAClosedSessionIsReadFromItsTranscript(t *testing.T) {
 		t.Fatal(err)
 	}
 	rd, err := r.d.Read("T1", drive.ReadLast, 1)
-	if err != nil || rd.State != "closed" || !strings.Contains(rd.Text, "built --shout") || rd.View.Session != "" {
+	if err != nil || rd.State != "closed" || !strings.Contains(rd.Body, "built --shout") || rd.View.Session != "" {
 		t.Fatalf("its recap, read closed: %+v %v", rd, err)
 	}
-	if rd, err := r.d.Read("T1", drive.ReadUser, 1); err != nil || rd.Text != "recap" {
+	if rd, err := r.d.Read("T1", drive.ReadUser, 1); err != nil || rd.Body != "recap" {
 		t.Fatalf("its last prompt: %+v %v", rd, err)
 	}
 	if _, err := r.d.Read("T1", drive.ReadScreen, 1); !isRefused(err) || !strings.Contains(err.Error(), "drive read T1") {

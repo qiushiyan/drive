@@ -297,12 +297,12 @@ func TestALoginWakeRelaunchesWithTheLastStep(t *testing.T) {
 func TestABatchWakesItsOwnDriver(t *testing.T) {
 	r := newRig(t, "none")
 	r.d.Cfg.ConfigDir = filepath.Join(r.w.Root, "config")
-	meta := batch.Meta{Name: "b2", Started: r.w.Clock.Now(), Wake: "webhook", RexSession: "dogfood"}
-	if _, err := r.d.StartBatch(meta, "drive batch new b2 --wake webhook"); !isRefused(err) || !strings.Contains(err.Error(), "--webhook") {
+	opt := drive.BatchOptions{Name: "b2", Wake: "webhook", RexSession: "dogfood"}
+	if _, err := r.d.StartBatch(opt); !isRefused(err) || !strings.Contains(err.Error(), "--webhook") {
 		t.Fatalf("a webhook batch names its webhook: %v", err)
 	}
-	meta.Webhook = "drive-test"
-	if _, err := r.d.StartBatch(meta, "drive batch new b2 --wake webhook --webhook drive-test"); !isRefused(err) ||
+	opt.Webhook = "drive-test"
+	if _, err := r.d.StartBatch(opt); !isRefused(err) ||
 		!strings.Contains(err.Error(), filepath.Join("webhooks", "drive-test")) {
 		t.Fatalf("a webhook with no URL starts no batch, and says where it goes: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestABatchWakesItsOwnDriver(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.d.Cfg.Webhook = config.Webhook{URL: "http://127.0.0.1:9/another-driver"}
-	st, err := r.d.StartBatch(meta, "drive batch new b2 --wake webhook --webhook drive-test")
+	st, err := r.d.StartBatch(opt)
 	if err != nil || !st.RexStarted {
 		t.Fatalf("started, its Rex session with it: %+v %v", st, err)
 	}

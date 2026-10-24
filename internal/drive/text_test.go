@@ -1,10 +1,11 @@
-package main
+package drive_test
 
 import (
 	"strings"
 	"testing"
 
 	"github.com/qiushiyan/drive/internal/batch"
+	"github.com/qiushiyan/drive/internal/drive"
 )
 
 // drive log is the driver's memory after a reset: a timer's wake says which
@@ -19,7 +20,7 @@ func TestTheLogKeepsATimersNoteAndARespondsOutcome(t *testing.T) {
 		{batch.Event{Kind: batch.KindRespond, Session: "T2", Action: "approve", Call: "Bash: pnpm install", Outcome: "working"},
 			[]string{"approve", "pnpm install", "working"}},
 	} {
-		got := describe(c.e)
+		got := drive.Describe(c.e)
 		for _, w := range c.want {
 			if !strings.Contains(got, w) {
 				t.Errorf("a %s reads %q, without %q", c.e.Kind, got, w)

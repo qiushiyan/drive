@@ -34,7 +34,7 @@ type Reading struct {
 	Account string
 	Input   turn.InputKind
 	Typed   string
-	Text    string
+	Body    string // what was read: the reply, the prompts, the pending call or the screen
 	View    turn.View
 	At      time.Time       // when the text was written
 	Next    string          // what to run, where the state decides it
@@ -68,7 +68,7 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 		if err != nil {
 			return r, &Refused{Reason: fmt.Sprintf("%s's screen cannot be read: %v", o.Label, err), Next: fmt.Sprintf("try again: drive read %s --screen", o.Label)}
 		}
-		r.Text = lastLines(strings.TrimRight(screen, "\r\n "), 40)
+		r.Body = lastLines(strings.TrimRight(screen, "\r\n "), 40)
 		return r, nil
 	}
 	return r, d.readText(r, o.Frontier, mode, n)
@@ -117,28 +117,28 @@ func (d *Driver) readText(r *Reading, f turn.Frontier, mode ReadMode, n int) err
 			}
 			fmt.Fprintf(&b, "--- %s%s\n%s\n\n", p.At.In(d.zone()).Format("01-02 15:04"), q, promptText(p))
 		}
-		r.Text = strings.TrimRight(b.String(), "\n")
+		r.Body = strings.TrimRight(b.String(), "\n")
 	case ReadPending:
 		if f.Pending == nil {
 			return &Refused{Reason: fmt.Sprintf("%s has no tool call waiting", r.Label)}
 		}
-		r.Text = f.Pending.Name + ":\n" + f.Pending.Input
+		r.Body = f.Pending.Name + ":\n" + f.Pending.Input
 	case ReadUser:
 		p := f.Newest()
 		if p == nil {
 			return &Refused{Reason: fmt.Sprintf("%s has received no prompt yet", r.Label)}
 		}
-		r.Text, r.At = promptText(*p), p.At
+		r.Body, r.At = promptText(*p), p.At
 		if p.Queued {
-			r.Text = "(queued) " + r.Text
+			r.Body = "(queued) " + r.Body
 		}
 	default:
 		if f.Error != nil {
-			r.Text, r.At = fmt.Sprintf("[%s] %s", f.Error.Kind, f.Error.Text), f.Error.At
+			r.Body, r.At = fmt.Sprintf("[%s] %s", f.Error.Kind, f.Error.Text), f.Error.At
 		} else if a, local := f.Answer(); a != nil {
-			r.Text, r.At = answerText(f, a, local), a.At
+			r.Body, r.At = answerText(f, a, local), a.At
 		} else {
-			r.Text = "(no reply yet)"
+			r.Body = "(no reply yet)"
 		}
 	}
 	return nil

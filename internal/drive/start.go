@@ -1,6 +1,7 @@
 package drive
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -21,13 +22,41 @@ type Started struct {
 
 var webhookName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
+// BatchOptions is a batch as `drive batch new` names it. A zone or Rex
+// session it leaves out is the configuration's.
+type BatchOptions struct {
+	Name       string
+	Wake       string // webhook or none
+	Webhook    string // the chat driver's webhook file, for a batch that wakes one
+	RexSession string
+	TZ         string
+	AfterWake  []string
+}
+
+// command is the command that starts the batch, for a refusal to repeat.
+func (o BatchOptions) command() string {
+	words := []string{"drive", "batch", "new", shellQuote(o.Name)}
+	for _, f := range [][2]string{{"--webhook", o.Webhook}, {"--rex-session", o.RexSession}, {"--tz", o.TZ}} {
+		if f[1] != "" {
+			words = append(words, f[0], shellQuote(f[1]))
+		}
+	}
+	for _, c := range o.AfterWake {
+		words = append(words, "--after-wake", shellQuote(c))
+	}
+	return strings.Join(words, " ")
+}
+
 // StartBatch starts a batch and makes it current. A batch that wakes a chat
 // driver names that driver's webhook, which must hold a URL before the batch
 // starts, since every wake of it would otherwise fail unseen; the Rex
 // session its sessions open in runs once it starts; the batch before it
 // stops its watches, which would wake the driver about sessions it now drives
-// in this one. again is the command that starts it, for a refusal to repeat.
-func (d *Driver) StartBatch(m batch.Meta, again string) (*Started, error) {
+// in this one.
+func (d *Driver) StartBatch(opt BatchOptions) (*Started, error) {
+	again := opt.command()
+	m := batch.Meta{Name: opt.Name, Started: d.now(), Wake: opt.Wake, Webhook: opt.Webhook,
+		RexSession: cmp.Or(opt.RexSession, d.Cfg.RexSession), TZ: cmp.Or(opt.TZ, d.Cfg.TZ), AfterWake: opt.AfterWake}
 	if m.Wake == "webhook" {
 		dir := filepath.Join(d.Cfg.ConfigDir, "webhooks")
 		switch base := filepath.Base(m.Webhook); {
@@ -67,4 +96,23 @@ func (d *Driver) StartBatch(m batch.Meta, again string) (*Started, error) {
 		out.Stopped, _ = d.StopWatches(out.Prev)
 	}
 	return out, nil
+}
+
+// UseBatch makes a batch current.
+func (d *Driver) UseBatch(name string) error {
+	if err := d.Store.Use(name); err != nil {
+		return &Refused{Reason: err.Error()}
+	}
+	return nil
+}
+
+// Batches lists every batch, and names the current one.
+func (d *Driver) Batches() (metas []batch.Meta, current string, err error) {
+	if metas, err = d.Store.List(); err != nil {
+		return nil, "", err
+	}
+	if cur, _ := d.Store.Current(); cur != nil {
+		current = cur.Meta.Name
+	}
+	return metas, current, nil
 }

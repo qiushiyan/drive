@@ -247,7 +247,7 @@ func cmdSend(d *drive.Driver, argv []string) int {
 	}
 	sent, err := d.Send(a.pos[0], s, drive.SendOptions{Queue: a.on("queue"), Hold: a.str("hold"), Label: a.str("as"), NoWatch: a.on("no-watch")})
 	if sent != nil && sent.Outcome != "" {
-		printSent(sent)
+		fmt.Print(sent.Text())
 	}
 	if err != nil {
 		return fail(err)
@@ -273,33 +273,12 @@ func cmdOpen(d *drive.Driver, argv []string) int {
 	}
 	o, err := d.Open(a.pos[0], s, drive.OpenOptions{Dir: config.Expand(d.Cfg.Home, dir), Resume: a.str("resume"), Account: a.str("account"), Model: a.str("model"), Hold: a.str("hold")})
 	if o != nil {
-		fmt.Printf("opened %s in block %s on account %s (session %s)\n", o.Label, rex.Short(o.Block), o.Account, o.Session)
-		if o.Sent != nil && o.Sent.Outcome != "" {
-			printSent(o.Sent)
-		}
+		fmt.Print(o.Text())
 	}
 	if err != nil {
 		return fail(err)
 	}
 	return 0
-}
-
-func printSent(s *drive.Sent) {
-	what := s.Typed
-	if s.Path != "" {
-		what = s.Path
-	}
-	extra := ""
-	if s.Notice {
-		extra += ", notice first"
-	}
-	if s.From != "" {
-		extra += ", snippet from " + s.From
-	}
-	if s.Watched {
-		extra += "; wake armed"
-	}
-	fmt.Printf("%s %s: %s%s\n", s.Outcome, s.Label, what, extra)
 }
 
 func cmdRespond(d *drive.Driver, argv []string) int {
@@ -312,11 +291,7 @@ func cmdRespond(d *drive.Driver, argv []string) int {
 	}
 	r, err := d.Respond(a.pos[0], a.pos[1])
 	if r != nil {
-		fmt.Printf("%s %s", r.Action, r.Label)
-		if r.Call != "" {
-			fmt.Printf(" (%s)", r.Call)
-		}
-		fmt.Printf("; it now reads %s\n", r.After)
+		fmt.Print(r.Text())
 	}
 	if err != nil {
 		return fail(err)
@@ -332,10 +307,7 @@ func cmdWatch(d *drive.Driver, argv []string) int {
 	if a.on("due") {
 		armed, later, err := d.Due()
 		for _, r := range armed {
-			fmt.Printf("watching %s: %s\n", r.Label, r.Why)
-			if r.Failures >= 2 {
-				fmt.Printf("  %s's watch has ended without a wake %d times this batch; watches.log in the batch directory says why\n", r.Label, r.Failures)
-			}
+			fmt.Print(r.Text())
 		}
 		if err != nil {
 			return fail(err)
@@ -344,7 +316,7 @@ func cmdWatch(d *drive.Driver, argv []string) int {
 			fmt.Println("no session needs its wake armed")
 		}
 		for _, r := range later {
-			fmt.Printf("%s is %s: a run that acts on it first makes that moot\n", r.Label, r.Why)
+			fmt.Print(r.LaterText())
 		}
 		return 0
 	}
@@ -366,13 +338,7 @@ func cmdWatch(d *drive.Driver, argv []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	if w.Restarted {
-		fmt.Printf("%s's watch was stuck long after its turn ended; started it again\n", w.Label)
-	} else if w.Already {
-		fmt.Printf("%s is already watched\n", w.Label)
-	} else {
-		fmt.Printf("watching %s: the driver is woken when its turn ends\n", w.Label)
-	}
+	fmt.Print(w.Text())
 	return 0
 }
 

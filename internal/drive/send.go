@@ -304,63 +304,6 @@ func since(now, t time.Time) string {
 	return strings.TrimSuffix(d.String(), "0s")
 }
 
-// holdRefused is a send refused because another session holds what it needs.
-type holdRefused struct {
-	Refused
-	hold string
-	step Step
-	open string // for a refused open, the drive open to run once the hold is free
-}
-
-func (h *holdRefused) Unwrap() error { return &h.Refused }
-
-// holdNext is what the driver of a send or open refused on h does
-// meanwhile, from what keeps the hold: a turn ends by itself, a prompt waits
-// for its answer, and a job ends in its own time, its session usually going
-// on after it. view is the refused session's when it can be parked, "" for an
-// open or a session outside the batch; retry is the refused command.
-func holdNext(b *batch.Batch, h heldBy, label, view, retry string, open bool) string {
-	var next string
-	if b.Meta.Wake != "webhook" {
-		wait := fmt.Sprintf("wait for %s's turn to end (drive wait %s)", h.Session, h.Session)
-		switch {
-		case h.prompt:
-			wait = fmt.Sprintf("answer %s's prompt (drive read %s --pending), %s", h.Session, h.Session, wait)
-		case h.job != nil:
-			wait = fmt.Sprintf("wait for %s, which usually goes on once its job ends (drive wait %s)", h.Session, h.Session)
-		}
-		again := "send this again: "
-		if open {
-			again = "open it: "
-		}
-		next = wait + ", then " + again + retry
-	} else {
-		names := fmt.Sprintf("names %s as waiting for %s", label, h.Name)
-		if open {
-			names = "prints this open: " + retry
-		}
-		others := "nothing else wakes you"
-		switch {
-		case h.prompt:
-			next = fmt.Sprintf("%s waits on a prompt, so answer it first (drive read %s --pending); its wake comes when its turn then ends and %s", h.Session, h.Session, names)
-		case h.job != nil && open:
-			next = fmt.Sprintf("nothing to run now: %s usually goes on once its job ends, and the wake of that turn, which drive watch --due arms, %s", h.Session, names)
-		case h.job != nil:
-			next, others = h.Session+" usually goes on once its job ends", "nothing wakes you"
-		default:
-			next = fmt.Sprintf("%s's wake comes when its turn ends and %s", h.Session, names)
-		}
-		if view != "" {
-			next += fmt.Sprintf("; %s for %s, so park it meanwhile: drive park %s %s; drive watch --due wakes it once %s is free",
-				others, label, view, shellQuote("waits for "+h.Name+", held by "+h.Session), h.Name)
-		}
-	}
-	if h.job != nil {
-		next += fmt.Sprintf("; if that job should have ended, have %s stop it: %s", h.Session, stopJob(h.Session, h.view, *h.job))
-	}
-	return next
-}
-
 // stepArgs is a step as drive send and drive open take it.
 func stepArgs(s Step) string {
 	switch {

@@ -414,8 +414,8 @@ func TestTypedInputIsLeftAlone(t *testing.T) {
 	if !isRefused(err) || !strings.Contains(err.Error(), "drive read "+c.Block[len(c.Block)-6:]+" --screen") {
 		t.Fatalf("a screen with no input box stops the send, saying how to see it: %v", err)
 	}
-	if rd, _ := r.d.Read(c.Block[len(c.Block)-6:], drive.ReadScreen, 0); !strings.Contains(rd.Text, "Transcript view") {
-		t.Fatalf("read --screen shows it: %q", rd.Text)
+	if rd, _ := r.d.Read(c.Block[len(c.Block)-6:], drive.ReadScreen, 0); !strings.Contains(rd.Body, "Transcript view") {
+		t.Fatalf("read --screen shows it: %q", rd.Body)
 	}
 	if typed, _ := c.Seen(); len(typed) != 0 {
 		t.Fatalf("nothing typed: %q", typed)

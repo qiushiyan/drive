@@ -39,7 +39,8 @@ type Config struct {
 	LaunchEnv map[string]string `toml:"launch_env"`
 	// Notice is the text a session reads before the first step drive sends it.
 	Notice string `toml:"notice"`
-	// RexSession is where new batches open their sessions; empty is Rex's default.
+	// RexSession is where new batches open their sessions: $REX_SESSION when
+	// unset, and Rex's default when that is empty too.
 	RexSession string `toml:"rex_session"`
 	// TZ is the zone times are shown in, such as "Europe/London"; empty is local.
 	TZ string `toml:"tz"`
@@ -76,6 +77,9 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("%s does not load, so none of its settings can be trusted: %w", path, err)
 	}
 	c.Notice = Expand(home, c.Notice)
+	if c.RexSession == "" {
+		c.RexSession = os.Getenv("REX_SESSION") // the Rex session drive runs in
+	}
 	c.Webhook, err = readWebhook(filepath.Join(c.ConfigDir, "webhook"))
 	return c, err
 }
