@@ -102,22 +102,6 @@ func TestALostEnterIsNotTakenForAnArrival(t *testing.T) {
 	}
 }
 
-// Typing Enter into a permission prompt answers it.
-func TestQueueNeverTypesIntoAPrompt(t *testing.T) {
-	r := newRig(t, "none")
-	c := adopted(t, r, "T1")
-	c.Busy("clean up")
-	c.Ask("rm -rf build")
-	typed0, keys0 := c.Seen()
-	_, err := r.d.Send(r.view("T1"), drive.Step{Line: "also this"}, drive.SendOptions{Queue: true})
-	if !isRefused(err) || !strings.Contains(err.Error(), "permission") {
-		t.Fatalf("a session on a permission prompt takes no send, queued or not: %v", err)
-	}
-	if typed, keys := c.Seen(); len(typed) != len(typed0) || len(keys) != len(keys0) {
-		t.Fatalf("nothing typed or pressed: %q %q", typed, keys)
-	}
-}
-
 func TestANoticeTurnThatStopsOnAPromptHoldsTheStep(t *testing.T) {
 	r := newRig(t, "none")
 	c := r.w.Add("T1")
@@ -439,27 +423,6 @@ func TestMetricsCountAMergedChangeOnce(t *testing.T) {
 	}
 	if m.Unread != 1 {
 		t.Fatalf("a session whose progress could not be read is counted, so the measure says it is incomplete: %+v", m.Unread)
-	}
-}
-
-func TestRespondAndCloseAreRecorded(t *testing.T) {
-	r := newRig(t, "none")
-	c := adopted(t, r, "T1")
-	c.Busy("clean up")
-	c.Ask("rm -rf node_modules/.vite")
-	if _, err := r.d.Respond(r.view("T1"), "approve"); err != nil {
-		t.Fatal(err)
-	}
-	ev := r.events(batch.KindRespond)
-	if len(ev) != 1 || ev[0].Action != "approve" || !strings.Contains(ev[0].Call, "node_modules/.vite") {
-		t.Fatalf("an approval is recorded with what it approved: %+v", ev)
-	}
-	c.Done("cleaned")
-	if err := r.d.Close(r.view("T1")); err != nil {
-		t.Fatal(err)
-	}
-	if ev := r.events(batch.KindClose); len(ev) != 1 || ev[0].Session != "T1" {
-		t.Fatalf("a close is recorded: %+v", ev)
 	}
 }
 

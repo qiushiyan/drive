@@ -64,19 +64,31 @@ func TestAnApprovedCommandThatRunsLongReadsWorking(t *testing.T) {
 	}
 }
 
-// A permission prompt opens seconds before Rex hears of it; a queued line
-// typed then would answer it.
-func TestAPromptRexHasNotHeardOfTakesNoStep(t *testing.T) {
-	r := newRig(t, "none")
-	c := adopted(t, r, "T1")
-	c.Busy("deploy the lab host")
-	c.AskQuietly("terraform apply")
-	_, err := r.d.Send(r.view("T1"), drive.Step{Line: "also update the changelog"}, drive.SendOptions{Queue: true})
-	if !isRefused(err) || !strings.Contains(err.Error(), "prompt") {
-		t.Fatalf("a send to a session on a prompt is refused, queued or not: %v", err)
-	}
-	if typed, _ := c.Seen(); len(without(typed, "Read ")) != 1 {
-		t.Fatalf("nothing is typed into the prompt: %q", typed)
+// Enter typed into a permission prompt answers it, so nothing goes into
+// one, --queue or not, whether Rex has heard of the prompt or, in its first
+// seconds, only the registry has: turnState reads them on different lines.
+func TestNothingIsTypedIntoAPrompt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ask  func(c *testkit.Claude, command string)
+	}{
+		{"Rex told", (*testkit.Claude).Ask},
+		{"Rex not told yet", (*testkit.Claude).AskQuietly},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t, "none")
+			c := adopted(t, r, "T1")
+			c.Busy("deploy the lab host")
+			tc.ask(c, "terraform apply")
+			typed0, keys0 := c.Seen()
+			_, err := r.d.Send(r.view("T1"), drive.Step{Line: "also update the changelog"}, drive.SendOptions{Queue: true})
+			if !isRefused(err) || !strings.Contains(err.Error(), "permission prompt") {
+				t.Fatalf("refused: %v", err)
+			}
+			if typed, keys := c.Seen(); len(typed) != len(typed0) || len(keys) != len(keys0) {
+				t.Fatalf("nothing typed or pressed: %q %q", typed[len(typed0):], keys[len(keys0):])
+			}
+		})
 	}
 }
 

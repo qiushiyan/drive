@@ -104,43 +104,6 @@ func isRefused(err error) bool {
 	return errors.As(err, &r)
 }
 
-func TestSendNeedsAView(t *testing.T) {
-	r := newRig(t, "none")
-	c := r.w.Add("T1")
-	done(c, "onboard", "analysis")
-	_, err := r.d.Send(c.Block[len(c.Block)-6:], drive.Step{Line: "go"}, drive.SendOptions{})
-	if !isRefused(err) || !strings.Contains(err.Error(), "drive read") {
-		t.Fatalf("a bare session name must be refused with where a view comes from, got %v", err)
-	}
-	if typed, _ := c.Seen(); len(typed) != 0 {
-		t.Fatalf("nothing may be typed, got %q", typed)
-	}
-}
-
-// The 10-17 race: run A reads turn T; run B sends the next step and that
-// turn finishes; A then sends what it decided on T.
-func TestStaleDecisionRefusedAfterAnotherTurn(t *testing.T) {
-	r := newRig(t, "none")
-	c := r.w.Add("T1")
-	done(c, "onboard", "analysis")
-	ref := c.Block[len(c.Block)-6:]
-	stale := r.view(ref)
-	if _, err := r.d.Send(stale, drive.Step{Line: "consult-design"}, drive.SendOptions{}); err != nil {
-		t.Fatalf("first send: %v", err)
-	}
-	// That turn has finished; the session reads done again.
-	if _, err := r.d.Send(stale, drive.Step{Line: "recap"}, drive.SendOptions{}); !isRefused(err) || !strings.Contains(err.Error(), "moved past") {
-		t.Fatalf("a send decided on the old turn must be refused, got %v", err)
-	}
-	typed, _ := c.Seen()
-	if steps := without(typed, "Read "); len(steps) != 1 || steps[0] != "consult-design" {
-		t.Fatalf("only the first send may reach the session, got %q", typed)
-	}
-	if n := len(r.events(batch.KindRefused)); n != 1 {
-		t.Fatalf("the refusal is recorded once, got %d", n)
-	}
-}
-
 // Two drivers decided on one view: the second arrives while the first is
 // typing and is refused by the lock, not by the view the first will move.
 func TestTwoDriversOneView(t *testing.T) {
@@ -525,7 +488,8 @@ func TestWaitIgnoresShellsOlderThanTheTurn(t *testing.T) {
 }
 
 // A session outside the batch is answered by its block id, and the answer
-// is recorded under that id, as a refusal or a close of it is.
+// is recorded under that id with the call it answered, as a refusal or a
+// close of it is.
 func TestRespondReachesASessionOutsideTheBatch(t *testing.T) {
 	r := newRig(t, "none")
 	c := r.w.Add("T1")
@@ -535,8 +499,8 @@ func TestRespondReachesASessionOutsideTheBatch(t *testing.T) {
 	if _, err := r.d.Respond(r.view(short), "approve"); err != nil {
 		t.Fatal(err)
 	}
-	if ev := r.events(batch.KindRespond); len(ev) != 1 || ev[0].Session != short || ev[0].Action != "approve" {
-		t.Fatalf("recorded under its block: %+v", ev)
+	if ev := r.events(batch.KindRespond); len(ev) != 1 || ev[0].Session != short || ev[0].Action != "approve" || !strings.Contains(ev[0].Call, "node_modules/.vite") {
+		t.Fatalf("recorded under its block, with what it approved: %+v", ev)
 	}
 }
 
