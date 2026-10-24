@@ -282,10 +282,13 @@ func TestLostHeadIsRetyped(t *testing.T) {
 			c := adopted(t, r, "T1")
 			c.Edit(func(c *testkit.Claude) {
 				c.DropHead = 3
-				// The garbled prompt starts a turn that runs on, as a real one would.
+				// The garbled prompt starts a turn that runs on, as a real one
+				// would, while Rex still reads the turn before's done.
 				c.Reply = func(c *testkit.Claude, p string) {
 					if !strings.HasPrefix(p, "\n") {
 						c.Done("ok")
+					} else {
+						c.RexOnly("done", "", "")
 					}
 				}
 			})
@@ -305,11 +308,14 @@ func TestLostHeadIsRetyped(t *testing.T) {
 }
 
 // Ctrl+C stops whatever turn runs: once the garbled turn has ended, drive
-// leaves it and says so.
+// leaves it and says so, though Rex has not heard it end.
 func TestAGarbledTurnThatEndedIsNotTakenBack(t *testing.T) {
 	r := newRig(t, "none")
 	c := adopted(t, r, "T1")
-	c.Edit(func(c *testkit.Claude) { c.DropHead = 3 })
+	c.Edit(func(c *testkit.Claude) {
+		c.DropHead = 3
+		c.Reply = func(c *testkit.Claude, _ string) { c.Done("ok"); c.RexOnly("working", "", "") }
+	})
 	sent, err := r.d.Send(r.view("T1"), drive.Step{Line: "/pl-loopy-handoff-distill merged and deployed"}, drive.SendOptions{})
 	if err == nil || sent == nil || sent.Outcome != "garbled" || !strings.Contains(err.Error(), "drive read T1") {
 		t.Fatalf("a garbled turn that already ended is reported, not retyped: %+v %v", sent, err)

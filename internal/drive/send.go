@@ -627,9 +627,12 @@ func (d *Driver) deliver(o *Observation, line string) (string, error) {
 	// Take the garbled turn back only while it is the one running: Ctrl+C
 	// stops whatever turn is, and once that turn ended its work is done.
 	block := o.Session.Block
-	f, ferr := o.Session.Frontier()
-	st, serr := d.Term.Status(block)
-	if p := f.Newest(); ferr != nil || serr != nil || st == nil || p == nil || p.ID != got.ID || p.Queued || st.State != "working" {
+	s, err := session.Locate(d.Term, d.Host, block)
+	var f turn.Frontier
+	if err == nil {
+		f, err = s.Frontier()
+	}
+	if p := f.Newest(); err != nil || p == nil || p.ID != got.ID || p.Queued || turnState(s, f) != "working" {
 		return "garbled", &Failed{What: fmt.Sprintf("%s received the line without its start (%q), and that turn is not one drive can take back", o.Label, clip(got.Text, 120)),
 			Next: fmt.Sprintf("read what it made of it (%s) before sending the step again", d.run("read", o.Label))}
 	}
