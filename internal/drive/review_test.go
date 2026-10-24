@@ -653,21 +653,24 @@ func TestASendWhoseWakeFailsSaysSo(t *testing.T) {
 // the old watch is still posting arms a new one.
 func TestASendDuringAWakeArmsAFreshWatch(t *testing.T) {
 	r := newRig(t, "webhook")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	var seen, freed sync.Once
+	posting, release := make(chan struct{}), make(chan struct{})
+	free := func() { freed.Do(func() { close(release) }) }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		seen.Do(func() { close(posting) })
+		<-release
+	}))
 	defer srv.Close()
+	defer free() // a failing check lets the post finish rather than hang the test
 	r.d.Cfg.Webhook = config.Webhook{URL: srv.URL}
-	c := r.w.Add("T1")
-	done(c, "onboard", "analysis")
-	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "go"}, drive.SendOptions{Label: "T1"}); err != nil {
-		t.Fatal(err)
-	}
-	name := "drive-b1-" + c.Block[len(c.Block)-6:]
-	if !r.watches.Alive(name) {
-		t.Fatalf("armed as %s: %v", name, r.watches.Running)
-	}
-	if _, err := r.d.Notify(name, "T1", time.Second, time.Minute); err != nil {
-		t.Fatal(err)
-	}
+	c := adopted(t, r, "T1")
+	name := watchOf(c)
+	woke := make(chan error, 1)
+	go func() {
+		_, err := r.d.Notify(name, "T1", time.Second, time.Minute)
+		woke <- err
+	}()
+	<-posting
 	if r.watches.Alive(name) {
 		t.Fatal("the watch retired before it posted")
 	}
@@ -675,7 +678,11 @@ func TestASendDuringAWakeArmsAFreshWatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !r.watches.Alive(name) || len(r.events(batch.KindWatch)) != 2 {
-		t.Fatal("the next send armed a fresh watch")
+		t.Fatal("the send made while the wake posted armed a fresh watch")
+	}
+	free()
+	if err := <-woke; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -889,39 +896,6 @@ func TestAHoldLastsWhileItsTurnsShellRuns(t *testing.T) {
 	if _, err := r.d.Send(r.view("T5"), drive.Step{Line: "merge-when-ready"}, drive.SendOptions{Hold: "release"}); err != nil {
 		t.Fatalf("free once they end: %v", err)
 	}
-}
-
-// A detached watch is a real process outside any terminal: it runs, a second
-// one by its name is refused, Retire takes only its own off the books, and
-// Stop ends it.
-func TestADetachedWatchRunsAndStops(t *testing.T) {
-	w := drive.Detached{Dir: t.TempDir()}
-	log := filepath.Join(t.TempDir(), "watches.log")
-	if err := w.Start("drive-test", []string{"/bin/sleep", "30"}, log); err != nil {
-		t.Fatal(err)
-	}
-	if !w.Alive("drive-test") {
-		t.Fatal("the watch runs")
-	}
-	if err := w.Start("drive-test", []string{"/bin/sleep", "30"}, log); err == nil {
-		t.Fatal("a second watch by one name is refused")
-	}
-	if w.Retire("drive-test") {
-		t.Fatal("only the watch's own process retires it")
-	}
-	if err := w.Stop("drive-test"); err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 100 && w.Alive("drive-test"); i++ {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if w.Alive("drive-test") {
-		t.Fatal("stopped")
-	}
-	if err := w.Start("drive-test", []string{"/bin/sleep", "30"}, log); err != nil {
-		t.Fatalf("the name is free again: %v", err)
-	}
-	_ = w.Stop("drive-test")
 }
 
 // A queued line that lost its start waits behind the session's own turn:

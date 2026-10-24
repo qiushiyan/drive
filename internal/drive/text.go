@@ -252,13 +252,13 @@ func LogText(b *batch.Batch, evs []batch.Event, now time.Time) string {
 	var out strings.Builder
 	zone := b.Zone()
 	for _, e := range evs {
-		fmt.Fprintf(&out, "%s  %-12s %-8s %s\n", clock(e.At, zone, now), e.Kind, e.Session, Describe(e))
+		fmt.Fprintf(&out, "%s  %-12s %-8s %s\n", clock(e.At, zone, now), e.Kind, e.Session, describe(e))
 	}
 	return out.String()
 }
 
-// Describe is an event as the log tells it.
-func Describe(e batch.Event) string {
+// describe is an event as the log tells it.
+func describe(e batch.Event) string {
 	switch e.Kind {
 	case batch.KindSend:
 		s := e.Outcome + ": " + clip(e.Text, 100)

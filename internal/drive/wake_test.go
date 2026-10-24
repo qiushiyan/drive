@@ -239,8 +239,8 @@ func TestAKeyRexRefusedArmsNoWake(t *testing.T) {
 	c.Busy("build")
 	c.Ask("make build")
 	r.w.KeyFails = 1
-	if _, err := r.d.Respond(r.view("T1"), "approve"); err == nil {
-		t.Fatal("the failed press is reported")
+	if _, err := r.d.Respond(r.view("T1"), "approve"); !isRefused(err) {
+		t.Fatalf("a press Rex refused is a refusal, nothing done: %v", err)
 	}
 	if r.watches.Alive(watchOf(c)) {
 		t.Fatal("nothing reached the session, so nothing is armed")

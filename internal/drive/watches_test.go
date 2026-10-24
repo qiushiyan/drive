@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -91,4 +92,47 @@ func decoy(t *testing.T, argv []string) (pid int, ended <-chan struct{}) {
 	go func() { _ = cmd.Wait(); close(done) }()
 	t.Cleanup(func() { _ = cmd.Process.Kill(); <-done })
 	return cmd.Process.Pid, done
+}
+
+// A detached watch is a real process outside any terminal: it runs, a second
+// one by its name is refused, Retire takes only its own off the books, and
+// Stop ends its process, not only its pidfile.
+func TestADetachedWatchRunsAndStops(t *testing.T) {
+	w := drive.Detached{Dir: t.TempDir()}
+	log := filepath.Join(t.TempDir(), "watches.log")
+	if err := w.Start("drive-test", []string{"/bin/sleep", "30"}, log); err != nil {
+		t.Fatal(err)
+	}
+	if !w.Alive("drive-test") {
+		t.Fatal("the watch runs")
+	}
+	if err := w.Start("drive-test", []string{"/bin/sleep", "30"}, log); err == nil {
+		t.Fatal("a second watch by one name is refused")
+	}
+	if w.Retire("drive-test") {
+		t.Fatal("only the watch's own process retires it")
+	}
+	own, _ := os.ReadFile(filepath.Join(w.Dir, "drive-test.pid"))
+	pid, _ := strconv.Atoi(strings.SplitN(string(own), "\n", 2)[0])
+	if err := w.Stop("drive-test"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 100 && !exited(pid); i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if w.Alive("drive-test") || !exited(pid) {
+		t.Fatalf("stopped: process %d still runs", pid)
+	}
+	if err := w.Start("drive-test", []string{"/bin/sleep", "30"}, log); err != nil {
+		t.Fatalf("the name is free again: %v", err)
+	}
+	_ = w.Stop("drive-test")
+}
+
+// exited says process pid has ended: gone, or a zombie its parent, this
+// test, has not reaped.
+func exited(pid int) bool {
+	out, _ := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	stat := strings.TrimSpace(string(out))
+	return stat == "" || strings.HasPrefix(stat, "Z")
 }

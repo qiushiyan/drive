@@ -3,6 +3,7 @@ package drive_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/drive"
@@ -20,7 +21,7 @@ func TestTheLogKeepsATimersNoteAndARespondsOutcome(t *testing.T) {
 		{batch.Event{Kind: batch.KindRespond, Session: "T2", Action: "approve", Call: "Bash: pnpm install", Outcome: "working"},
 			[]string{"approve", "pnpm install", "working"}},
 	} {
-		got := drive.Describe(c.e)
+		got := drive.LogText(&batch.Batch{}, []batch.Event{c.e}, time.Now())
 		for _, w := range c.want {
 			if !strings.Contains(got, w) {
 				t.Errorf("a %s reads %q, without %q", c.e.Kind, got, w)
