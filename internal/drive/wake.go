@@ -65,12 +65,12 @@ func (d *Driver) Watch(ref string) (*Watched, error) {
 	}
 	if b.Meta.Wake != "webhook" {
 		return nil, &Refused{Reason: fmt.Sprintf("batch %s wakes no one (wake: %s)", b.Meta.Name, b.Meta.Wake),
-			Next: "wait for it yourself, in the background: drive wait " + ref}
+			Next: "wait for it yourself, in the background: " + d.run("wait", ref)}
 	}
 	if err := d.canPost(b); err != nil {
 		var nw *noWebhook
 		errors.As(err, &nw)
-		return nil, &Refused{Reason: err.Error(), Next: nw.next("drive watch " + ref)}
+		return nil, &Refused{Reason: err.Error(), Next: nw.next(d.run("watch", ref))}
 	}
 	evs, err := b.Events()
 	if err != nil {
@@ -231,7 +231,7 @@ func (d *Driver) Timer(after time.Duration, note string) error {
 	if err := d.canPost(b); err != nil {
 		var nw *noWebhook
 		errors.As(err, &nw)
-		return &Refused{Reason: err.Error(), Next: nw.next("drive timer " + secs + " " + note)}
+		return &Refused{Reason: err.Error(), Next: nw.next(d.run("timer", secs, text(note)))}
 	}
 	name := timerName(b, note)
 	if d.Watches.Alive(name) {
@@ -329,7 +329,8 @@ func (d *Driver) Wake(label string, e *Ending, note string) error {
 				again = fmt.Sprintf("posted again: nothing was done after its wake at %s\n", m.Woken.In(b.Zone()).Format("15:04"))
 			}
 		}
-		payload["output"] = tail(again+e.Text()+d.waiterLines(b, e.Label), 6000)
+		e.Waiting = d.waiterLines(b, e.Label) // ahead of next:, which the wake ends on
+		payload["output"] = tail(again+e.Text(), 6000)
 		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindPosting, Session: label, Block: e.Block, View: view})
 	} else {
 		payload["kind"], payload["output"] = "timer", "timer done: "+note

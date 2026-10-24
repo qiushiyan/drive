@@ -28,6 +28,9 @@ type Ending struct {
 	View    turn.View
 	Account string
 	Next    string // what the driver does about it, where the ending decides that
+	// Waiting names the sessions waiting on a hold it held, each with the
+	// send to run once the hold is free: a wake sets it.
+	Waiting string
 }
 
 // Wait blocks until a session's turn ends and has stayed ended for quiet: it
@@ -56,7 +59,7 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 				continue
 			}
 			return &Ending{Label: ref, State: "gone", Msg: r.Reason,
-				Next: fmt.Sprintf("drive status lists what runs; if %s still runs there, watch it again: drive watch %s", ref, ref)}, nil
+				Next: fmt.Sprintf("%s lists what runs; if %s still runs there, watch it again: %s", d.run("status"), ref, d.run("watch", ref))}, nil
 		}
 		misses = 0
 		st := o.Session.Status
@@ -108,14 +111,14 @@ func (d *Driver) nextFor(o *Observation, state string, jobs []session.Shell) str
 	case state == "blocked:auth":
 		return d.relaunchHint(o)
 	case strings.HasPrefix(state, "blocked"):
-		return answerNext(o.Label, o.View.String(), state)
+		return d.answerNext(o.Label, o.View.String(), state)
 	case state == "error" && o.Frontier.Error != nil && o.Frontier.Error.Kind == "rate_limit":
 		back := "read it again after the reset to see it under way"
 		if webhook, _ := d.wakes(o.Session.Block); webhook {
-			back = "drive watch --due arms its wake once it is under way again"
+			back = d.run("watch", "--due") + " arms its wake once it is under way again"
 		}
-		return fmt.Sprintf("if its screen says it continues automatically once the limit resets (drive read %s --screen), leave it: the turn resumes by itself, and %s; otherwise %s",
-			o.Label, back, d.retryHint(o, "rate_limit"))
+		return fmt.Sprintf("if its screen says it continues automatically once the limit resets (%s), leave it: the turn resumes by itself, and %s; otherwise %s",
+			d.run("read", o.Label, "--screen"), back, d.retryHint(o, "rate_limit"))
 	case state == "error":
 		kind := ""
 		if o.Frontier.Error != nil {
@@ -123,14 +126,14 @@ func (d *Driver) nextFor(o *Observation, state string, jobs []session.Shell) str
 		}
 		return d.retryHint(o, kind)
 	case state == "interrupted":
-		return fmt.Sprintf("its turn was interrupted; read where it stopped (drive read %s) before its next step", o.Label)
+		return fmt.Sprintf("its turn was interrupted; read where it stopped (%s) before its next step", d.run("read", o.Label))
 	case state == "done" && len(jobs) > 0:
-		again := "watch it again (drive watch " + o.Label + ")"
+		again := "watch it again (" + d.run("watch", o.Label) + ")"
 		if webhook, _ := d.wakes(o.Session.Block); !webhook {
-			again = "wait for it again (drive wait " + o.Label + ")"
+			again = "wait for it again (" + d.run("wait", o.Label) + ")"
 		}
 		return fmt.Sprintf("if the reply says it waits on its job, %s; if the job should have ended, have the session stop it: %s; otherwise send its next step",
-			again, stopJob(o.Label, o.View.String(), jobs[0]))
+			again, d.stopJob(o.View.String(), jobs[0]))
 	}
 	return ""
 }
@@ -177,6 +180,7 @@ func (e *Ending) Text() string {
 	if e.Screen != "" {
 		fmt.Fprintf(&b, "--- screen (end) ---\n%s\n", e.Screen)
 	}
+	b.WriteString(e.Waiting)
 	if e.View.Session != "" {
 		fmt.Fprintf(&b, "view: %s\n", e.View)
 	}

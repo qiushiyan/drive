@@ -835,7 +835,7 @@ func TestHoldWaitersAreListedAndTheRefusalSaysHowBack(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		body, _ := io.ReadAll(req.Body)
 		if !strings.Contains(string(body), "which T5s held: T3s") || !strings.Contains(string(body), "drive send T3s@") ||
-			!strings.Contains(string(body), " release --hold release") {
+			!strings.Contains(string(body), "--hold release release") {
 			t.Errorf("the holder's wake names who waits for what it held: %s", body)
 		}
 		w.WriteHeader(204)

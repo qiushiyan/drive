@@ -66,7 +66,7 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 	if mode == ReadScreen {
 		screen, err := d.Term.Capture(o.Session.Block, false)
 		if err != nil {
-			return r, &Refused{Reason: fmt.Sprintf("%s's screen cannot be read: %v", o.Label, err), Next: fmt.Sprintf("try again: drive read %s --screen", o.Label)}
+			return r, &Refused{Reason: fmt.Sprintf("%s's screen cannot be read: %v", o.Label, err), Next: "try again: " + d.run("read", o.Label, "--screen")}
 		}
 		r.Body = lastLines(strings.TrimRight(screen, "\r\n "), 40)
 		return r, nil
@@ -84,11 +84,11 @@ func (d *Driver) readEnded(m *batch.Member, state string, mode ReadMode, n int) 
 	}
 	if path == "" {
 		return nil, &Refused{Reason: fmt.Sprintf("%s is %s, and no transcript of its session (%s) is found", m.Label, state, m.SID),
-			Next: "drive log has what was sent to it and how each step went"}
+			Next: d.run("log") + " has what was sent to it and how each step went"}
 	}
 	if mode == ReadScreen || mode == ReadPending {
 		return nil, &Refused{Reason: fmt.Sprintf("%s is %s: it has no screen and no prompt waiting", m.Label, state),
-			Next: "read its transcript as it ended: drive read " + m.Label}
+			Next: "read its transcript as it ended: " + d.run("read", m.Label)}
 	}
 	f, err := turn.ReadFile(path)
 	if err != nil {
@@ -286,12 +286,12 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 				if w.Name != name {
 					continue
 				}
-				waiting = append(waiting, fmt.Sprintf("%s (refused %s at %s)", w.Session, clip(w.Command(), 60), w.Since.In(out.Zone).Format("15:04")))
+				waiting = append(waiting, fmt.Sprintf("%s (refused %s at %s)", w.Session, clip(join(stepWords(refusedStep(w))...), 60), w.Since.In(out.Zone).Format("15:04")))
 				// A parked waiter whose hold is free wakes no one unless its watch is armed again.
 				for i := range out.Rows {
 					if r := &out.Rows[i]; !held && r.Label == w.Session && strings.HasPrefix(r.Watch, "parked") {
 						r.Due = "waits for " + name + ", which is free"
-						r.Watch += "; " + name + " is free now, and drive watch --due wakes it"
+						r.Watch += "; " + name + " is free now, and " + d.run("watch", "--due") + " wakes it"
 					}
 				}
 			}
@@ -341,7 +341,7 @@ func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, zone *time.Locat
 	case m.Parked != "":
 		return "parked: " + m.Parked, false, "", again
 	case alive && stuck(r.State, d.now().Add(-r.For), m.Watched, d.now()):
-		return fmt.Sprintf("armed, but its turn ended %s ago: stuck (drive watch %s restarts it)", ago(r.For), m.Label), false, "stuck", again
+		return fmt.Sprintf("armed, but its turn ended %s ago: stuck (%s restarts it)", ago(r.For), d.run("watch", m.Label)), false, "stuck", again
 	case alive:
 		return "armed", false, "", again
 	case m.Posting.After(m.Watched) && m.Posting.After(m.Woken) && m.Posting.After(m.WakeFailed):
@@ -361,7 +361,7 @@ func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, zone *time.Locat
 			due = "woken " + ago(d.now().Sub(m.Woken)) + " ago with nothing done since"
 		default:
 			again = m.Woken.Add(repostAfter)
-			word += "; drive watch --due posts it again from " + again.In(zone).Format("15:04")
+			word += "; " + d.run("watch", "--due") + " posts it again from " + again.In(zone).Format("15:04")
 		}
 		return word + ")", true, due, again
 	case woken:

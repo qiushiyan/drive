@@ -215,34 +215,6 @@ type Hold struct {
 	Open    bool   // the refused action was an open: Step is the drive open to run
 }
 
-// Command is the refused step as drive send takes it, or for a refused
-// open the whole drive open.
-func (h Hold) Command() string {
-	switch {
-	case h.Open:
-		return h.Step
-	case h.Key != "":
-		return strings.TrimSpace("--snippet " + h.Key + " " + shellWords(h.Step))
-	case h.Path != "":
-		return "--file " + shellQuote(h.Path)
-	}
-	return shellQuote(h.Step)
-}
-
-func shellWords(s string) string {
-	if s == "" {
-		return ""
-	}
-	return shellQuote(s)
-}
-
-func shellQuote(s string) string {
-	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@._-/=") == "" {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
 // Holds lists the newest taking of each hold. A send that failed before it
 // reached its session took nothing. Whether a taking still holds depends on
 // the holder's turn, which only the session can say.

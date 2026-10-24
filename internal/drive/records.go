@@ -53,7 +53,7 @@ func (d *Driver) Answer(ask, source, took string, explained bool) (string, error
 				return b.Append(batch.Event{At: d.now(), Kind: batch.KindAnswer, Ref: ask, Source: source, Took: took, Explained: explained})
 			}
 		}
-		return &Refused{Reason: fmt.Sprintf("no ask %s in batch %s", ask, b.Meta.Name), Next: "drive status lists the open asks"}
+		return &Refused{Reason: fmt.Sprintf("no ask %s in batch %s", ask, b.Meta.Name), Next: d.run("status") + " lists the open asks"}
 	})
 	return ask, err
 }

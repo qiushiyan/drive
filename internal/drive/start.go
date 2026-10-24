@@ -33,18 +33,19 @@ type BatchOptions struct {
 	AfterWake  []string
 }
 
-// command is the command that starts the batch, for a refusal to repeat.
-func (o BatchOptions) command() string {
-	words := []string{"drive", "batch", "new", shellQuote(o.Name)}
-	for _, f := range [][2]string{{"--webhook", o.Webhook}, {"--rex-session", o.RexSession}, {"--tz", o.TZ}} {
+// batchCommand is the command that starts the batch opt names, for a
+// refusal to repeat.
+func (d *Driver) batchCommand(opt BatchOptions) string {
+	words := []any{"batch", "new", opt.Name}
+	for _, f := range [][2]string{{"--webhook", opt.Webhook}, {"--rex-session", opt.RexSession}, {"--tz", opt.TZ}} {
 		if f[1] != "" {
-			words = append(words, f[0], shellQuote(f[1]))
+			words = append(words, f[0], f[1])
 		}
 	}
-	for _, c := range o.AfterWake {
-		words = append(words, "--after-wake", shellQuote(c))
+	for _, c := range opt.AfterWake {
+		words = append(words, "--after-wake", c)
 	}
-	return strings.Join(words, " ")
+	return d.run(words...)
 }
 
 // StartBatch starts a batch and makes it current. A batch that wakes a chat
@@ -54,7 +55,7 @@ func (o BatchOptions) command() string {
 // stops its watches, which would wake the driver about sessions it now drives
 // in this one.
 func (d *Driver) StartBatch(opt BatchOptions) (*Started, error) {
-	again := opt.command()
+	again := d.batchCommand(opt)
 	m := batch.Meta{Name: opt.Name, Started: d.now(), Wake: opt.Wake, Webhook: opt.Webhook,
 		RexSession: cmp.Or(opt.RexSession, d.Cfg.RexSession), TZ: cmp.Or(opt.TZ, d.Cfg.TZ), AfterWake: opt.AfterWake}
 	if m.Wake == "webhook" {

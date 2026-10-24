@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/drive"
 	"github.com/qiushiyan/drive/internal/session"
 	"github.com/qiushiyan/drive/internal/testkit"
@@ -60,7 +61,7 @@ func TestEveryNextRunsAsWritten(t *testing.T) {
 			c.Busy("build")
 			_, err := r.d.Send(r.view("T1"), drive.Step{Line: "go on"}, drive.SendOptions{})
 			return nextOf(err)
-		}, []string{"'go on' --queue"}},
+		}, []string{"--queue 'go on'"}},
 		{"a step on a prompt nobody answered", "webhook", func(r *rig, c *testkit.Claude) string {
 			c.Prompt("the owner typed this")
 			_, err := r.d.Send(r.view("T1"), drive.Step{Line: "go on"}, drive.SendOptions{})
@@ -198,5 +199,28 @@ func TestAStaleViewNamesTheStepAnotherRunSent(t *testing.T) {
 	_, err = r.d.Send(mid, drive.Step{Line: "next"}, drive.SendOptions{})
 	if !isRefused(err) || !strings.Contains(err.Error(), `written more since, answering the step "recap please" drive sent at`) {
 		t.Fatalf("the step it is still answering: %v", err)
+	}
+}
+
+// A command a message gives runs as written wherever the driver reads it:
+// free text, which may start with a dash, goes after every flag and behind
+// --, and an action in a batch that is not the current one names it, since
+// the driver's next command acts in the current batch.
+func TestANextCommandCarriesItsTextAndBatch(t *testing.T) {
+	r := newRig(t, "webhook")
+	c := adopted(t, r, "T1")
+	c.Busy("build")
+	_, err := r.d.Send(r.view("T1"), drive.Step{Line: "-v is broken"}, drive.SendOptions{Hold: "release"})
+	if next := nextOf(err); !strings.Contains(next, "--queue --hold release -- '-v is broken'") || strings.Contains(next, "--batch") {
+		t.Fatalf("the line goes behind -- after the flags, with no --batch in the current batch: %s", next)
+	}
+
+	if _, err := r.d.Store.New(batch.Meta{Name: "b2", Started: r.w.Clock.Now(), Wake: "none"}); err != nil {
+		t.Fatal(err)
+	}
+	r.d.BatchName = "b1"
+	_, err = r.d.Send("T1@00000000", drive.Step{Line: "go on"}, drive.SendOptions{})
+	if next := nextOf(err); !strings.Contains(next, "drive --batch b1 read T1") {
+		t.Fatalf("a refusal in a batch that is not current names it: %s", next)
 	}
 }

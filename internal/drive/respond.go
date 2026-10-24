@@ -32,7 +32,7 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 	if doing == "" {
 		return nil, &Refused{Reason: fmt.Sprintf("unknown response %q: approve, deny, interrupt or clear", action)}
 	}
-	b, l, o, err := d.ownView(v, fmt.Sprintf(doing, v.Session), action == "interrupt", "drive respond "+view+" "+action)
+	b, l, o, err := d.ownView(v, fmt.Sprintf(doing, v.Session), action == "interrupt", d.run("respond", view, action))
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +42,7 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 			res.Watched = watched
 		}
 		if werr != nil && err == nil {
-			err = wakeFailed(o.Label, werr)
+			err = d.wakeFailed(o.Label, werr)
 		}
 	}()
 	before := o.State()
@@ -63,7 +63,7 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 			r := &Refused{Reason: fmt.Sprintf("%s is %s; there is no turn to interrupt", o.Label, before)}
 			if jobs := d.Host.Shells(o.Session.Status.PID); len(jobs) > 0 {
 				r.Reason += fmt.Sprintf(", but a background job of its runs: %s", clip(jobs[0].Command, 120))
-				r.Next = "an interrupt stops a turn, not a job; if the job should have ended, have the session stop it: " + stopJob(o.Label, o.View.String(), jobs[0])
+				r.Next = "an interrupt stops a turn, not a job; if the job should have ended, have the session stop it: " + d.stopJob(o.View.String(), jobs[0])
 			}
 			return nil, d.refuse(b, o.Label, r)
 		}
@@ -72,7 +72,7 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 		if strings.HasPrefix(before, "blocked") && before != "blocked:auth" {
 			// A prompt draws its options behind the box's ❯, which reads as typed text.
 			return nil, d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: what reads as typed text is the prompt's options", o.Label, strings.TrimPrefix(before, "blocked:")),
-				Next: answerNext(o.Label, o.View.String(), before)})
+				Next: d.answerNext(o.Label, o.View.String(), before)})
 		}
 		if o.Input != turn.InputTyped {
 			return nil, d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s's input box holds nothing typed", o.Label)})
@@ -83,10 +83,10 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 		kind, typed := turn.InputUnknown, ""
 		for i := 0; i < 5 && kind != turn.InputEmpty && kind != turn.InputSuggestion; i++ {
 			if err := d.press(block, "ctrl+u"); err != nil && i == 0 {
-				return nil, unsent(err, "drive respond "+view+" clear")
+				return nil, unsent(err, d.run("respond", view, "clear"))
 			} else if err != nil {
 				return nil, &Failed{What: fmt.Sprintf("pressed ctrl+u in %s %d times, then Rex failed: %v", o.Label, i, err),
-					Next: fmt.Sprintf("look at its box: drive read %s --screen", o.Label)}
+					Next: "look at its box: " + d.run("read", o.Label, "--screen")}
 			}
 			d.sleep(d.poll() / 4)
 			if screen, err := d.Term.Capture(block, true); err == nil {
@@ -100,10 +100,10 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 				what = fmt.Sprintf("its input box still holds %q", clip(typed, 80))
 			}
 			uncleared = &Failed{What: fmt.Sprintf("pressed ctrl+u in %s and %s", o.Label, what),
-				Next: fmt.Sprintf("look at its screen: drive read %s --screen", o.Label)}
+				Next: "look at its screen: " + d.run("read", o.Label, "--screen")}
 		}
 	} else if err := d.press(block, keys...); err != nil {
-		return nil, unsent(err, "drive respond "+view+" "+action) // its one key, which Rex did not press
+		return nil, unsent(err, d.run("respond", view, action)) // its one key, which Rex did not press
 	}
 	// Rex hears nothing of a deny or an interrupt, so the session's own record
 	// says whether it moved: its turn state, or a new entry in its transcript.
@@ -130,10 +130,10 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 	}
 	if !moved {
 		f := &Failed{What: fmt.Sprintf("pressed %s in %s, and it still reads %s with nothing new in its transcript", strings.Join(keys, " "), o.Label, out.After),
-			Next: fmt.Sprintf("look at its screen: drive read %s --screen", o.Label)}
+			Next: "look at its screen: " + d.run("read", o.Label, "--screen")}
 		if action == "approve" {
 			f.What += "; an approved command that runs long leaves it so until the command ends"
-			f.Next = fmt.Sprintf("approving again does nothing; drive wait %s tells when it moves on", o.Label)
+			f.Next = fmt.Sprintf("approving again does nothing; %s tells when it moves on", d.run("wait", o.Label))
 			if webhook, _ := d.wakes(block); webhook {
 				f.Next = "approving again does nothing; its wake comes when it moves on"
 			}
@@ -155,7 +155,7 @@ func (d *Driver) Park(view, reason string) error {
 	if strings.TrimSpace(reason) == "" {
 		return &Refused{Reason: "say why it is parked; the report and the next driver read it"}
 	}
-	again := "drive park " + view + " " + shellQuote(reason)
+	again := d.run("park", view, text(reason))
 	b, l, o, err := d.ownView(v, "parking "+v.Session, true, again)
 	if err != nil {
 		return err
@@ -204,7 +204,7 @@ func (d *Driver) ownView(v turn.View, what string, promptOnly bool, again string
 		o, err = d.observe(members, v.Session)
 	}
 	if err == nil {
-		if err = checkView(o, v, promptOnly, d.zone(), evs); err != nil {
+		if err = d.checkView(o, v, promptOnly, d.zone(), evs); err != nil {
 			err = d.refuse(b, o.Label, err)
 		}
 	}
@@ -223,7 +223,7 @@ func (d *Driver) Close(view string) error {
 	if err != nil {
 		return &Refused{Reason: err.Error()}
 	}
-	b, l, o, err := d.ownView(v, "closing "+v.Session, false, "drive close "+view)
+	b, l, o, err := d.ownView(v, "closing "+v.Session, false, d.run("close", view))
 	if err != nil {
 		return err
 	}
@@ -231,29 +231,29 @@ func (d *Driver) Close(view string) error {
 	st, state := o.Session.Status, o.State()
 	// A session left open is left untouched, so no wake of its own comes:
 	// one that waits on something is parked with why.
-	park := func(why string) string { return "drive park " + view + " " + shellQuote(why) }
+	park := func(why string) string { return d.run("park", view, text(why)) }
 	switch {
 	case state == "working":
 		return d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s is working", o.Label),
 			Next: d.whenTurnEnds(o.Label, o.Session.Block) + "; close it then, on the view that comes with it"})
 	case strings.HasPrefix(state, "blocked") && state != "blocked:auth":
 		return d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: its turn has not ended", o.Label, strings.TrimPrefix(state, "blocked:")),
-			Next: answerNext(o.Label, view, state)})
+			Next: d.answerNext(o.Label, view, state)})
 	case o.Input == turn.InputTyped:
 		return d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s's input box holds an unsent line: %q", o.Label, clip(o.Typed, 80)),
 			Next: "leave the block, as the line may be the owner's, and park it so the report names it: " + park("an unsent line in its input box")})
 	case len(d.Host.Shells(st.PID)) > 0:
 		job := d.Host.Shells(st.PID)[0]
-		next := "if the job should have ended, have the session stop it, and close it once that turn ends: " + stopJob(o.Label, view, job) +
+		next := "if the job should have ended, have the session stop it, and close it once that turn ends: " + d.stopJob(view, job) +
 			"; if it should run on, park the session with why, as nothing wakes you when the job ends: " + park("a background job still runs")
 		if webhook, _ := d.wakes(o.Session.Block); !webhook {
-			next = "if the job should have ended, have the session stop it, and close it once that turn ends: " + stopJob(o.Label, view, job) +
-				fmt.Sprintf("; if it should run on, wait for it (drive wait %s) and close the session then", o.Label)
+			next = "if the job should have ended, have the session stop it, and close it once that turn ends: " + d.stopJob(view, job) +
+				fmt.Sprintf("; if it should run on, wait for it (%s) and close the session then", d.run("wait", o.Label))
 		}
 		return d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s still runs a background job: %s", o.Label, clip(job.Command, 120)), Next: next})
 	}
 	if err := d.Term.Close(o.Session.Block); err != nil {
-		return &Refused{Reason: fmt.Sprintf("Rex did not close %s's block: %v", o.Label, err), Next: "try it again: drive close " + view}
+		return &Refused{Reason: fmt.Sprintf("Rex did not close %s's block: %v", o.Label, err), Next: "try it again: " + d.run("close", view)}
 	}
 	if d.Watches != nil && b != nil {
 		_ = d.Watches.Stop(watchName(b, o.Session.Block))

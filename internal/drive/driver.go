@@ -217,13 +217,6 @@ func (d *Driver) turnOf(s *session.Session, f turn.Frontier, since time.Time) Tu
 	return t
 }
 
-// stopJob is the step that has a session stop a background job of its own:
-// the session knows its jobs and can end them, where a driver's shell would
-// be reaching into a session it only reads and sends to.
-func stopJob(label, view string, job session.Shell) string {
-	return fmt.Sprintf("drive send %s %s", view, shellQuote(fmt.Sprintf("Stop your background job (%s): it should have ended.", clip(job.Command, 120))))
-}
-
 // waiting says the turn stopped on a prompt someone has to answer, a
 // rejected login aside, which only a relaunch moves.
 func (t Turn) waiting() bool {
@@ -272,7 +265,7 @@ func (d *Driver) own(label, key, what string) (*lease, error) {
 	release, err := d.Store.Own(key, what)
 	if busy, ok := errors.AsType[*batch.Busy](err); ok {
 		return nil, &Refused{Reason: fmt.Sprintf("another driver is %s (pid %d, since %s)", busy.What, busy.PID, busy.Since.In(d.zone()).Format("15:04:05")),
-			Next: fmt.Sprintf("leave %s to it; once it is done, drive read %s shows where it stands", label, label)}
+			Next: fmt.Sprintf("leave %s to it; once it is done, %s shows where it stands", label, d.run("read", label))}
 	}
 	if err != nil {
 		return nil, err
@@ -352,10 +345,10 @@ func (d *Driver) press(block string, keys ...string) error {
 }
 
 // wakeFailed is an action that did what it was asked whose wake did not start.
-func wakeFailed(label string, err error) *Failed {
-	f := &Failed{What: fmt.Sprintf("%s's wake did not start: %v", label, err), Next: fmt.Sprintf("start it: drive watch %s", label)}
+func (d *Driver) wakeFailed(label string, err error) *Failed {
+	f := &Failed{What: fmt.Sprintf("%s's wake did not start: %v", label, err), Next: "start it: " + d.run("watch", label)}
 	if nw, ok := errors.AsType[*noWebhook](err); ok {
-		f.Next = nw.next("drive watch " + label)
+		f.Next = nw.next(d.run("watch", label))
 	}
 	return f
 }
@@ -371,11 +364,11 @@ func (d *Driver) observe(members []*batch.Member, ref string) (*Observation, err
 	s, err := session.Locate(d.Term, d.Host, block)
 	if errors.Is(err, session.ErrNoClaude) {
 		return nil, &Refused{Reason: fmt.Sprintf("%s (block %s) has no Claude Code session running", o.Label, rex.Short(block)),
-			Next: "it may have exited; drive status lists the sessions that are running"}
+			Next: "it may have exited; " + d.run("status") + " lists the sessions that are running"}
 	}
 	if err != nil {
 		return nil, &Refused{Reason: fmt.Sprintf("%s (block %s) cannot be read: %v", o.Label, rex.Short(block), err),
-			Next: "the block may be gone; drive status lists what is running"}
+			Next: "the block may be gone; " + d.run("status") + " lists what is running"}
 	}
 	o.Session = s
 	if o.Frontier, err = s.Frontier(); err != nil {
@@ -405,7 +398,7 @@ func (d *Driver) findBlock(ref string) (string, error) {
 		return hits[0], nil
 	case 0:
 		return "", &Refused{Reason: fmt.Sprintf("no session or block named %q", ref),
-			Next: "drive status lists the batch's sessions by label and the other Claude sessions by block"}
+			Next: d.run("status") + " lists the batch's sessions by label and the other Claude sessions by block"}
 	default:
 		return "", &Refused{Reason: fmt.Sprintf("%q names %d blocks", ref, len(hits)), Next: "give more of the block id"}
 	}
@@ -432,7 +425,7 @@ func (d *Driver) members() (*batch.Batch, []batch.Event, []*batch.Member, error)
 // drive sent that the prompt is: several runs act on one batch, and a run
 // refused over another's step should know the session did not move alone.
 // Queued sends only need the session to have received nothing since.
-func checkView(o *Observation, v turn.View, promptOnly bool, zone *time.Location, evs []batch.Event) error {
+func (d *Driver) checkView(o *Observation, v turn.View, promptOnly bool, zone *time.Location, evs []batch.Event) error {
 	cur := o.View
 	if v.Prompt == cur.Prompt && (promptOnly || v.Reply == cur.Reply) {
 		return nil
@@ -449,7 +442,7 @@ func checkView(o *Observation, v turn.View, promptOnly bool, zone *time.Location
 		what += on + step
 	}
 	return &Refused{Reason: fmt.Sprintf("%s has moved past view %s: %s", o.Label, v, what),
-		Next: fmt.Sprintf("read it again and decide on what it shows now: drive read %s", o.Label)}
+		Next: "read it again and decide on what it shows now: " + d.run("read", o.Label)}
 }
 
 // sentStep names the step drive sent to label that prompt p is, as the
@@ -535,7 +528,7 @@ func (d *Driver) relaunchHint(o *Observation) string { return d.relaunch(o, d.la
 // lastStep is the step a session was last sent in this batch, as drive open
 // takes it: what a session whose login was rejected was to take. A file or
 // a snippet goes again as the copy drive saved of it.
-func (d *Driver) lastStep(label string) string {
+func (d *Driver) lastStep(label string) Step {
 	if _, evs, _, err := d.members(); err == nil {
 		for _, e := range slices.Backward(evs) {
 
@@ -543,30 +536,27 @@ func (d *Driver) lastStep(label string) string {
 				continue
 			}
 			if e.Path != "" {
-				return "--file " + shellQuote(e.Path)
+				return Step{File: e.Path}
 			}
-			return shellQuote(e.Text)
+			return Step{Line: e.Text}
 		}
 	}
-	return ""
+	return Step{}
 }
 
 // relaunch says how to carry a session whose login was rejected over to
 // another account: close it on its view as it stands now, and resume it
 // there with step, as drive open takes it, on the open.
-func (d *Driver) relaunch(o *Observation, step string) string {
+func (d *Driver) relaunch(o *Observation, step Step) string {
 	others := d.otherAccounts(o.Session.Account)
 	if len(others) == 0 {
 		return "every other account's login was rejected in this batch too: tell the owner, and park the session until they log in again"
 	}
 	// Claude Code finds a session to resume under its working directory's project.
-	cmd := fmt.Sprintf("drive close %s && %s", viewNow(o),
-		openCommand(o.Label, OpenOptions{Dir: o.Session.Dir, Resume: o.Session.ID, Account: others[0]}))
+	cmd := d.run("close", viewNow(o)) + " && " + d.openCommand(o.Label, OpenOptions{Dir: o.Session.Dir, Resume: o.Session.ID, Account: others[0]}, step)
 	what := "relaunch it on another account with the step it was to take"
-	if step == "" {
+	if step.empty() {
 		what = "relaunch it on another account, then send it the step it was to take on the view the open prints"
-	} else {
-		cmd += " " + step
 	}
 	if jobs := d.Host.Shells(o.Session.Status.PID); len(jobs) > 0 {
 		return fmt.Sprintf("%s once its background job (%s) ends, as close refuses until then: %s", what, clip(jobs[0].Command, 120), cmd)
