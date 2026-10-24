@@ -615,7 +615,8 @@ func (a *action) typeAndConfirm(line string) (string, *turn.Prompt, error) {
 	}
 	d.sleep(time.Second)
 	if err := a.press("enter"); err != nil {
-		return "", nil, err
+		return "", nil, &Failed{What: fmt.Sprintf("typed the line into %s, but Rex did not press Enter: %v", o.Label, err),
+			Next: fmt.Sprintf("the line sits in its input box: clear it (%s), then send the step again", d.run("respond", viewNow(o), "clear"))}
 	}
 	want := strings.TrimSpace(line)
 	limit := time.Minute

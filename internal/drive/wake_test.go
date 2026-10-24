@@ -61,6 +61,14 @@ func TestEveryActionThatTouchesASessionLeavesItWatched(t *testing.T) {
 			}
 			return nil
 		}},
+		{"a send whose Enter Rex refused", func(r *rig, c *testkit.Claude) error {
+			r.w.KeyFails = 1 // the line is typed; the press after it fails
+			_, err := r.d.Send(r.view("T1"), drive.Step{Line: "go on"}, drive.SendOptions{})
+			if f := (*drive.Failed)(nil); !errors.As(err, &f) || !strings.Contains(f.Next, "drive respond T1@") {
+				t.Fatalf("a line typed with no Enter is a failure that says how to clear it: %v", err)
+			}
+			return nil
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newRig(t, "webhook")
@@ -90,6 +98,11 @@ func TestEveryActionThatTouchesASessionLeavesItWatched(t *testing.T) {
 	}
 	if r.watches.Alive(watchOf(c)) {
 		t.Fatal("a parked session wakes no one")
+	}
+	// A session drive opened is watched like one it typed into, its first step to come.
+	o, err := r.d.Open("J1", drive.Step{}, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work")})
+	if err != nil || !r.watches.Alive("drive-b1-"+o.Block[len(o.Block)-6:]) {
+		t.Fatalf("an open with no step is watched: %+v %v", o, err)
 	}
 }
 
