@@ -66,17 +66,25 @@ func write(t *testing.T, path, body string) {
 	}
 }
 
-var intentID = regexp.MustCompile(`"intent": ?"[0-9a-f]{8}"`)
+var intentID = regexp.MustCompile(`("intent": ?)"([0-9a-f]{8})"`)
 
 // run runs drive and pins its exit status, stdout and stderr as the file
 // testdata/contract/NAME.txt, returning stdout. Paths under the temporary
-// directories read $HOME and $ROOT, and an intent's random id reads ….
+// directories read $HOME and $ROOT, and each intent's random id reads as
+// its order in the file, so records of one intent still share an id.
 func (c *contract) run(name string, args ...string) string {
 	c.t.Helper()
 	code, out, errs := cli(c.t, args...)
+	intents := map[string]string{}
 	clean := func(s string) string {
 		s = strings.ReplaceAll(strings.ReplaceAll(s, c.w.Root, "$ROOT"), c.home, "$HOME")
-		return intentID.ReplaceAllStringFunc(s, func(m string) string { return m[:len(m)-10] + `"…"` })
+		return intentID.ReplaceAllStringFunc(s, func(m string) string {
+			sub := intentID.FindStringSubmatch(m)
+			if intents[sub[2]] == "" {
+				intents[sub[2]] = fmt.Sprintf("intent-%d", len(intents)+1)
+			}
+			return sub[1] + `"` + intents[sub[2]] + `"`
+		})
 	}
 	got := fmt.Sprintf("$ drive %s\nexit %d\n--- stdout\n%s--- stderr\n%s", clean(strings.Join(args, " ")), code, clean(out), clean(errs))
 	pinContract(c.t, name, got)
@@ -181,6 +189,10 @@ func TestContracts(t *testing.T) {
 	c.run("log-other-batch-before", "--batch", "b1", "log", "--since", "2026-10-23 09:03")
 	c.run("batch-use", "batch", "use", "b1")
 	c.run("batch-use-unknown", "batch", "use", "nope")
+	// A refusal changes nothing: a batch whose name is taken starts no Rex session.
+	c.run("batch-new-taken-name", "batch", "new", "b2", "--rex-session", "fresh")
+	c.run("send-dash-line", "send", "J1@00000000", "- a dash line")
+	c.run("send-dash-line-after-dashes", "send", "J1@00000000", "--", "- a dash line")
 	c.run("unknown-command", "frobnicate")
 }
 

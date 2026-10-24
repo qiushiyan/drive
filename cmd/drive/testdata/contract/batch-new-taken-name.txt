@@ -1,0 +1,5 @@
+$ drive batch new b2 --rex-session fresh
+exit 1
+--- stdout
+--- stderr
+drive: batch "b2" exists; `drive batch use b2` makes it current

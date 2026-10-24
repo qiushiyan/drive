@@ -1,0 +1,6 @@
+$ drive send J1@00000000 - a dash line
+exit 1
+--- stdout
+--- stderr
+drive: J1 has moved past view J1@00000000: it has received another prompt since: the step "Review the spec in docs/spec.md" drive sent at 02:02
+next: read it again and decide on what it shows now: drive read J1
