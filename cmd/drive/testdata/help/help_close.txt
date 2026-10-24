@@ -1,0 +1,21 @@
+Usage: drive close <view> [flags]
+
+Close a session's block after its last step.
+
+Refused while the session works, runs a background job, or holds a typed
+line nobody sent: next: says what to do first.
+
+Arguments:
+  <view>              The view the close was decided on.
+
+Inherited flags:
+  -h, --help          Show context-sensitive help.
+      --batch=NAME    Act in this batch instead of the current one, which stays current. It may
+                      stand anywhere on the line.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; the message prints the relaunch

@@ -1,0 +1,23 @@
+Usage: drive respond <view> <action> [flags]
+
+Answer the prompt a session waits on.
+
+A deny ends the turn, and the session takes its next step as usual. It
+prints what the session reads afterwards.
+
+Arguments:
+  <view>              The view the answer was decided on.
+  <action>            approve or deny the prompt, interrupt the turn, or clear a line left in its
+                      input box (one of: approve, deny, interrupt, clear).
+
+Inherited flags:
+  -h, --help          Show context-sensitive help.
+      --batch=NAME    Act in this batch instead of the current one, which stays current. It may
+                      stand anywhere on the line.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; the message prints the relaunch

@@ -1,0 +1,33 @@
+Usage: drive batch new <name> [flags]
+
+Start a batch and make it current.
+
+A new batch starts with no grants, however recently one was given, and
+stops the last batch's wakes. Start one per drive, never after a reset:
+`drive batch` names the current one.
+
+Arguments:
+  <name>                       The batch's name, such as the date.
+
+Flags:
+      --webhook=DRIVER         Wake this chat driver by its webhook, the file
+                               ~/.config/drive/webhooks/DRIVER that the owner writes. Without it,
+                               the driver waits itself.
+      --rex-session=SESSION    The Rex session new sessions open in, started if it is not running;
+                               defaults to the configuration's, then $REX_SESSION.
+      --tz=ZONE                The zone drive prints the batch's times in, such as Europe/London;
+                               defaults to the configuration's, then the machine's.
+      --after-wake=COMMAND     A shell command to run after each wake is posted, such as archiving
+                               the chat it went to.
+
+Inherited flags:
+  -h, --help                   Show context-sensitive help.
+      --batch=NAME             Act in this batch instead of the current one, which stays current. It
+                               may stand anywhere on the line.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; the message prints the relaunch

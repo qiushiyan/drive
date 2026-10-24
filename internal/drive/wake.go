@@ -231,7 +231,7 @@ func (d *Driver) Timer(after time.Duration, note string) error {
 	if err := d.canPost(b); err != nil {
 		var nw *noWebhook
 		errors.As(err, &nw)
-		return &Refused{Reason: err.Error(), Next: nw.next("drive watch --sleep " + secs + " " + note)}
+		return &Refused{Reason: err.Error(), Next: nw.next("drive timer " + secs + " " + note)}
 	}
 	name := timerName(b, note)
 	if d.Watches.Alive(name) {

@@ -1,0 +1,37 @@
+Usage: drive status [flags]
+
+Print every session in the batch, live: its state, stage, pull request, wake and view.
+
+Each session in the batch is read live, from Claude Code's own registry,
+its transcript and Rex, then the batch's holds, open asks, grants and
+unfinished actions are listed under the table. Other Claude sessions
+running in Rex are listed too, by window and block, so one the owner named
+can be brought into the batch by its block id.
+
+Flags:
+      --json          Print one JSON document instead of the table.
+      --quick         Skip reading each session's pull request and merge state, which costs a gh
+                      call per session.
+
+Inherited flags:
+  -h, --help          Show context-sensitive help.
+      --batch=NAME    Act in this batch instead of the current one, which stays current. It may
+                      stand anywhere on the line.
+
+Columns:
+  STATE  working | done | idle (no prompt yet) | interrupted (an interrupt or a deny)
+         | error | blocked:permission | blocked:question | blocked:auth (a rejected login).
+         A background job a session still runs is listed under the table.
+  INPUT  empty | suggestion (Claude Code's dimmed guess; typing replaces it)
+         | typed (a line left unsent) | prompt (a prompt's options) | unknown (no box on screen)
+  WAKE   armed | stuck | posting | woken HH:MM (nothing done since: act on it or park it,
+         or drive watch --due posts it once more, at the time it says)
+         | none, or ended without a wake: no wake comes until drive watch --due | parked: why
+  Hold lines name who holds each hold, and who waits for it with the step it was refused.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; the message prints the relaunch

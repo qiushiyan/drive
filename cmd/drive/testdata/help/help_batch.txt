@@ -1,0 +1,24 @@
+Usage: drive batch [<command>] [flags]
+
+Print the current batch, or start, switch or list batches.
+
+Inherited flags:
+  -h, --help          Show context-sensitive help.
+      --batch=NAME    Act in this batch instead of the current one, which stays current. It may
+                      stand anywhere on the line.
+
+Commands:
+  show          Print the batch: its start, wakes, Rex session, zone, sessions and directory
+                (default).
+  new <name>    Start a batch and make it current.
+  use <name>    Make a batch current.
+  list          List every batch, the current one starred.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; the message prints the relaunch
+
+Run "drive batch <command> --help" for a command's details.

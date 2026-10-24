@@ -4,12 +4,12 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
-	"time"
+	"slices"
+
+	"github.com/alecthomas/kong"
+	"github.com/qiushiyan/clikit"
 
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/config"
@@ -19,151 +19,56 @@ import (
 	"github.com/qiushiyan/drive/internal/session"
 )
 
-const usage = `drive — drive Claude Code sessions in Rex: read where each stands, send its
-next step, answer its prompts, and be woken when its turn ends.
+type CLI struct {
+	Batch string `placeholder:"NAME" help:"Act in this batch instead of the current one, which stays current. It may stand anywhere on the line."`
+
+	Status  StatusCmd  `cmd:"" help:"Print every session in the batch, live: its state, stage, pull request, wake and view."`
+	Read    ReadCmd    `cmd:"" help:"Print a session's newest reply, where it stands, its view, and next: where its state decides it."`
+	Wait    WaitCmd    `cmd:"" help:"Block until a session's turn ends, then print how it ended."`
+	Send    SendCmd    `cmd:"" help:"Send a session its next step, decided on a view."`
+	Open    OpenCmd    `cmd:"" help:"Open a new Claude Code session in Rex, in the batch, with an optional first step."`
+	Respond RespondCmd `cmd:"" help:"Answer the prompt a session waits on."`
+	Watch   WatchCmd   `cmd:"" help:"Arm a session's wake in a batch that wakes a chat driver; --due arms every one that needs it."`
+	Timer   TimerCmd   `cmd:"" help:"Wake the driver after a delay, with a note: a veto window, a check that is due later."`
+	Park    ParkCmd    `cmd:"" help:"Stop a session's wakes until a step is sent to it, keeping why."`
+	Close   CloseCmd   `cmd:"" help:"Close a session's block after its last step."`
+	Record  RecordCmd  `cmd:"" help:"Record what drive cannot see: the owner's grants, asks and answers, and notes."`
+	Log     LogCmd     `cmd:"" help:"Print the batch's timeline: what was sent, answered, opened, parked and closed, and every wake."`
+	Metrics MetricsCmd `cmd:"" help:"Print the batch's measures: asks and the owner's wait, merges, sends, wakes, refusals."`
+	Batches BatchCmd   `cmd:"" name:"batch" help:"Print the current batch, or start, switch or list batches."`
+	Snippet SnippetCmd `cmd:"" help:"Print the owner's snippet KEY as a session in DIR would receive it."`
+	Snips   SnipsCmd   `cmd:"" name:"snippets" help:"List the snippet keys that resolve in DIR, each with its file."`
+
+	Notify NotifyCmd `cmd:"" hidden:"" help:"A watch's own run: wait for the turn to end, then post the wake."`
+	Ring   RingCmd   `cmd:"" hidden:"" help:"A timer's own run: sleep, then post the wake."`
+}
+
+func (CLI) Help() string {
+	return `
+The driver stands in for the sessions' owner, usually while they are away:
+a chat bot woken by webhook, or a Claude Code session. A batch is one
+drive's sessions and its record; ` + "`drive batch new NAME`" + ` starts one.
 
 Every action on a session is decided on a VIEW, such as T1@3fa91c07, which
-read, wait, status and every wake print, and is refused once the session has
-moved past it: a step decided on an old turn never reaches a new one. A
-working session's view changes as it writes, so decide on a turn that has
-ended, or send with --queue, which needs only that no prompt came since. One
-driver acts on a session at a time.
+read, wait, status and every wake print. The action is refused once the
+session has moved past that view, so a step decided on an old turn never
+reaches a new one. A working session's view changes as it writes: decide on
+a turn that has ended, or send with --queue. One driver acts on a session at
+a time.
 
-  drive status [--json] [--quick]          every session in the batch, live
-  drive read SESSION [MODE] [--json]       its newest reply, its view, and next: where its
-                                           state decides it; a closed or gone session's from
-                                           its transcript, with no view; MODE is one of
-           --prompts [N]  what it was told   --pending  the call a prompt waits on
-           --user         its newest prompt  --screen   the end of its screen
-  drive wait SESSION [--quiet S] [--bg S]  block until its turn ends; prints the reply's end
-  drive send VIEW STEP [--queue] [--hold NAME] [--as LABEL]
-  drive open LABEL [STEP] [--dir DIR] [--resume ID] [--account NAME] [--model M] [--hold NAME]
-  drive respond VIEW approve|deny|interrupt|clear
-  drive watch SESSION | --due | --sleep SECONDS NOTE
-                                           a webhook batch: wake the driver when the turn ends;
-                                           --due arms all that need it; --sleep is a timer
-  drive park VIEW REASON…                  no wakes until a step is sent; the reason is kept
-  drive close VIEW                         close its block after its last step
-  drive record grant --source WORDS --scope WHAT
-  drive record ask SESSION --question Q --recommendation R --if-unanswered WHAT
-  drive record answer ASK --source WORDS --took recommended|amended|delegated|moot [--explained]
-  drive record note [--session S] TEXT…
-  drive log [--since TIME] [--json]        the batch's timeline
-  drive metrics [BATCH] [--json]           asks, owner wait, merges, sends, failures
-  drive batch [new NAME [--webhook DRIVER] [--rex-session S] [--tz ZONE] [--after-wake CMD]
-              | use NAME | list]           the current batch and its directory; a new one starts
-                                           with no grants and stops the last one's wakes; with
-                                           --webhook it wakes that chat driver, without, its
-                                           driver waits itself
-  drive snippet KEY [DIR] [TEXT…] | drive snippet --list [DIR]
+A SESSION is a label in the batch (T1), or a session's Rex block id, whose
+last six characters are enough, before it joins the batch.
 
-STEP is one of:
-  'one short line'        typed as is, a slash command too ('/write-spec Go with D1')
-  --file PATH             sent as "Read <copy> and do what it asks."; drive keeps the copy
-  --snippet KEY [TEXT…]   the owner's TabType snippet for the session's directory, with
-                          TEXT where the owner would type after it
-The first step a session gets in a batch carries the notice ahead of it.
-
---queue sends to a working session, which takes it mid-turn; a session on a
-prompt takes nothing until it is answered. --hold NAME is for what only one
-session may do at a time, such as a release or commits into a shared
-checkout: a second send or open naming it is refused, saying why, while the
-holder works, later steps included, waits on a prompt, or runs a background
-job it started.
-
-Wakes, in a webhook batch: any send, open or respond arms the session's
-wake, posted to the driver the batch names, the URL= and AUTH= lines in
-~/.config/drive/webhooks/DRIVER, so a driver hears only of its own batches.
-It comes about a minute after the turn ends, at once on an API error
-or an interrupt, and when the session stops on a prompt; it ends with next:
-where the ending decides what to do. A refused action armed nothing.
-
-status columns:
-  STATE  working | done | idle (no prompt yet) | interrupted (an interrupt or a deny)
-         | error | blocked:permission | blocked:question | blocked:auth (a rejected login);
-         a background job a session still runs is listed under the table
-  INPUT  empty | suggestion (Claude Code's dimmed guess; typing replaces it)
-         | typed (a line left unsent) | prompt (a prompt's options) | unknown (no box on screen)
-  WAKE   armed | stuck | posting | woken HH:MM (nothing done since): act on it or park it,
-         or drive watch --due posts it once more, the time it says
-         | none, ended without a wake: no wake comes until drive watch --due | parked: why
-  hold lines name who holds each hold and who waits for it with the step it was refused
-
-SESSION is a label in the batch (T1) or a block id (its last six characters).
---batch NAME, anywhere on the line, acts in that batch instead of the current one.
-
-A refusal or failure that leaves something to do ends with next:, a command
-that runs as written on the session as it stands. Exit status: 0 done;
-1 refused, nothing was done; 2 usage; 3 tried and did not end as asked, the
-message saying what did happen; 4 the session's login was rejected, the
-message printing the relaunch.
-`
-
-func main() {
-	os.Exit(run(os.Args[1:]))
+A refusal or failure that leaves something to do ends with a next: line: a
+command that runs as written on the session as it stands. Whether the step
+still makes sense is the driver's judgment.`
 }
 
-func run(argv []string) int {
-	// --batch NAME may stand anywhere on the line: a driver writes it after the command as often as before.
-	batchName := ""
-	for i := 0; i+1 < len(argv); i++ {
-		if argv[i] == "--batch" {
-			batchName, argv = argv[i+1], append(append([]string{}, argv[:i]...), argv[i+2:]...)
-			break
-		}
-	}
-	if len(argv) == 0 || argv[0] == "--help" || argv[0] == "-h" || argv[0] == "help" {
-		fmt.Print(usage)
-		return 0
-	}
-	cfg, err := config.Load()
-	if err != nil {
-		return fail(err)
-	}
-	d := newDriver(cfg)
-	d.BatchName = batchName
-	cmd, rest := argv[0], argv[1:]
-	for _, a := range rest {
-		if a == "--help" || a == "-h" {
-			fmt.Print(usage)
-			return 0
-		}
-	}
-	switch cmd {
-	case "status":
-		return cmdStatus(d, rest)
-	case "read":
-		return cmdRead(d, rest)
-	case "wait":
-		return cmdWait(d, rest)
-	case "send":
-		return cmdSend(d, rest)
-	case "open":
-		return cmdOpen(d, rest)
-	case "respond":
-		return cmdRespond(d, rest)
-	case "watch":
-		return cmdWatch(d, rest)
-	case "park":
-		return cmdPark(d, rest)
-	case "close":
-		return cmdClose(d, rest)
-	case "record":
-		return cmdRecord(d, rest)
-	case "log":
-		return cmdLog(d, rest)
-	case "metrics":
-		return cmdMetrics(d, rest)
-	case "batch":
-		return cmdBatch(d, rest)
-	case "snippet":
-		return cmdSnippet(d, rest)
-	}
-	return bad(fmt.Sprintf("unknown command %q", cmd))
-}
+// wiring builds the driver an invocation acts through: this machine's in
+// main, a fake world's in the tests.
+type wiring func(config.Config) *drive.Driver
 
-// newDriver wires a driver to this machine; tests wire it to a fake one.
-var newDriver = func(cfg config.Config) *drive.Driver {
+func machine(cfg config.Config) *drive.Driver {
 	self, _ := os.Executable()
 	return &drive.Driver{
 		Term: rex.CLI{}, Host: session.Machine{Home: cfg.Home}, Store: batch.Store{Dir: cfg.StateDir},
@@ -171,212 +76,84 @@ var newDriver = func(cfg config.Config) *drive.Driver {
 	}
 }
 
-func bad(msg string) int {
-	fmt.Fprintf(os.Stderr, "drive: %s; `drive --help` lists the commands\n", msg)
-	return 2
+var app = clikit.App{
+	Name:        "drive",
+	Description: "drive runs Claude Code sessions in Rex for their owner: read where each stands, send its next step, answer its prompts, and be woken when its turn ends.",
+	New:         func() any { return &CLI{} },
+	Options: []kong.Option{
+		kong.Bind(wiring(machine)),
+		// The configuration loads only once a command acts, so help and
+		// usage errors work whatever state it is in.
+		kong.BindToProvider(func(cli *CLI, wire wiring) (*drive.Driver, error) {
+			cfg, err := config.Load()
+			if err != nil {
+				return nil, err
+			}
+			d := wire(cfg)
+			d.BatchName = cli.Batch
+			return d, nil
+		}),
+	},
+	FailureCode: 3,
+	ExitCodes: map[int]string{
+		1: "refused: nothing was done; next: says what to run instead",
+		3: "tried and did not end as asked; the message says what did happen",
+		4: "the session's login was rejected; the message prints the relaunch",
+	},
 }
 
-// fail prints an error and returns its exit status.
-func fail(err error) int {
-	fmt.Fprintln(os.Stderr, "drive: "+err.Error())
-	var r *drive.Refused
-	var f *drive.Failed
+func main() { os.Exit(app.Run(upgrade(os.Args[1:]))) }
+
+// actor is a command's work. Every command embeds runs, whose Run calls the
+// selected command's act and classifies what it returns, so no command can
+// let a refusal exit as a failure.
+type actor interface {
+	act(ctx *kong.Context, d *drive.Driver) error
+}
+
+type runs struct{}
+
+func (runs) Run(ctx *kong.Context, d *drive.Driver) error {
+	return classify(ctx.Selected().Target.Addr().Interface().(actor).act(ctx, d))
+}
+
+// classify gives an error drive's exit status: 1 for a refusal, which did
+// nothing, 4 for a rejected login, and 3 for anything else that failed.
+func classify(err error) error {
+	if r, ok := errors.AsType[*drive.Refused](err); ok {
+		return clikit.Fail(1, r)
+	}
+	if f, ok := errors.AsType[*drive.Failed](err); ok && f.Login {
+		return clikit.Fail(4, f)
+	}
+	return err
+}
+
+// upgrade rewrites the command lines an older drive still runs into this
+// one's: a watch or timer it started before an install re-execs this
+// binary by the old form, and a wake it posts may say `drive watch --sleep`.
+// Each is an exact shape only an older drive wrote; anything else passes
+// through untouched.
+func upgrade(args []string) []string {
+	batchArgs, rest := splitBatch(args)
 	switch {
-	case errors.As(err, &r):
-		return 1
-	case errors.As(err, &f) && f.Login:
-		return 4
-	default:
-		return 3
+	case len(rest) == 3 && rest[0] == "wait" && rest[2] == "--notify":
+		// drive --batch B wait LABEL --notify
+		return append(batchArgs, "notify", rest[1])
+	case len(rest) == 6 && rest[0] == "wait" && rest[1] == "--sleep" && rest[3] == "--note" && rest[5] == "--notify":
+		// drive --batch B wait --sleep SECONDS --note NOTE --notify
+		return append(batchArgs, "ring", rest[2], "--", rest[4])
+	case len(rest) >= 4 && rest[0] == "watch" && rest[1] == "--sleep":
+		// drive watch --sleep SECONDS NOTE…, as an older wake's next: wrote it
+		return append(append(batchArgs, "timer", rest[2], "--"), rest[3:]...)
 	}
+	return args
 }
 
-func parseOr(argv []string, valued, switches []string) (*args, int) {
-	a, err := parse(argv, valued, switches)
-	if err != nil {
-		return nil, bad(err.Error())
+// splitBatch takes a leading --batch NAME off a command line.
+func splitBatch(args []string) (batchArgs, rest []string) {
+	if len(args) >= 2 && args[0] == "--batch" {
+		return slices.Clone(args[:2]), args[2:]
 	}
-	return a, -1
-}
-
-func seconds(s string, fallback time.Duration) (time.Duration, error) {
-	if s == "" {
-		return fallback, nil
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil || n < 0 {
-		return 0, fmt.Errorf("%q is not a number of seconds", s)
-	}
-	return time.Duration(n) * time.Second, nil
-}
-
-// step reads a STEP from a command's positional words and flags.
-func step(a *args, words []string) (drive.Step, error) {
-	n := 0
-	var s drive.Step
-	if f := a.str("file"); f != "" {
-		s.File, n = f, n+1
-	}
-	if k := a.str("snippet"); k != "" {
-		s.Key, s.Text, n = k, strings.Join(words, " "), n+1
-		words = nil
-	}
-	if len(words) > 0 {
-		s.Line, n = strings.Join(words, " "), n+1
-	}
-	if n > 1 {
-		return s, errors.New("give one step: a line, --file PATH or --snippet KEY")
-	}
-	return s, nil
-}
-
-func cmdSend(d *drive.Driver, argv []string) int {
-	a, code := parseOr(argv, []string{"file", "snippet", "hold", "as"}, []string{"queue", "no-watch"})
-	if a == nil {
-		return code
-	}
-	if len(a.pos) == 0 {
-		return bad("send needs a VIEW and a step")
-	}
-	s, err := step(a, a.pos[1:])
-	if err != nil {
-		return bad(err.Error())
-	}
-	if s.Line == "" && s.File == "" && s.Key == "" {
-		return bad("send needs a step: a line, --file PATH or --snippet KEY")
-	}
-	sent, err := d.Send(a.pos[0], s, drive.SendOptions{Queue: a.on("queue"), Hold: a.str("hold"), Label: a.str("as"), NoWatch: a.on("no-watch")})
-	if sent != nil && sent.Outcome != "" {
-		fmt.Print(sent.Text())
-	}
-	if err != nil {
-		return fail(err)
-	}
-	return 0
-}
-
-func cmdOpen(d *drive.Driver, argv []string) int {
-	a, code := parseOr(argv, []string{"file", "snippet", "hold", "dir", "resume", "account", "model"}, nil)
-	if a == nil {
-		return code
-	}
-	if len(a.pos) == 0 {
-		return bad("open needs a LABEL")
-	}
-	s, err := step(a, a.pos[1:])
-	if err != nil {
-		return bad(err.Error())
-	}
-	dir := a.str("dir")
-	if dir == "" {
-		dir, _ = os.Getwd()
-	}
-	o, err := d.Open(a.pos[0], s, drive.OpenOptions{Dir: config.Expand(d.Cfg.Home, dir), Resume: a.str("resume"), Account: a.str("account"), Model: a.str("model"), Hold: a.str("hold")})
-	if o != nil {
-		fmt.Print(o.Text())
-	}
-	if err != nil {
-		return fail(err)
-	}
-	return 0
-}
-
-func cmdRespond(d *drive.Driver, argv []string) int {
-	a, code := parseOr(argv, nil, nil)
-	if a == nil {
-		return code
-	}
-	if len(a.pos) != 2 {
-		return bad("respond needs a VIEW and one of approve, deny, interrupt, clear")
-	}
-	r, err := d.Respond(a.pos[0], a.pos[1])
-	if r != nil {
-		fmt.Print(r.Text())
-	}
-	if err != nil {
-		return fail(err)
-	}
-	return 0
-}
-
-func cmdWatch(d *drive.Driver, argv []string) int {
-	a, code := parseOr(argv, []string{"sleep"}, []string{"due"})
-	if a == nil {
-		return code
-	}
-	if a.on("due") {
-		armed, later, err := d.Due()
-		for _, r := range armed {
-			fmt.Print(r.Text())
-		}
-		if err != nil {
-			return fail(err)
-		}
-		if len(armed) == 0 {
-			fmt.Println("no session needs its wake armed")
-		}
-		for _, r := range later {
-			fmt.Print(r.LaterText())
-		}
-		return 0
-	}
-	if s := a.str("sleep"); s != "" {
-		after, err := seconds(s, 0)
-		if err != nil || len(a.pos) == 0 {
-			return bad("watch --sleep needs SECONDS and a NOTE, such as: drive watch --sleep 300 veto")
-		}
-		if err := d.Timer(after, strings.Join(a.pos, " ")); err != nil {
-			return fail(err)
-		}
-		fmt.Printf("timer armed: the driver is woken in %s (%s)\n", after, strings.Join(a.pos, " "))
-		return 0
-	}
-	if len(a.pos) != 1 {
-		return bad("watch needs a SESSION, --due, or --sleep SECONDS NOTE")
-	}
-	w, err := d.Watch(a.pos[0])
-	if err != nil {
-		return fail(err)
-	}
-	fmt.Print(w.Text())
-	return 0
-}
-
-func cmdPark(d *drive.Driver, argv []string) int {
-	a, code := parseOr(argv, nil, nil)
-	if a == nil {
-		return code
-	}
-	if len(a.pos) < 2 {
-		return bad("park needs a VIEW and the REASON")
-	}
-	if err := d.Park(a.pos[0], strings.Join(a.pos[1:], " ")); err != nil {
-		return fail(err)
-	}
-	fmt.Printf("parked %s: no wake until a step is sent to it\n", strings.SplitN(a.pos[0], "@", 2)[0])
-	return 0
-}
-
-func cmdClose(d *drive.Driver, argv []string) int {
-	a, code := parseOr(argv, nil, nil)
-	if a == nil {
-		return code
-	}
-	if len(a.pos) != 1 {
-		return bad("close needs a VIEW")
-	}
-	if err := d.Close(a.pos[0]); err != nil {
-		return fail(err)
-	}
-	fmt.Printf("closed %s\n", strings.SplitN(a.pos[0], "@", 2)[0])
-	return 0
-}
-
-// clockNow is the driver's clock, which a test sets, so every time drive
-// prints and records comes from one clock.
-func clockNow(d *drive.Driver) time.Time {
-	if d.Now != nil {
-		return d.Now()
-	}
-	return time.Now()
+	return nil, args
 }

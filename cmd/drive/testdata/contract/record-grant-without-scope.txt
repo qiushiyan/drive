@@ -1,5 +1,7 @@
 $ drive record grant --source go ahead
-exit 1
+exit 2
 --- stdout
 --- stderr
-drive: a grant needs --source (the owner's words and where they said them) and --scope (what it covers)
+drive: error: missing flags: --scope=SCOPE
+Usage: drive record grant --source=SOURCE --scope=SCOPE [flags]
+Run "drive record grant --help" for details.

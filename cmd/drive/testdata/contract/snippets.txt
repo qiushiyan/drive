@@ -1,4 +1,4 @@
-$ drive snippet --list $ROOT/work
+$ drive snippets $ROOT/work
 exit 0
 --- stdout
 land-pr	$HOME/.config/tabtype/config.toml

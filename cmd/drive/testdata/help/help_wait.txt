@@ -1,0 +1,31 @@
+Usage: drive wait <session> [flags]
+
+Block until a session's turn ends, then print how it ended.
+
+The wait ends when the turn has stayed over for --quiet, or the session
+stops on a prompt; at once on an API error or an interrupt. It prints the
+end of the reply, the view to act on, and next: where the ending decides
+what to do. A driver that waits itself runs it in the background; a chat
+driver is woken instead (drive watch).
+
+Arguments:
+  <session>              The session to wait for.
+
+Flags:
+      --quiet=SECONDS    How long the turn must stay over before the wait ends, so a session that
+                         pauses between tools is not taken for done (default: 60).
+      --bg=SECONDS       How long to wait on a turn that ended while background jobs it started
+                         still run; such a turn usually resumes when they finish (default: 600).
+      --json             Print one JSON document instead of text.
+
+Inherited flags:
+  -h, --help             Show context-sensitive help.
+      --batch=NAME       Act in this batch instead of the current one, which stays current. It may
+                         stand anywhere on the line.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; the message prints the relaunch

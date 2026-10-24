@@ -1,0 +1,22 @@
+Usage: drive record grant --source=SOURCE --scope=SCOPE [flags]
+
+Record authority the owner handed over, in their words, with what it covers.
+
+A grant lives as long as the batch it was given in: a new batch starts with
+none.
+
+Flags:
+      --source=SOURCE    The owner's words, and where and when they said them (required).
+      --scope=SCOPE      What the grant covers (required).
+
+Inherited flags:
+  -h, --help             Show context-sensitive help.
+      --batch=NAME       Act in this batch instead of the current one, which stays current. It may
+                         stand anywhere on the line.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; the message prints the relaunch

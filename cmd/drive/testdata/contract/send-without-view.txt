@@ -2,4 +2,4 @@ $ drive send a00001 go
 exit 1
 --- stdout
 --- stderr
-drive: "a00001" is a session, not a view: act on what you read — `drive read a00001` prints the view to pass (a00001@…)
+drive: error: "a00001" is a session, not a view: act on what you read — `drive read a00001` prints the view to pass (a00001@…)

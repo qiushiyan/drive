@@ -2,4 +2,6 @@ $ drive send a00001@e274d317 go --file $HOME/nope.md
 exit 2
 --- stdout
 --- stderr
-drive: give one step: a line, --file PATH or --snippet KEY; `drive --help` lists the commands
+drive: error: --file: stat $HOME/nope.md: no such file or directory
+Usage: drive send <view> [<line> ...] [flags]
+Run "drive send --help" for details.

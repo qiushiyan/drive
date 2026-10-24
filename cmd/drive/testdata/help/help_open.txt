@@ -1,0 +1,47 @@
+Usage: drive open <label> [<line> ...] [flags]
+
+Open a new Claude Code session in Rex, in the batch, with an optional first step.
+
+The session opens in a new Rex block in the batch's Rex session and joins
+the batch under LABEL; the step, if given, is its first.
+
+Arguments:
+  <label>               The label the new session gets in the batch.
+  <line> ...            The step as one line, typed as is, a slash command too; with --snippet, the
+                        text the owner would type after the key (optional).
+
+Flags:
+      --file=PATH       Send this file instead: your own request, or anything longer than a line.
+      --snippet=KEY     Send the owner's TabType snippet KEY, as it resolves in the session's
+                        directory.
+      --dir=DIR         The directory the session starts in (default: .).
+      --resume=ID       Resume this Claude Code session id instead of starting fresh, such as a
+                        session relaunched on another account.
+      --account=NAME    Run it on this Claude account instead of the launcher's choice.
+      --model=MODEL     Run it on this model, such as fable for a fresh judge.
+      --hold=NAME       Name what its first turn uses that only one session may use at a time, as
+                        send's --hold does.
+
+Inherited flags:
+  -h, --help            Show context-sensitive help.
+      --batch=NAME      Act in this batch instead of the current one, which stays current. It may
+                        stand anywhere on the line.
+
+Constraints:
+  At most one of --file, --snippet.
+
+Steps:
+  A step is one of:
+    'one short line'        typed as is, a slash command too ('/write-spec Go with D1')
+    --file PATH             sent as "Read <copy> and do what it asks."; drive keeps the copy
+    --snippet KEY [TEXT…]   the owner's snippet for the session's directory, with
+                            TEXT where the owner would type after it
+  Text that starts with a dash goes after --, which ends the flags.
+  The first step a session gets in a batch carries the owner's notice ahead of it.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; the message prints the relaunch

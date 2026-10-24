@@ -1,0 +1,25 @@
+Usage: drive record ask --question=QUESTION --if-unanswered=IF-UNANSWERED <session> [flags]
+
+Record a question put to the owner, with its recommendation and what happens unanswered.
+
+Arguments:
+  <session>                  The session the question holds, or - for the batch.
+
+Flags:
+      --question=QUESTION    The question, as the owner reads it (required).
+      --recommendation=RECOMMENDATION
+                             What you recommend.
+      --if-unanswered=IF-UNANSWERED
+                             What happens while nobody answers (required).
+
+Inherited flags:
+  -h, --help                 Show context-sensitive help.
+      --batch=NAME           Act in this batch instead of the current one, which stays current. It
+                             may stand anywhere on the line.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; the message prints the relaunch

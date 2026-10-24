@@ -10,9 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiushiyan/drive/internal/batch"
-	"github.com/qiushiyan/drive/internal/config"
-	"github.com/qiushiyan/drive/internal/drive"
+	"github.com/qiushiyan/clikit"
+
 	"github.com/qiushiyan/drive/internal/testkit"
 )
 
@@ -22,6 +21,7 @@ type contract struct {
 	t    *testing.T
 	w    *testkit.World
 	home string
+	app  clikit.App
 }
 
 func newContract(t *testing.T) *contract {
@@ -36,11 +36,7 @@ func newContract(t *testing.T) *contract {
 	write(t, filepath.Join(home, ".agents/skills/drive-session/NOTICE.md"), "I am away.\n")
 	write(t, filepath.Join(home, ".config/tabtype/config.toml"),
 		"[[snippets]]\nkey = \"land-pr\"\nexpand = \"Open the PR and see it through code review.\"\n")
-	newDriver = func(cfg config.Config) *drive.Driver {
-		return &drive.Driver{Term: w, Host: w, Store: batch.Store{Dir: cfg.StateDir}, Cfg: cfg,
-			Watches: &testkit.Watches{}, Self: "/bin/drive", Now: w.Clock.Now, Sleep: w.Clock.Sleep}
-	}
-	return &contract{t: t, w: w, home: home}
+	return &contract{t: t, w: w, home: home, app: fake(w)}
 }
 
 // fixedHome is a home whose path is as long on every machine and every
@@ -74,7 +70,7 @@ var intentID = regexp.MustCompile(`("intent": ?)"([0-9a-f]{8})"`)
 // its order in the file, so records of one intent still share an id.
 func (c *contract) run(name string, args ...string) string {
 	c.t.Helper()
-	code, out, errs := cli(c.t, args...)
+	code, out, errs := cli(c.app, args...)
 	intents := map[string]string{}
 	clean := func(s string) string {
 		s = strings.ReplaceAll(strings.ReplaceAll(s, c.w.Root, "$ROOT"), c.home, "$HOME")
@@ -169,8 +165,9 @@ func TestContracts(t *testing.T) {
 	c.run("watch-due", "watch", "--due")
 	c.run("watch-session", "watch", "T1")
 	c.run("watch-sleep", "watch", "--sleep", "300", "veto")
+	c.run("timer", "timer", "300", "veto")
 	c.run("snippet", "snippet", "land-pr", work, "D3", "waits")
-	c.run("snippet-list", "snippet", "--list", work)
+	c.run("snippets", "snippets", work)
 	c.run("snippet-unknown", "snippet", "nope", work)
 	c.run("open", "open", "J1", "--dir", work, "Review the spec in docs/spec.md")
 	c.run("open-label-taken", "open", "J1", "--dir", work, "again")
@@ -194,6 +191,7 @@ func TestContracts(t *testing.T) {
 	c.run("send-dash-line", "send", "J1@00000000", "- a dash line")
 	c.run("send-dash-line-after-dashes", "send", "J1@00000000", "--", "- a dash line")
 	c.run("unknown-command", "frobnicate")
+	c.run("bare")
 }
 
 // A step a rejected login answers exits 4 and prints the relaunch.

@@ -1,5 +1,7 @@
 $ drive record answer A2 --source no --took maybe
-exit 1
+exit 2
 --- stdout
 --- stderr
-drive: --took "maybe": one of recommended, amended, delegated, moot
+drive: error: --took must be one of "recommended","amended","delegated","moot" but got "maybe"
+Usage: drive record answer --took=TOOK <ask> [flags]
+Run "drive record answer --help" for details.

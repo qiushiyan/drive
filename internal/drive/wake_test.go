@@ -341,7 +341,7 @@ func TestABatchWakesItsOwnDriver(t *testing.T) {
 	}
 	var rf *drive.Refused
 	if err := r.d.Timer(5*time.Minute, "veto"); !errors.As(err, &rf) ||
-		!strings.Contains(rf.Next, "drive watch --sleep 300 veto") || r.watches.Alive("drive-b2-timer-veto") {
+		!strings.Contains(rf.Next, "drive timer 300 veto") || r.watches.Alive("drive-b2-timer-veto") {
 		t.Fatalf("nor a timer: %v", err)
 	}
 	// A batch that wakes no one arms no timer: its driver sleeps itself.
@@ -357,11 +357,11 @@ func TestAFailedPostLeavesTheTurnUnwatched(t *testing.T) {
 	r := newRig(t, "webhook")
 	adopted(t, r, "T1")
 	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "T1", Reason: "no webhook configured"})
-	if m, _ := r.d.Metrics(""); m.Unwatched != 1 {
+	if m, _ := r.d.Metrics(); m.Unwatched != 1 {
 		t.Fatalf("failed: %d", m.Unwatched)
 	}
 	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "T1", HTTP: 204})
-	if m, _ := r.d.Metrics(""); m.Unwatched != 0 {
+	if m, _ := r.d.Metrics(); m.Unwatched != 0 {
 		t.Fatalf("posted: %d", m.Unwatched)
 	}
 }

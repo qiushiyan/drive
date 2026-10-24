@@ -1,0 +1,25 @@
+Usage: drive record answer --took=TOOK <ask> [flags]
+
+Record the owner's answer to an ask.
+
+Arguments:
+  <ask>                  The ask it answers, such as A3.
+
+Flags:
+      --source=SOURCE    The owner's words, or what showed the ask no longer holds.
+      --took=TOOK        Whether the owner took the recommendation, amended it, handed the question
+                         to someone else, or it stopped mattering (required; one of: recommended,
+                         amended, delegated, moot).
+      --explained        The owner needed the question explained before answering.
+
+Inherited flags:
+  -h, --help             Show context-sensitive help.
+      --batch=NAME       Act in this batch instead of the current one, which stays current. It may
+                         stand anywhere on the line.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; the message prints the relaunch

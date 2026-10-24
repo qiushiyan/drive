@@ -1,0 +1,6 @@
+$ drive timer 300 veto
+exit 1
+--- stdout
+--- stderr
+drive: error: batch b1 wakes no one (wake: none)
+next: wait it out yourself, in the background: sleep 300

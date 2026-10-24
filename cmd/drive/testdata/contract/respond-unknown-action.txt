@@ -1,5 +1,7 @@
 $ drive respond a00002@46abfde4 yes
-exit 1
+exit 2
 --- stdout
 --- stderr
-drive: unknown response "yes": approve, deny, interrupt or clear
+drive: error: <action> must be one of "approve","deny","interrupt","clear" but got "yes"
+Usage: drive respond <view> <action> [flags]
+Run "drive respond --help" for details.

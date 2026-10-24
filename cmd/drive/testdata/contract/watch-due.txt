@@ -2,4 +2,4 @@ $ drive watch --due
 exit 1
 --- stdout
 --- stderr
-drive: batch b1 wakes no one (wake: none)
+drive: error: batch b1 wakes no one (wake: none)

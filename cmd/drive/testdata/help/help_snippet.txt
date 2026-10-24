@@ -1,0 +1,24 @@
+Usage: drive snippet <key> [<dir>] [<text> ...] [flags]
+
+Print the owner's snippet KEY as a session in DIR would receive it.
+
+It prints the expanded text on stdout and the file it came from on stderr,
+to check what a send --snippet would type before sending it.
+
+Arguments:
+  <key>               The snippet's key, such as land-pr.
+  <dir>               The directory it resolves in: a project's own snippets win over the owner's
+                      global ones (optional; default: .).
+  <text> ...          The text the owner would type after the key (optional).
+
+Inherited flags:
+  -h, --help          Show context-sensitive help.
+      --batch=NAME    Act in this batch instead of the current one, which stays current. It may
+                      stand anywhere on the line.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; the message prints the relaunch

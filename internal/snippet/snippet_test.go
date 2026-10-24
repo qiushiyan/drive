@@ -63,7 +63,7 @@ expand = "/pl-loopy-handoff-distill merged and deployed"
 	if r.Text != "Recap this session. Short. Thanks." {
 		t.Fatalf("text goes where $0 is: %q", r.Text)
 	}
-	if _, err := Expand(home, wt, "nope", ""); err == nil || !strings.Contains(err.Error(), "--list") {
+	if _, err := Expand(home, wt, "nope", ""); err == nil || !strings.Contains(err.Error(), "drive snippets "+wt) {
 		t.Fatalf("a missing key names how to list them: %v", err)
 	}
 }

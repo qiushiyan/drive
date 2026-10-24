@@ -608,7 +608,7 @@ func TestRecordsAndMetrics(t *testing.T) {
 	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "/compact"}, drive.SendOptions{}); err == nil {
 		t.Fatal("a line that lost its start in a turn that ended is reported")
 	}
-	if m, _ := r.d.Metrics(""); m.Wakes != 2 || m.Unhandled != 0 {
+	if m, _ := r.d.Metrics(); m.Wakes != 2 || m.Unhandled != 0 {
 		t.Fatalf("a wake followed by a re-armed watch was handled: %d of %d unhandled", m.Unhandled, m.Wakes)
 	}
 	if _, err := r.d.Watch("T1"); err != nil {
@@ -671,7 +671,7 @@ func TestRecordsAndMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.w.Clock.Sleep(5 * time.Hour) // metrics read the morning after
-	m, err := r.d.Metrics("")
+	m, err := r.d.Metrics()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -684,7 +684,7 @@ func TestRecordsAndMetrics(t *testing.T) {
 		t.Fatalf("an open ask waits until the batch's last event, not until the metrics are read: to %s, wait %s", m.To, m.OwnerWait)
 	}
 	r.w.Clock.Sleep(time.Hour)
-	if again, _ := r.d.Metrics(""); again.OwnerWait != m.OwnerWait {
+	if again, _ := r.d.Metrics(); again.OwnerWait != m.OwnerWait {
 		t.Fatalf("owner wait does not grow with every reading: %s then %s", m.OwnerWait, again.OwnerWait)
 	}
 	if m.Sends != 4 || m.Sessions != 2 || m.Snippets+m.Commands+m.OwnWords != m.Sends {

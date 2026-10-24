@@ -96,7 +96,7 @@ func TestALostEnterIsNotTakenForAnArrival(t *testing.T) {
 	if unknown != 1 {
 		t.Fatalf("a send nobody can confirm is recorded unknown, not lost: %+v", r.events(batch.KindSend))
 	}
-	m, _ := r.d.Metrics("")
+	m, _ := r.d.Metrics()
 	if m.Unknown != 1 {
 		t.Fatalf("metrics count it: %+v", m.Unknown)
 	}
@@ -315,7 +315,7 @@ func TestALineReceivedOtherwiseReachedTheSession(t *testing.T) {
 	if _, err := r.d.Send(vb, drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); !isRefused(err) || !strings.Contains(err.Error(), "held by T5") {
 		t.Fatalf("the hold stands while that turn runs: %v", err)
 	}
-	if m, _ := r.d.Metrics(""); m.Other != 1 {
+	if m, _ := r.d.Metrics(); m.Other != 1 {
 		t.Fatalf("metrics count the line received as something else: %d", m.Other)
 	}
 }
@@ -404,7 +404,7 @@ func TestMetricsCountAChangeMergedWithoutAPullRequest(t *testing.T) {
 	if err := r.d.Close(r.view("T1")); err != nil {
 		t.Fatal(err)
 	}
-	m, err := r.d.Metrics("")
+	m, err := r.d.Metrics()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +425,7 @@ func TestMetricsCountAMergedChangeOnce(t *testing.T) {
 	adopted(t, r, "T2")
 	first, ref := progress.PRRef{Repo: "planlab-ai/main", Number: 9520}, progress.PRRef{Repo: "planlab-ai/main", Number: 9531}
 	r.d.Progress = prs{b.SID: {PR: &ref, PRs: []progress.PRRef{first, ref}}, s.SID: {PR: &ref, PRs: []progress.PRRef{ref}}}
-	m, err := r.d.Metrics("")
+	m, err := r.d.Metrics()
 	if err != nil {
 		t.Fatal(err)
 	}

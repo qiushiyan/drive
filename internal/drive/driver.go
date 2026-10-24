@@ -77,6 +77,10 @@ func (f *Failed) Error() string {
 	return f.What + "\nnext: " + f.Next
 }
 
+// Time reads the driver's clock, which a test sets: every time drive prints
+// or records comes from it.
+func (d *Driver) Time() time.Time { return d.now() }
+
 func (d *Driver) now() time.Time {
 	if d.Now != nil {
 		return d.Now()
@@ -286,7 +290,6 @@ type lease struct {
 	d       *Driver
 	block   string
 	release func()
-	noWake  bool
 }
 
 // end releases the session, arming its wake first where the action touched
@@ -299,7 +302,7 @@ func (l *lease) end() (watched bool, err error) {
 	touched := d.touched[l.block]
 	delete(d.touched, l.block)
 	d.mu.Unlock()
-	if !touched || l.noWake {
+	if !touched {
 		return false, nil
 	}
 	b, err := d.Batch()

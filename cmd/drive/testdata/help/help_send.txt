@@ -1,0 +1,49 @@
+Usage: drive send <view> [<line> ...] [flags]
+
+Send a session its next step, decided on a view.
+
+The send is refused, and nothing reaches the session, when the session has
+moved past the view, when it waits on a prompt (answer it first), or when
+another session holds what --hold names. It prints how the step arrived; in
+a batch that wakes a chat driver it arms the session's wake.
+
+Arguments:
+  <view>               The view the step was decided on, as read, wait, status or a wake printed it
+                       (T1@3fa91c07).
+  <line> ...           The step as one line, typed as is, a slash command too; with --snippet, the
+                       text the owner would type after the key (optional).
+
+Flags:
+      --file=PATH      Send this file instead: your own request, or anything longer than a line.
+      --snippet=KEY    Send the owner's TabType snippet KEY, as it resolves in the session's
+                       directory.
+      --queue          Send to a working session, which takes the step mid-turn. A session on a
+                       prompt takes nothing until it is answered.
+      --hold=NAME      Name what this step's turn uses that only one session may use at a time, such
+                       as a release or commits into a shared checkout; a second send or open naming
+                       it is refused, saying why, until this session is through.
+      --as=LABEL       The label a session outside the batch joins it under, on its first send.
+
+Inherited flags:
+  -h, --help           Show context-sensitive help.
+      --batch=NAME     Act in this batch instead of the current one, which stays current. It may
+                       stand anywhere on the line.
+
+Constraints:
+  At most one of --file, --snippet.
+
+Steps:
+  A step is one of:
+    'one short line'        typed as is, a slash command too ('/write-spec Go with D1')
+    --file PATH             sent as "Read <copy> and do what it asks."; drive keeps the copy
+    --snippet KEY [TEXT…]   the owner's snippet for the session's directory, with
+                            TEXT where the owner would type after it
+  Text that starts with a dash goes after --, which ends the flags.
+  The first step a session gets in a batch carries the owner's notice ahead of it.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; the message prints the relaunch

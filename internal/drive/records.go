@@ -165,12 +165,9 @@ type MergedPR struct {
 	Sessions []string
 }
 
-// Metrics computes the measures for a batch ("" is the current one).
-func (d *Driver) Metrics(name string) (*Metrics, error) {
+// Metrics computes the measures for the batch the driver acts in.
+func (d *Driver) Metrics() (*Metrics, error) {
 	b, err := d.Batch()
-	if name != "" {
-		b, err = d.Store.Get(name)
-	}
 	if err != nil {
 		return nil, &Refused{Reason: err.Error()}
 	}

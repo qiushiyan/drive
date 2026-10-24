@@ -2,5 +2,5 @@ $ drive send a00001@e274d317 go --as T4
 exit 4
 --- stdout
 --- stderr
-drive: T4 took the step and answered "Login expired · Please run /login" (authentication_failed, account acct@example.com)
+drive: error: T4 took the step and answered "Login expired · Please run /login" (authentication_failed, account acct@example.com)
 next: relaunch it on another account with the step it was to take: drive close T4@12c8579c && drive open T4 --dir $ROOT/work --resume sid-1 --account other@example.com go

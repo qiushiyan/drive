@@ -1,0 +1,74 @@
+Usage: drive <command> [flags]
+
+drive runs Claude Code sessions in Rex for their owner: read where each stands, send its next step, answer its prompts, and be woken when its turn ends.
+
+The driver stands in for the sessions' owner, usually while they are away:
+a chat bot woken by webhook, or a Claude Code session. A batch is one
+drive's sessions and its record; `drive batch new NAME` starts one.
+
+Every action on a session is decided on a VIEW, such as T1@3fa91c07, which
+read, wait, status and every wake print. The action is refused once the
+session has moved past that view, so a step decided on an old turn never
+reaches a new one. A working session's view changes as it writes: decide on
+a turn that has ended, or send with --queue. One driver acts on a session at
+a time.
+
+A SESSION is a label in the batch (T1), or a session's Rex block id, whose
+last six characters are enough, before it joins the batch.
+
+A refusal or failure that leaves something to do ends with a next: line: a
+command that runs as written on the session as it stands. Whether the step
+still makes sense is the driver's judgment.
+
+Flags:
+  -h, --help          Show context-sensitive help.
+      --batch=NAME    Act in this batch instead of the current one, which stays current. It may
+                      stand anywhere on the line.
+
+Commands:
+  status                             Print every session in the batch, live: its state, stage, pull
+                                     request, wake and view.
+  read <session>                     Print a session's newest reply, where it stands, its view, and
+                                     next: where its state decides it.
+  wait <session>                     Block until a session's turn ends, then print how it ended.
+  send <view> [<line> ...]           Send a session its next step, decided on a view.
+  open <label> [<line> ...]          Open a new Claude Code session in Rex, in the batch, with an
+                                     optional first step.
+  respond <view> <action>            Answer the prompt a session waits on.
+  watch [<session>]                  Arm a session's wake in a batch that wakes a chat driver; --due
+                                     arms every one that needs it.
+  timer <seconds> <note> ...         Wake the driver after a delay, with a note: a veto window, a
+                                     check that is due later.
+  park <view> <reason> ...           Stop a session's wakes until a step is sent to it, keeping why.
+  close <view>                       Close a session's block after its last step.
+  record grant --source=SOURCE --scope=SCOPE
+                                     Record authority the owner handed over, in their words, with
+                                     what it covers.
+  record ask --question=QUESTION --if-unanswered=IF-UNANSWERED <session>
+                                     Record a question put to the owner, with its recommendation and
+                                     what happens unanswered.
+  record answer --took=TOOK <ask>    Record the owner's answer to an ask.
+  record note <text> ...             Record a note, such as the plan, for the run after a reset to
+                                     read.
+  log                                Print the batch's timeline: what was sent, answered, opened,
+                                     parked and closed, and every wake.
+  metrics                            Print the batch's measures: asks and the owner's wait, merges,
+                                     sends, wakes, refusals.
+  batch show                         Print the batch: its start, wakes, Rex session, zone, sessions
+                                     and directory (default).
+  batch new <name>                   Start a batch and make it current.
+  batch use <name>                   Make a batch current.
+  batch list                         List every batch, the current one starred.
+  snippet <key> [<dir>] [<text> ...]
+                                     Print the owner's snippet KEY as a session in DIR would receive
+                                     it.
+  snippets [<dir>]                   List the snippet keys that resolve in DIR, each with its file.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; the message prints the relaunch
+
+Run "drive <command> --help" for a command's details.

@@ -1,0 +1,20 @@
+Usage: drive log [flags]
+
+Print the batch's timeline: what was sent, answered, opened, parked and closed, and every wake.
+
+Flags:
+      --since=TIME    Print only what happened from this time on, a date or a date and time such as
+                      "2026-10-22 16:00", read in the zone drive prints times in.
+      --json          Print the events as recorded, one JSON object per line.
+
+Inherited flags:
+  -h, --help          Show context-sensitive help.
+      --batch=NAME    Act in this batch instead of the current one, which stays current. It may
+                      stand anywhere on the line.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; the message prints the relaunch

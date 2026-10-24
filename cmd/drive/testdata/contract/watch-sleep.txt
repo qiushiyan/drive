@@ -2,5 +2,5 @@ $ drive watch --sleep 300 veto
 exit 1
 --- stdout
 --- stderr
-drive: batch b1 wakes no one (wake: none)
+drive: error: batch b1 wakes no one (wake: none)
 next: wait it out yourself, in the background: sleep 300

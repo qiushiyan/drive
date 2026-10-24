@@ -123,7 +123,7 @@ func Expand(home, dir, key, text string) (Snippet, error) {
 		}
 	}
 	if found == nil {
-		return Snippet{}, fmt.Errorf("no snippet %q for %s; `drive snippet --list %s` shows the keys", key, dir, dir)
+		return Snippet{}, fmt.Errorf("no snippet %q for %s; `drive snippets %s` lists the keys", key, dir, dir)
 	}
 	body := strings.Trim(found.Text, "\n")
 	switch {

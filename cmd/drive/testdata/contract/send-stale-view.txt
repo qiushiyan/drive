@@ -2,5 +2,5 @@ $ drive send T1@00000000 go
 exit 1
 --- stdout
 --- stderr
-drive: T1 has moved past view T1@00000000: it has received another prompt since: the land-pr snippet drive sent at 02:00
+drive: error: T1 has moved past view T1@00000000: it has received another prompt since: the land-pr snippet drive sent at 02:00
 next: read it again and decide on what it shows now: drive read T1

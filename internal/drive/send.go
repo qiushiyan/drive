@@ -31,10 +31,9 @@ func (s Step) empty() bool { return s.Line == "" && s.File == "" && s.Key == "" 
 
 // SendOptions shape a send.
 type SendOptions struct {
-	Queue   bool   // the session is working: let it take this mid-turn
-	Hold    string // a resource this step's turn uses that only one session may use at once
-	Label   string // the label a session outside the batch joins it under
-	NoWatch bool
+	Queue bool   // the session is working: let it take this mid-turn
+	Hold  string // a resource this step's turn uses that only one session may use at once
+	Label string // the label a session outside the batch joins it under
 }
 
 // Sent reports a send.
@@ -77,7 +76,6 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 	if err != nil {
 		return nil, d.refuse(b, label, err)
 	}
-	l.noWake = opt.NoWatch
 	defer func() { sent, err = endSend(l, sent, err) }()
 	if err := d.settle(b, label, block); err != nil {
 		return nil, unsent(err, again)
@@ -794,7 +792,7 @@ func (d *Driver) retryHint(o *Observation, kind string) string {
 	}
 	if webhook, _ := d.wakes(o.Session.Block); webhook {
 		// No wake comes for an API recovering: a timer brings the driver back.
-		return fmt.Sprintf("the session is idle again; send the step again once the API recovers, and have a timer bring you back to it: drive watch --sleep 900 %s",
+		return fmt.Sprintf("the session is idle again; send the step again once the API recovers, and have a timer bring you back to it: drive timer 900 %s",
 			shellQuote("retry "+o.Label))
 	}
 	return fmt.Sprintf("the session is idle again; read it (drive read %s) and send the step again when the API recovers", o.Label)

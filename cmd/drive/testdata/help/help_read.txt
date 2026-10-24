@@ -1,0 +1,34 @@
+Usage: drive read <session> [flags]
+
+Print a session's newest reply, where it stands, its view, and next: where its state decides it.
+
+A closed or gone session is read from its transcript as it ended, with no
+view, since there is nothing left to act on.
+
+Arguments:
+  <session>           The session: a label in the batch, or a block id for one outside it.
+
+Flags:
+      --prompts=N     Print the last N prompts it was told instead of its reply: what it is working
+                      on and how it got there.
+      --pending       Print the tool call its permission prompt waits on.
+      --user          Print its newest prompt as it arrived, to see whether a step sent to it landed
+                      whole.
+      --screen        Print the end of its screen: a prompt's options, or whatever covers its input
+                      box.
+      --json          Print one JSON document instead of text.
+
+Inherited flags:
+  -h, --help          Show context-sensitive help.
+      --batch=NAME    Act in this batch instead of the current one, which stays current. It may
+                      stand anywhere on the line.
+
+Constraints:
+  At most one of --prompts, --pending, --user, --screen.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; the message prints the relaunch

@@ -2,4 +2,4 @@ $ drive batch use nope
 exit 1
 --- stdout
 --- stderr
-drive: no batch "nope"; `drive batch list` shows them
+drive: error: no batch "nope"; `drive batch list` shows them
