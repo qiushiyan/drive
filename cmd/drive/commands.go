@@ -69,8 +69,9 @@ sessions    a row per session in the batch; others, a row per Claude session out
             label, sid (Claude Code's session id), block, window, name (Rex's label, outside
             the batch), state, for_seconds (in that state), account, input, input_text (a
             typed or suggested line), stage, pr (number, state, draft, merge, review, passed,
-            failed, pending), last_sent, watch, unhandled_wake, wake_due (why the watchdog
-            would arm its wake), view, error (why the row could not be read), jobs (started,
+            failed, pending), last_sent, watch (the WAKE column's words), unhandled_wake
+            (a wake was posted and nothing done since), wake_due (why --due would arm its
+            wake; left out when nothing is due), view, error (why the row could not be read), jobs (started,
             command)
 closed      the batch's sessions closed since
 holds       a line per hold, as the table prints it
@@ -104,8 +105,9 @@ type ReadCmd struct {
 
 func (c *ReadCmd) Help() string {
 	return `
-A closed or gone session is read from its transcript as it ended, with no
-view, since there is nothing left to act on.`
+Every mode prints what it read, then where the session stands, its view and
+next:. A closed or gone session is read from its transcript as it ended,
+with no view, since there is nothing left to act on.`
 }
 
 func (c *ReadCmd) HelpSections() []clikit.Section {
@@ -216,8 +218,8 @@ var stepSections = []clikit.Section{{Title: "Steps", Body: `
 A step is one of:
   'one short line'        typed as is, a slash command too ('/write-spec Go with D1')
   --file PATH             sent as "Read <copy> and do what it asks."; drive keeps the copy
-  --snippet KEY [TEXT…]   the owner's snippet for the session's directory, with
-                          TEXT where the owner would type after it
+  --snippet KEY 'TEXT'    the owner's snippet for the session's directory, with the
+                          step's words, TEXT, where the owner would type after it
 Text that starts with a dash goes after --, which ends the flags.
 The first step a session gets in a batch carries the owner's notice ahead of it.`}}
 
@@ -225,8 +227,8 @@ type SendCmd struct {
 	runs
 	View  string `arg:"" help:"The view the step was decided on, as read, wait, status or a wake printed it (T1@3fa91c07)."`
 	Step  `embed:""`
-	Queue bool   `help:"Send to a working session, which takes the step mid-turn. A session on a prompt takes nothing until it is answered."`
-	Hold  string `placeholder:"NAME" help:"Name what this step's turn uses that only one session may use at a time, such as a release or commits into a shared checkout; a second send or open naming it is refused, saying why, until this session is through."`
+	Queue bool   `help:"Send to a working session, which takes the step mid-turn: the view then needs only that no prompt came since. A session on a prompt takes nothing until it is answered."`
+	Hold  string `placeholder:"NAME" help:"Name what this step uses that only one session may use at a time, such as a release or commits into a shared checkout. A second send or open naming it is refused, saying why, while this session works, later steps included, waits on a prompt, or runs a background job it started."`
 	As    string `placeholder:"LABEL" help:"The label a session outside the batch joins it under, on its first send."`
 }
 
@@ -292,8 +294,10 @@ type RespondCmd struct {
 
 func (c *RespondCmd) Help() string {
 	return `
-A deny ends the turn, and the session takes its next step as usual. It
-prints what the session reads afterwards.`
+A deny ends the turn, and the session takes its next step as usual. On a
+question, approve takes the option ❯ points at and deny dismisses it, after
+which a send can answer in words; read --screen shows the options. It prints
+what the session reads afterwards.`
 }
 
 func (c *RespondCmd) act(ctx *kong.Context, d *drive.Driver) error {
@@ -407,7 +411,8 @@ type CloseCmd struct {
 func (c *CloseCmd) Help() string {
 	return `
 Refused while the session works, runs a background job, or holds a typed
-line nobody sent: next: says what to do first.`
+line nobody sent: next: gives what to do first, such as the step that has
+the session stop its job.`
 }
 
 func (c *CloseCmd) act(ctx *kong.Context, d *drive.Driver) error {
@@ -428,7 +433,8 @@ type RecordCmd struct {
 func (RecordCmd) Help() string {
 	return `
 The record is the batch's memory: status lists the grants and open asks,
-log has every record, and metrics measures the asks.`
+log has every record, and metrics measures the asks. Each prints the id it
+recorded, such as A3, which record answer takes.`
 }
 
 // recorded prints the id a record got.

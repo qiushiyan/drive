@@ -2,8 +2,10 @@ Usage: drive respond <view> <action> [flags]
 
 Answer the prompt a session waits on.
 
-A deny ends the turn, and the session takes its next step as usual. It
-prints what the session reads afterwards.
+A deny ends the turn, and the session takes its next step as usual. On a
+question, approve takes the option ❯ points at and deny dismisses it, after
+which a send can answer in words; read --screen shows the options. It prints
+what the session reads afterwards.
 
 Arguments:
   <view>              The view the answer was decided on.
@@ -20,4 +22,5 @@ Exit codes:
   1    refused: nothing was done; next: says what to run instead
   2    invalid arguments; nothing was run
   3    tried and did not end as asked; the message says what did happen
-  4    the session's login was rejected; the message prints the relaunch
+  4    the session's login was rejected; next: relaunches it on another account, or says to tell the
+       owner

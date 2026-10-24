@@ -34,8 +34,8 @@ Steps:
   A step is one of:
     'one short line'        typed as is, a slash command too ('/write-spec Go with D1')
     --file PATH             sent as "Read <copy> and do what it asks."; drive keeps the copy
-    --snippet KEY [TEXT…]   the owner's snippet for the session's directory, with
-                            TEXT where the owner would type after it
+    --snippet KEY 'TEXT'    the owner's snippet for the session's directory, with the
+                            step's words, TEXT, where the owner would type after it
   Text that starts with a dash goes after --, which ends the flags.
   The first step a session gets in a batch carries the owner's notice ahead of it.
 
@@ -44,4 +44,5 @@ Exit codes:
   1    refused: nothing was done; next: says what to run instead
   2    invalid arguments; nothing was run
   3    tried and did not end as asked; the message says what did happen
-  4    the session's login was rejected; the message prints the relaunch
+  4    the session's login was rejected; next: relaunches it on another account, or says to tell the
+       owner

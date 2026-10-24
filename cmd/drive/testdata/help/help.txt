@@ -14,7 +14,8 @@ a turn that has ended, or send with --queue. One driver acts on a session at
 a time.
 
 A SESSION is a label in the batch (T1), or a session's Rex block id, whose
-last six characters are enough, before it joins the batch.
+last six characters are enough, before it joins the batch; its view starts
+the same way (7c1e2a@3fa91c07). Copy a view as drive printed it.
 
 A refusal or failure that leaves something to do ends with a next: line: a
 command that runs as written on the session as it stands. Whether the step
@@ -69,6 +70,7 @@ Exit codes:
   1    refused: nothing was done; next: says what to run instead
   2    invalid arguments; nothing was run
   3    tried and did not end as asked; the message says what did happen
-  4    the session's login was rejected; the message prints the relaunch
+  4    the session's login was rejected; next: relaunches it on another account, or says to tell the
+       owner
 
 Run "drive <command> --help" for a command's details.
