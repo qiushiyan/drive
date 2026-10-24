@@ -87,24 +87,23 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 // wakes says whether the driver is a chat bot brought back by the session's
 // wake, which cannot hold a command open, and if so whether the session's
 // wake is armed. A Claude Code driver waits for a turn itself.
-func (d *Driver) wakes(block string) (webhook, armed bool) {
-	b, err := d.Batch()
-	if err != nil || b.Meta.Wake != "webhook" {
+func (d *Driver) wakes(o *Observation) (webhook, armed bool) {
+	if o.in == nil || o.in.Meta.Wake != "webhook" {
 		return false, false
 	}
-	return true, d.Watches != nil && d.Watches.Alive(watchName(b, block))
+	return true, d.Watches != nil && d.Watches.Alive(watchName(o.in, o.Session.Block))
 }
 
 // whenTurnEnds says how the driver comes back to a session once its
 // working turn ends.
-func (d *Driver) whenTurnEnds(label, block string) string {
-	switch webhook, armed := d.wakes(block); {
+func (d *Driver) whenTurnEnds(o *Observation) string {
+	switch webhook, armed := d.wakes(o); {
 	case !webhook:
-		return "wait for its turn to end: " + d.run("wait", label)
+		return "wait for its turn to end: " + d.run("wait", o.Label)
 	case armed:
 		return "its wake comes when its turn ends"
 	}
-	return "arm its wake, which comes when its turn ends: " + d.run("watch", label)
+	return "arm its wake, which comes when its turn ends: " + d.run("watch", o.Label)
 }
 
 // settle gives an outcome to the sends an earlier driver of this session
@@ -227,11 +226,11 @@ func (d *Driver) ready(o *Observation, opt SendOptions, step Step) error {
 		queued := opt
 		queued.Queue = true
 		return &Refused{Reason: fmt.Sprintf("%s is working (for %s)", o.Label, since(d.now(), o.Session.Since())),
-			Next: fmt.Sprintf("%s, and its step is decided then; only a step meant to reach it mid-turn goes now: %s", d.whenTurnEnds(o.Label, o.Session.Block), d.sendCommand(view, step, queued))}
+			Next: fmt.Sprintf("%s, and its step is decided then; only a step meant to reach it mid-turn goes now: %s", d.whenTurnEnds(o), d.sendCommand(view, step, queued))}
 	case !opt.Queue && !o.Frontier.Answered():
 		p := o.Frontier.Newest()
-		return &Refused{Reason: fmt.Sprintf("%s has a prompt it has not answered yet (%s: %s)", o.Label, p.At.In(d.zone()).Format("15:04"), clip(promptText(*p), 80)),
-			Next: "someone already sent its next step; " + d.whenTurnEnds(o.Label, o.Session.Block)}
+		return &Refused{Reason: fmt.Sprintf("%s has a prompt it has not answered yet (%s: %s)", o.Label, p.At.In(o.zone()).Format("15:04"), clip(promptText(*p), 80)),
+			Next: "someone already sent its next step; " + d.whenTurnEnds(o)}
 	case o.Input == turn.InputTyped:
 		return &Refused{Reason: fmt.Sprintf("%s's input box holds typed text nobody sent: %q; it may be the owner's", o.Label, clip(o.Typed, 80)),
 			Next: fmt.Sprintf("leave it, and park the session if it waits on the owner, as nothing wakes you for it: %s; if it is a step of yours that never went out, clear it: %s",
@@ -476,7 +475,7 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 		evs, err := b.Events()
 		var after *Observation
 		if err == nil {
-			after, err = d.observe(batch.Members(evs), o.Label)
+			after, err = d.observe(b, batch.Members(evs), o.Label)
 		}
 		if err == nil {
 			err = d.ready(after, SendOptions{}, p.step)
@@ -702,7 +701,7 @@ func (d *Driver) retryHint(o *Observation, kind string) string {
 	if kind == "authentication_failed" {
 		return d.relaunchHint(o)
 	}
-	if webhook, _ := d.wakes(o.Session.Block); webhook {
+	if webhook, _ := d.wakes(o); webhook {
 		// No wake comes for an API recovering: a timer brings the driver back.
 		return "the session is idle again; send the step again once the API recovers, and have a timer bring you back to it: " + d.run("timer", "900", text("retry "+o.Label))
 	}

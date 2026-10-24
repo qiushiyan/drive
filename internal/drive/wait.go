@@ -39,7 +39,7 @@ type Ending struct {
 // background jobs run usually resumes when they finish but may also have
 // ended on a question, so after bgCap the wait returns anyway.
 func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
-	_, _, members, err := d.members()
+	b, _, members, err := d.members()
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 	stable := d.now()
 	misses := 0
 	for {
-		o, err := d.observe(members, ref)
+		o, err := d.observe(b, members, ref)
 		if err != nil {
 			// One unreadable look is often Rex busy for a moment; three in a row is a session gone.
 			var r *Refused
@@ -114,7 +114,7 @@ func (d *Driver) nextFor(o *Observation, state State, jobs []session.Shell) stri
 		return d.answerNext(o.Label, o.View.String(), state)
 	case state == "error" && o.Frontier.Error != nil && o.Frontier.Error.Kind == "rate_limit":
 		back := "read it again after the reset to see it under way"
-		if webhook, _ := d.wakes(o.Session.Block); webhook {
+		if webhook, _ := d.wakes(o); webhook {
 			back = d.run("watch", "--due") + " arms its wake once it is under way again"
 		}
 		return fmt.Sprintf("if its screen says it continues automatically once the limit resets (%s), leave it: the turn resumes by itself, and %s; otherwise %s",
@@ -129,7 +129,7 @@ func (d *Driver) nextFor(o *Observation, state State, jobs []session.Shell) stri
 		return fmt.Sprintf("its turn was interrupted; read where it stopped (%s) before its next step", d.run("read", o.Label))
 	case state == "done" && len(jobs) > 0:
 		again := "watch it again (" + d.run("watch", o.Label) + ")"
-		if webhook, _ := d.wakes(o.Session.Block); !webhook {
+		if webhook, _ := d.wakes(o); !webhook {
 			again = "wait for it again (" + d.run("wait", o.Label) + ")"
 		}
 		return fmt.Sprintf("if the reply says it waits on its job, %s; if the job should have ended, have the session stop it: %s; otherwise send its next step",

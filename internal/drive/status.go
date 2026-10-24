@@ -43,19 +43,19 @@ type Reading struct {
 
 // Read reads a session and returns the view to act on.
 func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
-	_, _, members, err := d.members()
+	b, _, members, err := d.members()
 	if err != nil {
 		return nil, err
 	}
 	m := batch.Find(members, ref)
 	if m != nil && m.Closed {
-		return d.readEnded(m, "closed", mode, n)
+		return d.readEnded(b, m, "closed", mode, n)
 	}
-	o, err := d.observe(members, ref)
+	o, err := d.observe(b, members, ref)
 	if err != nil {
 		if m != nil {
 			if _, lerr := session.Locate(d.Term, d.Host, m.Block); errors.Is(lerr, session.ErrNoClaude) {
-				return d.readEnded(m, "gone", mode, n)
+				return d.readEnded(b, m, "gone", mode, n)
 			}
 		}
 		return nil, err
@@ -71,13 +71,13 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 		r.Body = lastLines(strings.TrimRight(screen, "\r\n "), 40)
 		return r, nil
 	}
-	return r, d.readText(r, o.Frontier, mode, n)
+	return r, d.readText(r, o.Frontier, mode, n, o.zone())
 }
 
 // readEnded reads a member whose session has ended, its block closed or its
 // process gone, from its transcript, which outlives both: a report run after
 // a reset still has its recap. It has no screen, prompt or view to act on.
-func (d *Driver) readEnded(m *batch.Member, state State, mode ReadMode, n int) (*Reading, error) {
+func (d *Driver) readEnded(b *batch.Batch, m *batch.Member, state State, mode ReadMode, n int) (*Reading, error) {
 	path := ""
 	if m.SID != "" {
 		path = d.Host.Transcript(m.SID)
@@ -95,11 +95,12 @@ func (d *Driver) readEnded(m *batch.Member, state State, mode ReadMode, n int) (
 		return nil, fmt.Errorf("reading %s's transcript: %w", m.Label, err)
 	}
 	r := &Reading{Label: m.Label, SID: m.SID, State: state, Account: m.Account}
-	return r, d.readText(r, f, mode, n)
+	return r, d.readText(r, f, mode, n, zoneOf(b))
 }
 
-// readText fills a reading's text from the transcript, as mode asks.
-func (d *Driver) readText(r *Reading, f turn.Frontier, mode ReadMode, n int) error {
+// readText fills a reading's text from the transcript, as mode asks, its
+// times in zone.
+func (d *Driver) readText(r *Reading, f turn.Frontier, mode ReadMode, n int, zone *time.Location) error {
 	switch mode {
 	case ReadPrompts:
 		ps := f.Prompts
@@ -115,7 +116,7 @@ func (d *Driver) readText(r *Reading, f turn.Frontier, mode ReadMode, n int) err
 			if p.Queued {
 				q = " (queued)"
 			}
-			fmt.Fprintf(&b, "--- %s%s\n%s\n\n", p.At.In(d.zone()).Format("01-02 15:04"), q, promptText(p))
+			fmt.Fprintf(&b, "--- %s%s\n%s\n\n", p.At.In(zone).Format("01-02 15:04"), q, promptText(p))
 		}
 		r.Body = strings.TrimRight(b.String(), "\n")
 	case ReadPending:
@@ -232,7 +233,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 		wg.Add(1)
 		go func(i int, m *batch.Member) {
 			defer wg.Done()
-			r := d.row(members, m.Label, withProgress)
+			r := d.row(b, members, m.Label, withProgress)
 			r.Window, r.Member = window[m.Block], true
 			if m.LastSend != nil {
 				r.LastSent, r.SentAt = sentLabel(m.LastSend), m.LastSend.At
@@ -253,7 +254,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 			if st, err := d.Term.Status(bl.ID); err != nil || st == nil {
 				return
 			}
-			r := d.row(nil, bl.ID, false)
+			r := d.row(nil, nil, bl.ID, false)
 			if r.Error != "" {
 				return
 			}
@@ -404,9 +405,9 @@ func sentLabel(e *batch.Event) string {
 	}
 }
 
-func (d *Driver) row(members []*batch.Member, label string, withProgress bool) Row {
+func (d *Driver) row(b *batch.Batch, members []*batch.Member, label string, withProgress bool) Row {
 	r := Row{Label: label}
-	o, err := d.observe(members, label)
+	o, err := d.observe(b, members, label)
 	if err != nil {
 		r.State, r.Error = "gone", firstLine(err.Error())
 		return r

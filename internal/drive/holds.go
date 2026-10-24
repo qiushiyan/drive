@@ -91,7 +91,7 @@ func (d *Driver) waiterLines(b *batch.Batch, label string) string {
 				continue
 			}
 			view := w.Session + "@VIEW"
-			if o, err := d.observe(members, w.Session); err == nil {
+			if o, err := d.observe(b, members, w.Session); err == nil {
 				view = o.View.String()
 			}
 			fmt.Fprintf(&out, "waiting for %s, which %s held: %s; send it once %s is free (%s): %s\n",

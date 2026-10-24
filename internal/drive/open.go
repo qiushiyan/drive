@@ -50,7 +50,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return nil, &Refused{Reason: "the primary account's launcher is not known: its name is the owner's shell's",
 			Next: "open on another account, or tell the owner to set primary_name in ~/.config/drive/config.toml"}
 	}
-	release, err := d.own(label, "open:"+label, "opening "+label)
+	release, err := d.own(b, label, "open:"+label, "opening "+label)
 	if err != nil {
 		return nil, d.refuse(b, label, err)
 	}

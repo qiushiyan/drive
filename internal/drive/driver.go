@@ -110,9 +110,9 @@ func (d *Driver) poll() time.Duration {
 	return 2 * time.Second
 }
 
-// zone is where times are shown: the batch's zone, else this machine's.
-func (d *Driver) zone() *time.Location {
-	if b, err := d.Batch(); err == nil {
+// zoneOf is where times are shown: the batch's zone, else this machine's.
+func zoneOf(b *batch.Batch) *time.Location {
+	if b != nil {
 		return b.Zone()
 	}
 	return time.Local
@@ -126,8 +126,10 @@ func (d *Driver) Batch() (*batch.Batch, error) {
 	return d.Store.Current()
 }
 
-// Observation is one session as it stands.
+// Observation is one session as it stands, read in a batch: what a message
+// about it says, of its wake or of another account, is that batch's.
 type Observation struct {
+	in       *batch.Batch  // nil outside any batch
 	Label    string        // the batch's label, or the block's short id outside the batch
 	Member   *batch.Member // nil outside the batch
 	Session  *session.Session
@@ -139,6 +141,8 @@ type Observation struct {
 
 // State is where the session's turn stands, in one word.
 func (o *Observation) State() State { return turnState(o.Session, o.Frontier) }
+
+func (o *Observation) zone() *time.Location { return zoneOf(o.in) }
 
 // target resolves a label in the batch or a block id to the session's
 // label and block, without reading the session.
@@ -156,18 +160,19 @@ func (d *Driver) target(members []*batch.Member, ref string) (label, block strin
 // own takes the lock key, a session's block or a label being opened, for
 // one action described by what; release gives it back. A second driver
 // acting meanwhile is refused with what the first is doing.
-func (d *Driver) own(label, key, what string) (release func(), err error) {
+func (d *Driver) own(b *batch.Batch, label, key, what string) (release func(), err error) {
 	release, err = d.Store.Own(key, what)
 	if busy, ok := errors.AsType[*batch.Busy](err); ok {
-		return nil, &Refused{Reason: fmt.Sprintf("another driver is %s (pid %d, since %s)", busy.What, busy.PID, busy.Since.In(d.zone()).Format("15:04:05")),
+		return nil, &Refused{Reason: fmt.Sprintf("another driver is %s (pid %d, since %s)", busy.What, busy.PID, busy.Since.In(zoneOf(b)).Format("15:04:05")),
 			Next: fmt.Sprintf("leave %s to it; once it is done, %s shows where it stands", label, d.run("read", label))}
 	}
 	return release, err
 }
 
-// observe reads one session. ref is a label in the batch or a block id.
-func (d *Driver) observe(members []*batch.Member, ref string) (*Observation, error) {
-	o := &Observation{}
+// observe reads one session in batch b, whose sessions are members. ref is
+// a label in the batch or a block id.
+func (d *Driver) observe(b *batch.Batch, members []*batch.Member, ref string) (*Observation, error) {
+	o := &Observation{in: b}
 	label, block, err := d.target(members, ref)
 	if err != nil {
 		return nil, err
@@ -247,7 +252,8 @@ func (d *Driver) members() (*batch.Batch, []batch.Event, []*batch.Member, error)
 // drive sent that the prompt is: several runs act on one batch, and a run
 // refused over another's step should know the session did not move alone.
 // Queued sends only need the session to have received nothing since.
-func (d *Driver) checkView(o *Observation, v turn.View, promptOnly bool, zone *time.Location, evs []batch.Event) error {
+func (d *Driver) checkView(o *Observation, v turn.View, promptOnly bool, evs []batch.Event) error {
+	zone := o.zone()
 	cur := o.View
 	if v.Prompt == cur.Prompt && (promptOnly || v.Reply == cur.Reply) {
 		return nil
@@ -318,9 +324,10 @@ func tail(s string, n int) string {
 // the one it runs on, and none whose login this batch saw rejected. The
 // primary (~/.claude, which a session reports as "primary") is one when the
 // name its launcher takes is known.
-func (d *Driver) otherAccounts(current string) []string {
+func (d *Driver) otherAccounts(b *batch.Batch, current string) []string {
 	rejected := map[string]bool{current: true}
-	if _, evs, _, err := d.members(); err == nil {
+	if b != nil {
+		evs, _ := b.Events()
 		for _, e := range evs {
 			if e.Account != "" && (e.Kind == batch.KindFailure || e.Kind == batch.KindRefused) {
 				rejected[e.Account] = true
@@ -345,13 +352,14 @@ func (d *Driver) otherAccounts(current string) []string {
 
 // relaunchHint says how to carry a session whose login was rejected over to
 // another account, for a driver that has its step to hand.
-func (d *Driver) relaunchHint(o *Observation) string { return d.relaunch(o, d.lastStep(o.Label)) }
+func (d *Driver) relaunchHint(o *Observation) string { return d.relaunch(o, lastStep(o.in, o.Label)) }
 
 // lastStep is the step a session was last sent in this batch, as drive open
 // takes it: what a session whose login was rejected was to take. A file or
 // a snippet goes again as the copy drive saved of it.
-func (d *Driver) lastStep(label string) Step {
-	if _, evs, _, err := d.members(); err == nil {
+func lastStep(b *batch.Batch, label string) Step {
+	if b != nil {
+		evs, _ := b.Events()
 		for _, e := range slices.Backward(evs) {
 
 			if e.Kind != batch.KindSendIntent || e.Session != label || e.Mode == "notice" {
@@ -370,7 +378,7 @@ func (d *Driver) lastStep(label string) Step {
 // another account: close it on its view as it stands now, and resume it
 // there with step, as drive open takes it, on the open.
 func (d *Driver) relaunch(o *Observation, step Step) string {
-	others := d.otherAccounts(o.Session.Account)
+	others := d.otherAccounts(o.in, o.Session.Account)
 	if len(others) == 0 {
 		return "every other account's login was rejected in this batch too: tell the owner, and park the session until they log in again"
 	}

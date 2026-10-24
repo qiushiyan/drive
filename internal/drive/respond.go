@@ -136,7 +136,7 @@ func (d *Driver) Respond(view, response string) (res *Responded, err error) {
 		if response == "approve" {
 			f.What += "; an approved command that runs long leaves it so until the command ends"
 			f.Next = fmt.Sprintf("approving again does nothing; %s tells when it moves on", d.run("wait", o.Label))
-			if webhook, _ := d.wakes(block); webhook {
+			if webhook, _ := d.wakes(o); webhook {
 				f.Next = "approving again does nothing; its wake comes when it moves on"
 			}
 		}
@@ -206,7 +206,7 @@ func (d *Driver) Close(view string) (err error) {
 	switch {
 	case state == "working":
 		return &Refused{Reason: fmt.Sprintf("%s is working", o.Label),
-			Next: d.whenTurnEnds(o.Label, o.Session.Block) + "; close it then, on the view that comes with it"}
+			Next: d.whenTurnEnds(o) + "; close it then, on the view that comes with it"}
 	case state.onPrompt():
 		return &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: its turn has not ended", o.Label, state.promptKind()),
 			Next: d.answerNext(o.Label, view, state)}
@@ -217,7 +217,7 @@ func (d *Driver) Close(view string) (err error) {
 		job := d.Host.Shells(st.PID)[0]
 		next := "if the job should have ended, have the session stop it, and close it once that turn ends: " + d.stopJob(view, job) +
 			"; if it should run on, park the session with why, as nothing wakes you when the job ends: " + park("a background job still runs")
-		if webhook, _ := d.wakes(o.Session.Block); !webhook {
+		if webhook, _ := d.wakes(o); !webhook {
 			next = "if the job should have ended, have the session stop it, and close it once that turn ends: " + d.stopJob(view, job) +
 				fmt.Sprintf("; if it should run on, wait for it (%s) and close the session then", d.run("wait", o.Label))
 		}

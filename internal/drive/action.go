@@ -3,7 +3,6 @@ package drive
 import (
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/turn"
@@ -27,7 +26,7 @@ type action struct {
 
 // take owns block, which b calls label, for an action described by what.
 func (d *Driver) take(b *batch.Batch, label, block, what string) (*action, error) {
-	release, err := d.own(label, block, what)
+	release, err := d.own(b, label, block, what)
 	if err != nil {
 		return nil, d.refuse(b, label, err)
 	}
@@ -70,7 +69,6 @@ func (d *Driver) onView(b *batch.Batch, v turn.View, what func(label string) str
 // may record what it sent, then reads the session and checks the view.
 func (a *action) read(v turn.View, promptOnly bool) error {
 	var members []*batch.Member
-	zone := time.Local
 	if a.b != nil {
 		if err := a.d.settle(a.b, a.label, a.block); err != nil {
 			return err
@@ -79,14 +77,14 @@ func (a *action) read(v turn.View, promptOnly bool) error {
 		if a.evs, err = a.b.Events(); err != nil {
 			return err
 		}
-		members, zone = batch.Members(a.evs), a.b.Zone()
+		members = batch.Members(a.evs)
 	}
-	o, err := a.d.observe(members, v.Session)
+	o, err := a.d.observe(a.b, members, v.Session)
 	if err != nil {
 		return err
 	}
 	a.o = o
-	return a.d.checkView(o, v, promptOnly, zone, a.evs)
+	return a.d.checkView(o, v, promptOnly, a.evs)
 }
 
 // typeInto and press are how an action reaches the session's keyboard;
