@@ -37,6 +37,9 @@ func TestAnApprovedCommandThatRunsLongReadsWorking(t *testing.T) {
 	if st, _ := r.d.Status(false); st.Rows[0].Input != "prompt" {
 		t.Fatalf("the prompt's options are not typed text: %+v", st.Rows[0])
 	}
+	if rd, _ := r.d.Read("T1", drive.ReadPending, 1); rd.Input != "prompt" {
+		t.Fatalf("nor to read: %+v", rd)
+	}
 	res, err := r.d.Respond(r.view("T1"), "approve")
 	if err != nil || res.After != "working" {
 		t.Fatalf("an approve is confirmed by the session going to work: %+v %v", res, err)

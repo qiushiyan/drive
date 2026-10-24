@@ -414,9 +414,6 @@ func (d *Driver) row(members []*batch.Member, label string, withProgress bool) R
 	r.Block, r.SID, r.State, r.For, r.Account = o.Session.Block, o.Session.ID, o.State(), d.now().Sub(o.Session.Since()), o.Session.Account
 	r.Input, r.Typed, r.View = o.Input, o.Typed, o.View
 	r.Jobs = d.Host.Shells(o.Session.Status.PID)
-	if strings.HasPrefix(r.State, "blocked") && r.Input == turn.InputTyped {
-		r.Input, r.Typed = turn.InputPrompt, "" // the ❯ is the prompt's, not the input box's
-	}
 	if withProgress && d.Progress != nil && o.Session.ID != "" {
 		if s, err := d.Progress.Steps(o.Session.ID); err == nil {
 			r.Stage, r.PRRef = s.Stage, s.PR

@@ -269,13 +269,6 @@ func (d *Driver) answerNext(label, view, state string) string {
 	return fmt.Sprintf("see what it asks (%s), then answer it: %s, or %s", d.run("read", label, "--pending"), approve, deny)
 }
 
-func orWord(s, fallback string) string {
-	if s == "" {
-		return fallback
-	}
-	return s
-}
-
 func since(now, t time.Time) string {
 	if t.IsZero() {
 		return "a while"

@@ -253,9 +253,6 @@ func liveError(s *session.Session, f turn.Frontier) *turn.APIError {
 	return e
 }
 
-// LoginRejected says whether the session's login was refused.
-func (o *Observation) LoginRejected() bool { return o.State() == "blocked:auth" }
-
 // target resolves a label in the batch or a block id to the session's
 // label and block, without reading the session.
 func (d *Driver) target(members []*batch.Member, ref string) (label, block string, err error) {
@@ -389,6 +386,9 @@ func (d *Driver) observe(members []*batch.Member, ref string) (*Observation, err
 	o.View = turn.ViewOf(o.Label, s.ID, o.Frontier)
 	if screen, err := d.Term.Capture(block, true); err == nil {
 		o.Input, o.Typed = turn.InputBox(screen)
+	}
+	if st := o.State(); strings.HasPrefix(st, "blocked") && st != "blocked:auth" && o.Input == turn.InputTyped {
+		o.Input, o.Typed = turn.InputPrompt, "" // a prompt draws its options behind the box's ❯
 	}
 	return o, nil
 }
