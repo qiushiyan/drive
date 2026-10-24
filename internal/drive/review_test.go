@@ -348,36 +348,40 @@ func (p prs) PR(ref progress.PRRef) (progress.PR, error) {
 	return progress.PR{Number: ref.Number, State: "MERGED", MergedAt: time.Now().Add(time.Hour)}, nil
 }
 
-func (p prs) Landed(string, []string, []string) (progress.Landing, error) {
+func (p prs) Landed(string, []string, []progress.Commit) (progress.Landing, error) {
 	return progress.Landing{}, errors.New("gwt: not here")
 }
 
-// landing is prs with git's checkouts and gwt's verdicts: the branch each
-// directory has checked out, and the branches merged into main.
+// landing is prs with what git and gwt answer: the branch each directory
+// has checked out, the id of each commit by its subject, and the branches
+// and commits merged into main. A branch absent from both maps was removed.
 type landing struct {
 	prs
-	at     map[string]string
-	merged map[string]bool
+	at, ids map[string]string
+	merged  map[string]bool
 }
 
-func (l landing) Landed(dir string, branches, commitDirs []string) (progress.Landing, error) {
-	out := progress.Landing{Repo: "/work/tool", Trunk: "main", Branches: append([]string{}, branches...), Merged: map[string]bool{}}
-	for _, d := range commitDirs {
-		if b, ok := l.at[d]; ok {
+func (l landing) Landed(dir string, branches []string, commits []progress.Commit) (progress.Landing, error) {
+	out := progress.Landing{Repo: "/work/tool", Trunk: "main", Branches: append([]string{}, branches...), Merged: map[string]bool{"main": true}}
+	for _, c := range commits {
+		if b, ok := l.at[c.Dir]; ok {
 			out.Branches = append(out.Branches, b)
 		}
 	}
-	for _, b := range out.Branches {
-		out.Merged[b] = b == "main" || l.merged[b]
+	if n := len(commits); n > 0 {
+		out.Commit = l.ids[commits[n-1].Text]
+	}
+	for k, v := range l.merged {
+		out.Merged[k] = v
 	}
 	return out, nil
 }
 
 // A change merged into the trunk without a pull request, as a personal
-// tool's closeout merges it, counts as merged: the session's branch landed.
-// A closed session's verdict is the one read at its close, since the
-// cleanup after removes the branch; an open session's is read now.
-func TestMetricsCountABranchMergedWithoutAPullRequest(t *testing.T) {
+// tool's closeout merges it, counts as merged: the session's newest commit
+// is in the trunk, though the closeout removed its branch, or its branch
+// merged.
+func TestMetricsCountAChangeMergedWithoutAPullRequest(t *testing.T) {
 	r := newRig(t, "none")
 	worked := func(c *testkit.Claude, branch string) {
 		c.Write(map[string]any{"type": "attachment", "gitBranch": branch}, map[string]any{"type": "attachment", "gitBranch": "main"})
@@ -386,24 +390,31 @@ func TestMetricsCountABranchMergedWithoutAPullRequest(t *testing.T) {
 	worked(a, "shout")
 	worked(b, "subtract")
 	worked(e, "wip")
-	// T3 worked in its worktree through its shell: its transcript names only main, and claude-steps where it committed.
-	src := landing{prs{a.SID: {}, b.SID: {}, c.SID: {CommitDirs: []string{"/work/tool/.wt/publish"}}, e.SID: {}},
-		map[string]string{"/work/tool/.wt/publish": "publish"}, map[string]bool{"shout": true, "subtract": true, "publish": true}}
-	r.d.Progress = src
+	at := time.Now()
+	r.d.Progress = landing{
+		prs: prs{
+			a.SID: {Commits: []progress.Commit{{At: at, Text: "Add --shout", Dir: "/work/tool/.wt/shout"}}}, // its closeout removed the worktree and the branch
+			b.SID: {},
+			c.SID: {Commits: []progress.Commit{{At: at, Text: "Add publish.py", Dir: "/work/tool/.wt/publish"}}}, // worked there through its shell: its transcript names only main
+			e.SID: {},
+		},
+		at:     map[string]string{"/work/tool/.wt/publish": "publish"},
+		ids:    map[string]string{"Add --shout": "c0ffee1", "Add publish.py": "beef002"},
+		merged: map[string]bool{"c0ffee1": true, "subtract": true, "beef002": true, "wip": false},
+	}
 	if err := r.d.Close(r.view("T1")); err != nil {
 		t.Fatal(err)
 	}
-	delete(src.merged, "shout") // its cleanup removed the branch
 	m, err := r.d.Metrics("")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var got []string
 	for _, p := range m.Merged {
-		got = append(got, p.Branch+":"+strings.Join(p.Sessions, ","))
+		got = append(got, p.Branch+"@"+p.Commit+":"+strings.Join(p.Sessions, ","))
 	}
-	if strings.Join(got, " ") != "shout:T1 subtract:T2 publish:T3" || m.Unread != 0 {
-		t.Fatalf("the closed session's branch as its close found it, the open ones' now, the unmerged one not: %v (unread %d)", got, m.Unread)
+	if strings.Join(got, " ") != "shout@c0ffee1:T1 subtract@:T2 publish@beef002:T3" || m.Unread != 0 {
+		t.Fatalf("each landed change once, the unmerged one not: %v (unread %d)", got, m.Unread)
 	}
 }
 

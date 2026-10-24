@@ -220,3 +220,28 @@ func TestAClosedSessionIsReadFromItsTranscript(t *testing.T) {
 		t.Fatalf("a crashed session, read gone: %+v %v", rd, err)
 	}
 }
+
+// A session parked to wait for a hold says so while it waits, and that the
+// hold is free once it is: its park reason alone would still name the holder.
+func TestAParkedWaiterSaysWhenItsHoldIsFree(t *testing.T) {
+	r := newRig(t, "none")
+	a := adopted(t, r, "T1")
+	adopted(t, r, "T2")
+	a.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} })
+	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "close it out"}, drive.SendOptions{Hold: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.Send(r.view("T2"), drive.Step{Line: "close it out"}, drive.SendOptions{Hold: "main"}); !isRefused(err) {
+		t.Fatalf("held: %v", err)
+	}
+	if err := r.d.Park(r.view("T2"), "waits for main, held by T1"); err != nil {
+		t.Fatal(err)
+	}
+	a.Done("merged")
+	st, _ := r.d.Status(false)
+	for _, row := range st.Rows {
+		if row.Label == "T2" && !strings.Contains(row.Watch, "main is free now") {
+			t.Fatalf("its line says the hold is free: %q", row.Watch)
+		}
+	}
+}

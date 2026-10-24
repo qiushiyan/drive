@@ -84,7 +84,8 @@ status columns:
          a background job a session still runs is listed under the table
   INPUT  empty | suggestion (Claude Code's dimmed guess; typing replaces it)
          | typed (a line left unsent) | prompt (a prompt's options) | unknown (no box on screen)
-  WAKE   armed | stuck | posting | woken HH:MM (nothing done since): act on it or park it
+  WAKE   armed | stuck | posting | woken HH:MM (nothing done since): act on it or park it,
+         or drive watch --due posts it once more, the time it says
          | none, ended without a wake: no wake comes until drive watch --due | parked: why
   hold lines name who holds each hold and who waits for it with the step it was refused
 
@@ -329,7 +330,7 @@ func cmdWatch(d *drive.Driver, argv []string) int {
 		return code
 	}
 	if a.on("due") {
-		armed, err := d.Due()
+		armed, later, err := d.Due()
 		for _, r := range armed {
 			fmt.Printf("watching %s: %s\n", r.Label, r.Why)
 			if r.Failures >= 2 {
@@ -341,6 +342,9 @@ func cmdWatch(d *drive.Driver, argv []string) int {
 		}
 		if len(armed) == 0 {
 			fmt.Println("no session needs its wake armed")
+		}
+		for _, r := range later {
+			fmt.Printf("%s is %s: a run that acts on it first makes that moot\n", r.Label, r.Why)
 		}
 		return 0
 	}

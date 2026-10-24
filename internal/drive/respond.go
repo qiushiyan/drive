@@ -259,15 +259,7 @@ func (d *Driver) Close(view string) error {
 		_ = d.Watches.Stop(watchName(b, o.Session.Block))
 	}
 	if b != nil {
-		closed := batch.Event{At: d.now(), Kind: batch.KindClose, Session: o.Label, Block: o.Session.Block, View: v.String()}
-		// Whether its branch merged is read now: the cleanup after a close removes the branch.
-		if l, ok := d.landed(o.Session.Dir, o.Session.ID, o.Frontier.Branches); ok {
-			closed.Branch, closed.Dir, closed.Outcome = l.branch, l.repo, "unmerged"
-			if l.merged {
-				closed.Outcome = "merged"
-			}
-		}
-		_ = b.Append(closed)
+		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindClose, Session: o.Label, Block: o.Session.Block, View: v.String()})
 	}
 	return nil
 }

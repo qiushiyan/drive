@@ -311,37 +311,42 @@ func (d *Driver) canPost(b *batch.Batch) error {
 type Rearmed struct {
 	Label    string
 	Why      string
-	Failures int // times its watch ended without a wake in this batch
+	Failures int       // times its watch ended without a wake in this batch
+	Again    time.Time // for a wake nobody acted on that is not due yet: when it is
 }
 
 // Due arms the wake of every session in a webhook batch that has none and
 // needs one: never watched, acted on with no wake armed, a watch that ended
 // without a wake or is stuck, a wake nothing was done about (once per view),
 // a parked session waiting for a hold that is free. It is a chat driver's
-// watchdog in one command.
-func (d *Driver) Due() ([]Rearmed, error) {
+// watchdog in one command. later are the wakes nobody acted on that it posts
+// again on a later run, with when.
+func (d *Driver) Due() (armed, later []Rearmed, err error) {
 	b, err := d.Batch()
 	if err != nil {
-		return nil, &Refused{Reason: err.Error()}
+		return nil, nil, &Refused{Reason: err.Error()}
 	}
 	if b.Meta.Wake != "webhook" {
-		return nil, &Refused{Reason: fmt.Sprintf("batch %s wakes no one (wake: %s)", b.Meta.Name, b.Meta.Wake)}
+		return nil, nil, &Refused{Reason: fmt.Sprintf("batch %s wakes no one (wake: %s)", b.Meta.Name, b.Meta.Wake)}
 	}
 	st, err := d.Status(false)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	evs, err := b.Events()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var out []Rearmed
 	for _, r := range st.Rows {
+		if !r.Again.IsZero() {
+			later = append(later, Rearmed{Label: r.Label, Why: r.Watch, Again: r.Again})
+		}
 		if r.Due == "" || r.Error != "" {
 			continue
 		}
 		if _, err := d.Watch(r.Label); err != nil {
-			return out, err
+			return out, later, err
 		}
 		n := 0
 		for _, e := range evs {
@@ -351,7 +356,7 @@ func (d *Driver) Due() ([]Rearmed, error) {
 		}
 		out = append(out, Rearmed{Label: r.Label, Why: r.Due, Failures: n})
 	}
-	return out, nil
+	return out, later, nil
 }
 
 // StopWatches stops a batch's watches and timers once another batch has
@@ -494,7 +499,14 @@ func (d *Driver) Wake(label string, e *Ending, note string) error {
 			view = e.View.String()
 		}
 		payload["kind"], payload["session"], payload["state"], payload["view"] = "turn", e.Label, e.State, view
-		payload["output"] = tail(e.Text()+d.waiterLines(b, e.Label), 6000)
+		// The watchdog posts a wake nobody acted on once more, for the same view.
+		again := ""
+		if evs, err := b.Events(); err == nil {
+			if m := batch.Find(batch.Members(evs), label); m != nil && view != "" && m.WokenView == view && m.Woken.After(m.LastAction) {
+				again = fmt.Sprintf("posted again: nothing was done after its wake at %s\n", m.Woken.In(b.Zone()).Format("15:04"))
+			}
+		}
+		payload["output"] = tail(again+e.Text()+d.waiterLines(b, e.Label), 6000)
 		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindPosting, Session: label, Block: e.Block, View: view})
 	} else {
 		payload["kind"], payload["output"] = "timer", "timer done: "+note

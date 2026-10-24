@@ -1,13 +1,16 @@
 package drive_test
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -107,7 +110,7 @@ func TestDueArmsWhatHasNoWake(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.w.Clock.Sleep(11 * time.Minute)
-	armed, err := r.d.Due()
+	armed, _, err := r.d.Due()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,13 +127,13 @@ func TestDueArmsWhatHasNoWake(t *testing.T) {
 	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "B", HTTP: 204, View: view})
 	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "A", HTTP: 204, View: r.view("A")})
 	r.w.Clock.Sleep(11 * time.Minute)
-	if armed, _ := r.d.Due(); len(armed) != 1 || armed[0].Label != "A" {
+	if armed, _, _ := r.d.Due(); len(armed) != 1 || armed[0].Label != "A" {
 		t.Fatalf("a wake is re-posted once per view: %+v", armed)
 	}
 	// B then moves on by itself, as a usage limit's reset continues a turn:
 	// that turn's end is news the driver has had no wake for.
 	b.Busy("Your usage limit has reset. Continue the task.")
-	if armed, _ := r.d.Due(); len(armed) != 1 || armed[0].Label != "B" {
+	if armed, _, _ := r.d.Due(); len(armed) != 1 || armed[0].Label != "B" {
 		t.Fatalf("a session that moved on by itself since its wake is due: %+v", armed)
 	}
 	_ = p
@@ -360,5 +363,52 @@ func TestAFailedPostLeavesTheTurnUnwatched(t *testing.T) {
 	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "T1", HTTP: 204})
 	if m, _ := r.d.Metrics(""); m.Unwatched != 0 {
 		t.Fatalf("posted: %d", m.Unwatched)
+	}
+}
+
+// A wake nobody acted on is posted once more after a while, for the same
+// view, and both the wait and the repost say so: status and --due name when
+// it comes, and the wake that comes says it is the second.
+func TestAWakeNobodyActedOnSaysWhenItComesAgain(t *testing.T) {
+	r := newRig(t, "webhook")
+	var mu sync.Mutex
+	var outputs []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var p map[string]any
+		_ = json.NewDecoder(req.Body).Decode(&p)
+		mu.Lock()
+		outputs = append(outputs, fmt.Sprint(p["output"]))
+		mu.Unlock()
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+	r.d.Cfg.Webhook = config.Webhook{URL: srv.URL}
+	c := adopted(t, r, "T1")
+	wake := func() {
+		woken(r, c)
+		e, _ := r.d.Wait("T1", time.Minute, 10*time.Minute)
+		if err := r.d.Wake("T1", e, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wake()
+	r.w.Clock.Sleep(5 * time.Minute)
+	st, _ := r.d.Status(false)
+	armed, later, _ := r.d.Due()
+	if !strings.Contains(st.Rows[0].Watch, "drive watch --due posts it again from") || len(armed) != 0 || len(later) != 1 || later[0].Label != "T1" {
+		t.Fatalf("not due yet, and when it will be: %q %+v %+v", st.Rows[0].Watch, armed, later)
+	}
+	r.w.Clock.Sleep(6 * time.Minute)
+	if armed, _, _ := r.d.Due(); len(armed) != 1 {
+		t.Fatalf("due now: %+v", armed)
+	}
+	wake()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(outputs) != 2 || strings.HasPrefix(outputs[0], "posted again") || !strings.HasPrefix(outputs[1], "posted again: nothing was done after its wake at") {
+		t.Fatalf("the second wake says it is one: %q", outputs)
+	}
+	if st, _ := r.d.Status(false); !strings.Contains(st.Rows[0].Watch, "posted again already") {
+		t.Fatalf("and nothing more comes for that view: %q", st.Rows[0].Watch)
 	}
 }

@@ -487,8 +487,12 @@ func cmdMetrics(d *drive.Driver, argv []string) int {
 	fmt.Println()
 	fmt.Printf("merged: %d", len(m.Merged))
 	for _, p := range m.Merged {
-		if p.Branch != "" {
-			fmt.Printf(" %s %s, no pull request (%s)", filepath.Base(p.Repo), p.Branch, strings.Join(p.Sessions, ", "))
+		if p.Number == 0 {
+			what := p.Branch
+			if what == "" {
+				what = p.Commit[:min(7, len(p.Commit))]
+			}
+			fmt.Printf(" %s %s, no pull request (%s)", filepath.Base(p.Repo), what, strings.Join(p.Sessions, ", "))
 			continue
 		}
 		fmt.Printf(" %s#%d (%s)", p.Repo, p.Number, strings.Join(p.Sessions, ", "))

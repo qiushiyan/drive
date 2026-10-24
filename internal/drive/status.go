@@ -168,6 +168,7 @@ type Row struct {
 	Error     string          // what kept the row from being read
 	Unhandled bool            // a wake was posted after the driver last acted on it
 	Due       string          // why the watchdog should arm its wake; "" when nothing is due
+	Again     time.Time       // when the watchdog posts a wake nobody acted on once more, while that is still to come
 	Jobs      []session.Shell // background jobs it runs
 }
 
@@ -236,7 +237,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 			if m.LastSend != nil {
 				r.LastSent, r.SentAt = sentLabel(m.LastSend), m.LastSend.At
 			}
-			r.Watch, r.Unhandled, r.Due = d.wakeOf(b, m, r, out.Zone)
+			r.Watch, r.Unhandled, r.Due, r.Again = d.wakeOf(b, m, r, out.Zone)
 			out.Rows[i] = r
 		}(i, m)
 	}
@@ -290,6 +291,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 				for i := range out.Rows {
 					if r := &out.Rows[i]; !held && r.Label == w.Session && strings.HasPrefix(r.Watch, "parked") {
 						r.Due = "waits for " + name + ", which is free"
+						r.Watch += "; " + name + " is free now, and drive watch --due wakes it"
 					}
 				}
 			}
@@ -328,37 +330,46 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 // wakeOf says how a member's wake stands, first whether a watch runs and
 // then what the log says came of the last one, and why the watchdog should
 // arm it again ("" when nothing is due).
-func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, zone *time.Location) (word string, unhandled bool, due string) {
+// repostAfter is how long a wake nobody acted on waits before the watchdog
+// posts it once more: a run acting on it takes minutes.
+const repostAfter = 10 * time.Minute
+
+func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, zone *time.Location) (word string, unhandled bool, due string, again time.Time) {
 	alive := d.Watches != nil && b != nil && d.Watches.Alive(watchName(b, m.Block))
 	woken := !m.Woken.IsZero() && !m.Woken.Before(m.Watched)
 	switch {
 	case m.Parked != "":
-		return "parked: " + m.Parked, false, ""
+		return "parked: " + m.Parked, false, "", again
 	case alive && stuck(r.State, d.now().Add(-r.For), m.Watched, d.now()):
-		return fmt.Sprintf("armed, but its turn ended %s ago: stuck (drive watch %s restarts it)", ago(r.For), m.Label), false, "stuck"
+		return fmt.Sprintf("armed, but its turn ended %s ago: stuck (drive watch %s restarts it)", ago(r.For), m.Label), false, "stuck", again
 	case alive:
-		return "armed", false, ""
+		return "armed", false, "", again
 	case m.Posting.After(m.Watched) && m.Posting.After(m.Woken) && m.Posting.After(m.WakeFailed):
-		return "posting since " + m.Posting.In(zone).Format("15:04"), false, ""
+		return "posting since " + m.Posting.In(zone).Format("15:04"), false, "", again
 	case woken && m.Woken.After(m.LastAction):
 		// The driver owes it a decision. A session that moved on by itself
 		// since, such as one a usage limit's reset continued, is woken again
 		// when that turn ends; otherwise the wake is posted once more, so one
 		// lost to a run that died is not lost, and never again for one view.
-		word = "woken " + m.Woken.In(zone).Format("15:04") + " (nothing done since)"
+		word = "woken " + m.Woken.In(zone).Format("15:04") + " (nothing done since"
 		switch {
 		case r.View.Session != "" && m.WokenView != "" && r.View.String() != m.WokenView:
 			due = "it moved on by itself since its last wake"
-		case d.now().Sub(m.Woken) > 10*time.Minute && m.WokenView != m.PrevView:
+		case m.WokenView == m.PrevView:
+			word += ", and posted again already"
+		case d.now().Sub(m.Woken) > repostAfter:
 			due = "woken " + ago(d.now().Sub(m.Woken)) + " ago with nothing done since"
+		default:
+			again = m.Woken.Add(repostAfter)
+			word += "; drive watch --due posts it again from " + again.In(zone).Format("15:04")
 		}
-		return word, true, due
+		return word + ")", true, due, again
 	case woken:
-		return "none (woken " + m.Woken.In(zone).Format("15:04") + ", acted on since)", false, "acted on with no wake armed"
+		return "none (woken " + m.Woken.In(zone).Format("15:04") + ", acted on since)", false, "acted on with no wake armed", again
 	case !m.Watched.IsZero():
-		return "ended without a wake (watches.log says why)", false, "its watch ended without a wake"
+		return "ended without a wake (watches.log says why)", false, "its watch ended without a wake", again
 	}
-	return "none", false, "never watched"
+	return "none", false, "never watched", again
 }
 
 // stuck says a watch still runs long after the turn it waits on ended: a

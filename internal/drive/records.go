@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/qiushiyan/drive/internal/batch"
+	"github.com/qiushiyan/drive/internal/progress"
 	"github.com/qiushiyan/drive/internal/skill"
 	"github.com/qiushiyan/drive/internal/turn"
 )
@@ -153,11 +154,13 @@ var driverActions = map[string]bool{
 // MergedPR is a change the batch merged, with the sessions that name it:
 // its builder, and its strategic reviewer when one merged it. A change
 // merged without a pull request, as a personal tool's closeout merges it, is
-// its branch, with Number 0 and Repo the repository's main checkout.
+// its branch and its newest commit, with Number 0 and Repo the repository's
+// main checkout.
 type MergedPR struct {
 	Repo     string
 	Number   int
 	Branch   string `json:",omitempty"`
+	Commit   string `json:",omitempty"`
 	At       time.Time
 	Sessions []string
 }
@@ -321,8 +324,12 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 			}
 		}
 		if !viaPR {
-			if c, ok := d.mergedBranch(mem, evs, m.To); ok {
-				add(c.Repo+"@"+c.Branch, mem.Label, c)
+			if l, ok := d.landed(mem.Dir, mem.SID, d.branchesOf(mem.SID)); ok && l.merged {
+				key := l.repo + "@" + l.commit
+				if l.commit == "" {
+					key = l.repo + "@" + l.branch
+				}
+				add(key, mem.Label, MergedPR{Repo: l.repo, Branch: l.branch, Commit: l.commit, At: m.To})
 			}
 		}
 		if unread {
@@ -335,59 +342,55 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 	return m, nil
 }
 
-// mergedBranch is a member's branch, when it merged into its trunk with no
-// pull request: as recorded when the session was closed, since the cleanup
-// after a close removes the branch, or as gwt judges it now for a session
-// still open.
-func (d *Driver) mergedBranch(mem *batch.Member, evs []batch.Event, now time.Time) (MergedPR, bool) {
-	if mem.Closed {
-		for i := len(evs) - 1; i >= 0; i-- {
-			if e := evs[i]; e.Kind == batch.KindClose && e.Session == mem.Label {
-				return MergedPR{Repo: e.Dir, Branch: e.Branch, At: e.At}, e.Outcome == "merged" && e.Branch != ""
-			}
-		}
-		return MergedPR{}, false
-	}
-	var branches []string
-	if path := d.Host.Transcript(mem.SID); path != "" {
+// branchesOf are the branches a session's transcript names, which outlives
+// its block.
+func (d *Driver) branchesOf(sid string) []string {
+	if path := d.Host.Transcript(sid); path != "" {
 		if f, err := turn.ReadFile(path); err == nil {
-			branches = f.Branches
+			return f.Branches
 		}
 	}
-	l, ok := d.landed(mem.Dir, mem.SID, branches)
-	return MergedPR{Repo: l.repo, Branch: l.branch, At: now}, ok && l.merged
+	return nil
 }
 
-// branchLanding is how a session's branch stands against its trunk.
-type branchLanding struct {
-	branch, repo string
-	merged       bool
+// workLanding is how a session's work stands against its trunk.
+type workLanding struct {
+	branch, commit, repo string
+	merged               bool
 }
 
-// landed judges the branch a session worked on: the newest one other than
-// the trunk, which it may have gone back to for the merge, among those its
-// transcript names and those checked out where it committed (a session that
-// worked in a worktree through its shell names only the trunk). ok is false
-// when there is no such branch or no verdict on it.
-func (d *Driver) landed(dir, sid string, branches []string) (branchLanding, bool) {
+// landed judges the work a session did: its newest commit, which outlives
+// the branch a closeout removes, else the branch it worked on, the newest
+// one other than the trunk it may have gone back to for the merge, among
+// those its transcript names and those checked out where it committed (a
+// session that worked in a worktree through its shell names only the
+// trunk). ok is false when neither has a verdict.
+func (d *Driver) landed(dir, sid string, branches []string) (workLanding, bool) {
 	if d.Progress == nil || dir == "" {
-		return branchLanding{}, false
+		return workLanding{}, false
 	}
-	var commitDirs []string
+	var commits []progress.Commit
 	if s, err := d.Progress.Steps(sid); err == nil {
-		commitDirs = s.CommitDirs
+		commits = s.Commits
 	}
-	l, err := d.Progress.Landed(dir, branches, commitDirs)
+	l, err := d.Progress.Landed(dir, branches, commits)
 	if err != nil {
-		return branchLanding{}, false
+		return workLanding{}, false
 	}
+	w := workLanding{commit: l.Commit, repo: l.Repo}
 	for i := len(l.Branches) - 1; i >= 0; i-- {
 		if b := l.Branches[i]; b != l.Trunk {
-			merged, judged := l.Merged[b]
-			return branchLanding{branch: b, repo: l.Repo, merged: merged}, judged
+			w.branch = b
+			break
 		}
 	}
-	return branchLanding{}, false
+	if merged, judged := l.Merged[l.Commit]; l.Commit != "" && judged {
+		w.merged = merged
+		return w, true
+	}
+	merged, judged := l.Merged[w.branch]
+	w.merged = merged
+	return w, w.branch != "" && judged
 }
 
 // refusalKind groups refusal reasons by what stopped the action.
