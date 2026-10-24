@@ -16,7 +16,7 @@ make install                                  # builds into ~/.local/bin/drive, 
 
 ## How it fits together
 
-`cmd/drive` parses arguments and renders; every action is a method on `drive.Driver` (`internal/drive`), which reaches the world only through interfaces the tests replace: `rex.Terminal` (Rex's CLI), `session.Host` (Claude Code's session registry, processes and transcripts), `drive.Watches` (detached watch processes) and `progress.Source` (claude-steps, gh, and gwt for whether a branch merged). `internal/turn` reads a transcript into facts and does no I/O beyond the file; `internal/batch` keeps the batch's event log, its derived views and the per-session locks.
+`cmd/drive` parses arguments and renders; every action is a method on `drive.Driver` (`internal/drive`), which reaches the world only through interfaces the tests replace: `rex.Terminal` (Rex's CLI), `session.Host` (Claude Code's session registry, processes and transcripts), `drive.Watches` (detached watch processes) and `progress.Source` (claude-steps, gh, and gwt for whether a change merged). `internal/turn` reads a transcript into facts and does no I/O beyond the file; `internal/batch` keeps the batch's event log, its derived views and the per-session locks.
 
 - **Acting on one session** (where a turn stands, views, the lock, delivery and its failures, the fake world): `docs/sessions.md`
 - **The batch record** (intents and settling, holds, the owner's records, metrics, wakes): `docs/batches.md`
