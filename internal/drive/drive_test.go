@@ -540,7 +540,9 @@ func TestRespondReachesASessionOutsideTheBatch(t *testing.T) {
 	}
 }
 
-func TestSendArmsTheWakeInAWebhookBatch(t *testing.T) {
+// A watch or timer re-execs drive as this drive's own hidden command, pinned
+// to its batch; TestOlderDrivesCommandLinesStillRun holds that each parses.
+func TestAWakeRunsThisDrivesCommandInItsBatch(t *testing.T) {
 	r := newRig(t, "webhook")
 	c := r.w.Add("T1")
 	done(c, "onboard", "analysis")
@@ -548,18 +550,14 @@ func TestSendArmsTheWakeInAWebhookBatch(t *testing.T) {
 	if err != nil || !sent.Watched {
 		t.Fatalf("a send arms the wake: %+v %v", sent, err)
 	}
-	argv := r.watches.Running["drive-b1-"+c.Block[len(c.Block)-6:]]
-	if strings.Join(argv, " ") != "/bin/drive --batch b1 wait T1 --notify" {
-		t.Fatalf("the wake is pinned to its batch: %q", argv)
+	if argv := r.watches.Running["drive-b1-"+c.Block[len(c.Block)-6:]]; strings.Join(argv, " ") != "/bin/drive --batch b1 notify T1" {
+		t.Fatalf("the watch: %q", argv)
 	}
-	if err := r.d.Park("T1", "waits on Qiushi's workspace"); !isRefused(err) || !strings.Contains(err.Error(), "drive read T1") {
-		t.Fatalf("a park is decided on a view too: %v", err)
-	}
-	if err := r.d.Park(r.view("T1"), "waits on Qiushi's workspace"); err != nil {
+	if err := r.d.Timer(5*time.Minute, "-v veto"); err != nil {
 		t.Fatal(err)
 	}
-	if r.watches.Alive("drive-" + c.Block[len(c.Block)-6:]) {
-		t.Fatal("parking stops the wake")
+	if argv := r.watches.Running["drive-b1-timer--v-veto"]; strings.Join(argv, " ") != "/bin/drive --batch b1 ring 300 -- -v veto" {
+		t.Fatalf("the timer: %q", argv)
 	}
 }
 

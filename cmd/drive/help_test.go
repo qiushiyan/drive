@@ -24,6 +24,9 @@ func TestOlderDrivesCommandLinesStillRun(t *testing.T) {
 		{[]string{"watch", "--sleep", "900", "-T1", "retry"}, []string{"timer", "900", "--", "-T1", "retry"}},
 		{[]string{"wait", "T1"}, []string{"wait", "T1"}},
 		{[]string{"watch", "T1"}, []string{"watch", "T1"}},
+		// What this drive's watches and timers run (TestAWakeRunsThisDrivesCommandInItsBatch).
+		{[]string{"--batch", "b1", "notify", "T1"}, []string{"--batch", "b1", "notify", "T1"}},
+		{[]string{"--batch", "b1", "ring", "300", "--", "-v veto"}, []string{"--batch", "b1", "ring", "300", "--", "-v veto"}},
 	} {
 		got := upgrade(c.old)
 		if !slices.Equal(got, c.now) {

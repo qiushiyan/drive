@@ -41,7 +41,7 @@ func (d *Driver) arm(b *batch.Batch, label, block string) error {
 	if d.Watches.Alive(name) {
 		return nil
 	}
-	if err := d.Watches.Start(name, []string{d.Self, "--batch", b.Meta.Name, "wait", label, "--notify"}, watchLog(b)); err != nil {
+	if err := d.Watches.Start(name, d.rerun(b, "notify", label), watchLog(b)); err != nil {
 		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindFailure, Session: label, Reason: "its wake did not start: " + err.Error()})
 		return err
 	}
@@ -242,14 +242,19 @@ func (d *Driver) Timer(after time.Duration, note string) error {
 	if d.Watches.Alive(name) {
 		return &Refused{Reason: fmt.Sprintf("a timer named %q is already running", note), Next: "give this one another note"}
 	}
-	argv := []string{d.Self, "--batch", b.Meta.Name, "wait", "--sleep", secs, "--note", note, "--notify"}
-	if err := d.Watches.Start(name, argv, watchLog(b)); err != nil {
+	if err := d.Watches.Start(name, d.rerun(b, "ring", secs, "--", note), watchLog(b)); err != nil {
 		return err
 	}
 	return b.Append(batch.Event{At: d.now(), Kind: batch.KindWatch, Note: "timer " + note})
 }
 
 func watchLog(b *batch.Batch) string { return filepath.Join(b.Dir, "watches.log") }
+
+// rerun is the command line a watch or timer runs: this drive's own hidden
+// command, in batch b, so a wake from an old batch never acts in a new one.
+func (d *Driver) rerun(b *batch.Batch, words ...string) []string {
+	return append([]string{d.Self, "--batch", b.Meta.Name}, words...)
+}
 
 // WatchFailed records a watch that ended without posting its wake.
 func (d *Driver) WatchFailed(label string, err error) {
