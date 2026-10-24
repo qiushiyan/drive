@@ -1,0 +1,5 @@
+$ drive snippet nope $ROOT/work
+exit 1
+--- stdout
+--- stderr
+drive: no snippet "nope" for $ROOT/work; `drive snippet --list $ROOT/work` shows the keys

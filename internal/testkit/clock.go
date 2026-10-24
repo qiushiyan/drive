@@ -14,7 +14,10 @@ type Clock struct {
 }
 
 // NewClock starts a clock now.
-func NewClock() *Clock { return &Clock{t: time.Now().UTC().Truncate(time.Second)} }
+func NewClock() *Clock { return NewClockAt(time.Now().UTC().Truncate(time.Second)) }
+
+// NewClockAt starts a clock at t, for output pinned byte for byte.
+func NewClockAt(t time.Time) *Clock { return &Clock{t: t} }
 
 // Now reads the clock.
 func (c *Clock) Now() time.Time {

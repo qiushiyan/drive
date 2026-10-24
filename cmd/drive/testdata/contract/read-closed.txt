@@ -1,0 +1,7 @@
+$ drive read T1
+exit 0
+--- stdout
+ok
+
+T1 is closed on account acct@example.com (session sid-1)
+--- stderr

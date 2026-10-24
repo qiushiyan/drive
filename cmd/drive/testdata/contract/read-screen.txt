@@ -1,0 +1,8 @@
+$ drive read T1 --screen
+exit 0
+--- stdout
+❯ 
+
+T1 is done on account acct@example.com (session sid-1)
+view: T1@fefb9f5c
+--- stderr

@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -53,6 +54,8 @@ type World struct {
 	// launcher: x-<Primary> starts a session under ~/.claude, which its
 	// session reports as account "primary".
 	Primary string
+
+	entries atomic.Int64 // transcript entries written: uuid's counter
 }
 
 // New makes a world under a temporary directory.
@@ -176,15 +179,10 @@ func (c *Claude) Write(rows ...map[string]any) {
 	}
 }
 
-var uuidN int
-var uuidMu sync.Mutex
-
-func uuid() string {
-	uuidMu.Lock()
-	defer uuidMu.Unlock()
-	uuidN++
-	return fmt.Sprintf("u-%06d", uuidN)
-}
+// uuid names a transcript entry. Each world counts its own, so a view's
+// hash, and the output that prints it, is the same however many worlds
+// ran before.
+func (w *World) uuid() string { return fmt.Sprintf("u-%06d", w.entries.Add(1)) }
 
 // command says whether Claude Code runs a typed line as a slash command:
 // only one typed at the line's start. Behind spaces it is words.
@@ -198,19 +196,19 @@ func (c *Claude) Prompt(text string) {
 		content = fmt.Sprintf("<command-message>%s</command-message>\n<command-name>%s</command-name>\n<command-args>%s</command-args>",
 			strings.TrimPrefix(name, "/"), name, args)
 	}
-	c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user", "content": content}})
+	c.Write(map[string]any{"type": "user", "uuid": c.w.uuid(), "message": map[string]any{"role": "user", "content": content}})
 }
 
 // Say records an assistant reply.
 func (c *Claude) Say(text string) {
-	c.Write(map[string]any{"type": "assistant", "uuid": uuid(), "message": map[string]any{"role": "assistant",
+	c.Write(map[string]any{"type": "assistant", "uuid": c.w.uuid(), "message": map[string]any{"role": "assistant",
 		"content": []map[string]any{{"type": "text", "text": text}}}})
 }
 
 // Ask records a tool call and puts the session on its permission prompt.
 func (c *Claude) Ask(command string) {
-	id := "toolu_" + uuid()
-	c.Write(map[string]any{"type": "assistant", "uuid": uuid(), "message": map[string]any{"role": "assistant",
+	id := "toolu_" + c.w.uuid()
+	c.Write(map[string]any{"type": "assistant", "uuid": c.w.uuid(), "message": map[string]any{"role": "assistant",
 		"content": []map[string]any{{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{"command": command}}}}})
 	c.w.mu.Lock()
 	c.tool = id
@@ -222,8 +220,8 @@ func (c *Claude) Ask(command string) {
 // reads waiting at once, and Rex hears of it only from the Notification
 // hook some six seconds later, reading working until then.
 func (c *Claude) AskQuietly(command string) {
-	id := "toolu_" + uuid()
-	c.Write(map[string]any{"type": "assistant", "uuid": uuid(), "message": map[string]any{"role": "assistant",
+	id := "toolu_" + c.w.uuid()
+	c.Write(map[string]any{"type": "assistant", "uuid": c.w.uuid(), "message": map[string]any{"role": "assistant",
 		"content": []map[string]any{{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{"command": command}}}}})
 	c.w.mu.Lock()
 	defer c.w.mu.Unlock()
@@ -240,7 +238,7 @@ func (c *Claude) ToolDone() {
 		return
 	}
 	c.running = false
-	c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user",
+	c.Write(map[string]any{"type": "user", "uuid": c.w.uuid(), "message": map[string]any{"role": "user",
 		"content": []map[string]any{{"type": "tool_result", "tool_use_id": c.tool, "content": "done"}}}})
 	c.set("working", "", "")
 }
@@ -256,7 +254,7 @@ func (c *Claude) HoldMessage() {
 // Stop follows, so Rex keeps whatever it last heard unless told otherwise;
 // the session itself is idle again.
 func (c *Claude) Fail(kind, text string) {
-	c.Write(map[string]any{"type": "assistant", "uuid": uuid(), "isApiErrorMessage": true, "error": kind,
+	c.Write(map[string]any{"type": "assistant", "uuid": c.w.uuid(), "isApiErrorMessage": true, "error": kind,
 		"message": map[string]any{"role": "assistant", "content": []map[string]any{{"type": "text", "text": text}}}})
 	c.w.mu.Lock()
 	defer c.w.mu.Unlock()
@@ -335,11 +333,11 @@ func (c *Claude) takeQueued() {
 // Compacted ends a /compact: the summary and the command's output land,
 // and the session is idle. No hook tells Rex any of it.
 func (c *Claude) Compacted() {
-	c.Write(map[string]any{"type": "system", "subtype": "compact_boundary", "uuid": uuid()},
-		map[string]any{"type": "user", "uuid": uuid(), "isCompactSummary": true, "message": map[string]any{"role": "user",
+	c.Write(map[string]any{"type": "system", "subtype": "compact_boundary", "uuid": c.w.uuid()},
+		map[string]any{"type": "user", "uuid": c.w.uuid(), "isCompactSummary": true, "message": map[string]any{"role": "user",
 			"content": "This session is being continued from a previous conversation."}})
 	c.Prompt("/compact")
-	c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user",
+	c.Write(map[string]any{"type": "user", "uuid": c.w.uuid(), "message": map[string]any{"role": "user",
 		"content": "<local-command-stdout>Compacted </local-command-stdout>"}})
 	c.w.mu.Lock()
 	defer c.w.mu.Unlock()
@@ -477,7 +475,7 @@ func (w *World) Key(block string, keys ...string) error {
 					c.running = true // Rex reads blocked until the tool's PostToolUse
 					continue
 				}
-				c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user",
+				c.Write(map[string]any{"type": "user", "uuid": c.w.uuid(), "message": map[string]any{"role": "user",
 					"content": []map[string]any{{"type": "tool_result", "tool_use_id": c.tool, "content": "approved"}}}})
 				c.set("working", "", "") // PostToolUse, once the command ran
 				continue
@@ -501,7 +499,7 @@ func (w *World) Key(block string, keys ...string) error {
 			if text == "/compact" || strings.HasPrefix(text, "/compact ") {
 				// No prompt hook and no Stop: Rex keeps what it last heard. The
 				// line is recorded as typed at once, the rest once it ends.
-				c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user", "content": text}})
+				c.Write(map[string]any{"type": "user", "uuid": c.w.uuid(), "message": map[string]any{"role": "user", "content": text}})
 				c.activity("busy", "")
 				compact = true
 				continue
@@ -515,17 +513,17 @@ func (w *World) Key(block string, keys ...string) error {
 		// session itself is idle at once.
 		case "escape":
 			if c.Activity == "waiting" || c.running {
-				c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user",
+				c.Write(map[string]any{"type": "user", "uuid": c.w.uuid(), "message": map[string]any{"role": "user",
 					"content": []map[string]any{{"type": "tool_result", "tool_use_id": c.tool, "is_error": true,
 						"content": "The user doesn't want to proceed with this tool use."}}}},
-					map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user",
+					map[string]any{"type": "user", "uuid": c.w.uuid(), "message": map[string]any{"role": "user",
 						"content": []map[string]any{{"type": "text", "text": "[Request interrupted by user for tool use]"}}}})
 				c.activity("idle", "")
 				c.running, c.stale = false, true
 			}
 		case "ctrl+c":
 			if c.Activity == "busy" {
-				c.Write(map[string]any{"type": "user", "uuid": uuid(), "message": map[string]any{"role": "user", "content": "[Request interrupted by user]"}})
+				c.Write(map[string]any{"type": "user", "uuid": c.w.uuid(), "message": map[string]any{"role": "user", "content": "[Request interrupted by user]"}})
 				c.activity("idle", "")
 				c.running, c.stale = false, true
 				interrupted = true

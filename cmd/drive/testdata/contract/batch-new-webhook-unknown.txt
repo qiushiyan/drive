@@ -1,0 +1,6 @@
+$ drive batch new b0 --webhook nobody
+exit 1
+--- stdout
+--- stderr
+drive: batch b0 has no webhook to wake its driver: $HOME/config/webhooks/nobody holds no URL
+next: the owner writes its URL= and AUTH= lines, mode 0600, to $HOME/config/webhooks/nobody; then: drive batch new b0 --webhook nobody

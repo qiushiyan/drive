@@ -1,0 +1,10 @@
+$ drive status --quick
+exit 0
+--- stdout
+batch b1 · wakes: none · Rex session - · times Europe/London (BST, UTC+01:00)
+SESSION  WIN  BLOCK   STATE  FOR  INPUT  STAGE  PR  LAST SENT              WAKE  VIEW
+T1       1    a00001  done   2m   empty             snippet land-pr 02:00  none  T1@fefb9f5c
+
+other Claude sessions in Rex:
+  2  a00002  working  <1m  T2
+--- stderr

@@ -1,0 +1,4 @@
+$ drive --batch b1 log --since 2026-10-23 09:03
+exit 0
+--- stdout
+--- stderr

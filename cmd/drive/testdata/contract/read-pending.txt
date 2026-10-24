@@ -1,0 +1,10 @@
+$ drive read a00002 --pending
+exit 0
+--- stdout
+Bash:
+pnpm install
+
+a00002 is blocked:permission on account acct@example.com (session sid-2); its input box holds typed text nobody sent: "1. Yes"
+view: a00002@46abfde4
+next: see what it asks (drive read a00002 --pending), then answer it: drive respond a00002@46abfde4 approve, or drive respond a00002@46abfde4 deny
+--- stderr

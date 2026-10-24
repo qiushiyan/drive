@@ -1,0 +1,9 @@
+$ drive read a00001 --prompts 10
+exit 0
+--- stdout
+--- 10-23 02:00
+onboard
+
+a00001 is done on account acct@example.com (session sid-1)
+view: a00001@e274d317
+--- stderr

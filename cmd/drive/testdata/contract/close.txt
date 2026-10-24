@@ -1,0 +1,5 @@
+$ drive close T1@fefb9f5c
+exit 0
+--- stdout
+closed T1
+--- stderr

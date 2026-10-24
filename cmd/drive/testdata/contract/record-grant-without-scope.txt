@@ -1,0 +1,5 @@
+$ drive record grant --source go ahead
+exit 1
+--- stdout
+--- stderr
+drive: a grant needs --source (the owner's words and where they said them) and --scope (what it covers)

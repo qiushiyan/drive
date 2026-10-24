@@ -1,0 +1,5 @@
+$ drive record note --session T2 told the user
+exit 0
+--- stdout
+recorded note N2
+--- stderr

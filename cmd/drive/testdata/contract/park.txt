@@ -1,0 +1,5 @@
+$ drive park T1@fefb9f5c design checkpoint
+exit 0
+--- stdout
+parked T1: no wake until a step is sent to it
+--- stderr

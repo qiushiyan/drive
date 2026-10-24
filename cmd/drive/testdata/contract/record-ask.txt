@@ -1,0 +1,5 @@
+$ drive record ask T1 --question Take the lab host down? --recommendation yes, after the read --if-unanswered it keeps running
+exit 0
+--- stdout
+recorded ask A1
+--- stderr

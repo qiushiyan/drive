@@ -1,0 +1,8 @@
+$ drive read T1 --user
+exit 0
+--- stdout
+Read $HOME/state/batches/b1/sends/T1-1.md and do what it asks.
+
+T1 is done on account acct@example.com (session sid-1)
+view: T1@fefb9f5c
+--- stderr

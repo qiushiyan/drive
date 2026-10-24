@@ -96,7 +96,7 @@ func TestTheHotPathThroughTheCommand(t *testing.T) {
 	c.Done("analysis")
 	short := c.Block[len(c.Block)-6:]
 
-	if code, _, errs := cli(t, "batch", "new", "b1", "--wake", "none", "--tz", "Asia/Shanghai"); code != 0 {
+	if code, _, errs := cli(t, "batch", "new", "b1", "--wake", "none", "--tz", "Europe/London"); code != 0 {
 		t.Fatalf("batch new: %d %s", code, errs)
 	}
 	if code, _, errs := cli(t, "send", short, "go"); code != 1 || !strings.Contains(errs, "drive read") {

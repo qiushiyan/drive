@@ -1,0 +1,8 @@
+$ drive snippet land-pr $ROOT/work D3 waits
+exit 0
+--- stdout
+Open the PR and see it through code review.
+
+D3 waits
+--- stderr
+from: $HOME/.config/tabtype/config.toml

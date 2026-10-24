@@ -1,0 +1,8 @@
+$ drive wait T1
+exit 0
+--- stdout
+T1 (a00001): its turn ended
+--- reply (end) ---
+ok
+view: T1@fefb9f5c
+--- stderr

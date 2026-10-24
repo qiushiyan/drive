@@ -1,0 +1,6 @@
+$ drive open J1 --dir $ROOT/work Review the spec in docs/spec.md
+exit 0
+--- stdout
+opened J1 in block a00003 on account acct@example.com (session sid-3)
+arrived J1: Review the spec in docs/spec.md, notice first
+--- stderr

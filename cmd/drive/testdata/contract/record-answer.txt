@@ -1,0 +1,5 @@
+$ drive record answer A1 --source yes --took amended --explained
+exit 0
+--- stdout
+recorded answer A1
+--- stderr

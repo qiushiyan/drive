@@ -1,0 +1,5 @@
+$ drive batch new b1 --tz Europe/London
+exit 0
+--- stdout
+batch b1 started and current ($HOME/state/batches/b1)
+--- stderr

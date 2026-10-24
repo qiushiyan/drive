@@ -1,0 +1,5 @@
+$ drive record ask - --question Release tonight? --if-unanswered it waits
+exit 0
+--- stdout
+recorded ask A2
+--- stderr

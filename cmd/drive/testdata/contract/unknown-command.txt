@@ -1,0 +1,5 @@
+$ drive frobnicate
+exit 2
+--- stdout
+--- stderr
+drive: unknown command "frobnicate"; `drive --help` lists the commands

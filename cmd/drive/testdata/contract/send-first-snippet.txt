@@ -1,0 +1,5 @@
+$ drive send a00001@e274d317 --as T1 --snippet land-pr D3 waits for me.
+exit 0
+--- stdout
+arrived T1: $HOME/state/batches/b1/sends/T1-1.md, notice first, snippet from $HOME/.config/tabtype/config.toml
+--- stderr

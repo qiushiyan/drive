@@ -1,0 +1,9 @@
+$ drive read T4
+exit 0
+--- stdout
+[authentication_failed] Login expired · Please run /login
+
+T4 is blocked:auth on account acct@example.com (session sid-1)
+view: T4@12c8579c
+next: relaunch it on another account with the step it was to take: drive close T4@12c8579c && drive open T4 --dir $ROOT/work --resume sid-1 --account other@example.com go
+--- stderr

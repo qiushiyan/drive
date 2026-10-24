@@ -1,0 +1,17 @@
+$ drive read T1 --json
+exit 0
+--- stdout
+{
+  "account": "acct@example.com",
+  "at": "2026-10-23T01:00:01Z",
+  "input": "empty",
+  "input_text": "",
+  "jobs": null,
+  "next": "",
+  "session": "T1",
+  "sid": "sid-1",
+  "state": "done",
+  "text": "ok",
+  "view": "T1@fefb9f5c"
+}
+--- stderr

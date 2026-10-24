@@ -1,0 +1,5 @@
+$ drive respond a00002@46abfde4 yes
+exit 1
+--- stdout
+--- stderr
+drive: unknown response "yes": approve, deny, interrupt or clear

@@ -1,0 +1,26 @@
+$ drive log
+exit 0
+--- stdout
+02:00  batch                 started
+02:00  adopt        T1       block a00001, account acct@example.com, $ROOT/work
+02:00  send-intent  T1       Read $HOME/state/batches/b1/sends/T1-1.md and do what it asks.
+02:00  send         T1       arrived: snippet land-pr (the notice first)
+02:02  refused      T1       T1 has moved past view T1@00000000: it has received another prompt since: the land-pr snippet drive sent at 02:00
+02:02  respond      a00002   approve Bash: pnpm install → working
+02:02  grant                 G1 merge this batch's PRs — "you can merge on my behalf" (02:08)
+02:02  ask          T1       A1 Take the lab host down? (recommends: yes, after the read; unanswered: it keeps running)
+02:02  ask                   A2 Release tonight? (recommends: ; unanswered: it waits)
+02:02  answer                A1 amended, needed explaining — yes
+02:02  note                  plan: T1 land-pr; T2 approve and build
+02:02  note         T2       told the user
+02:02  park         T1       design checkpoint
+02:02  open-intent  J1       Review the spec in docs/spec.md
+02:02  open         J1       block a00003, account , $ROOT/work
+02:02  open         J1       block a00003, account acct@example.com, $ROOT/work
+02:02  send-intent  J1       Read $HOME/state/batches/b1/sends/J1-1.md and do what it asks.
+02:02  send-intent  J1       Review the spec in docs/spec.md
+02:02  send         J1       arrived: Read $HOME/state/batches/b1/sends/J1-1.md and do what it asks. (the notice first)
+02:02  send         J1       arrived: Review the spec in docs/spec.md
+02:02  refused      J1       J1 is already open as block a00003 (since 02:02)
+02:02  close        T1       
+--- stderr

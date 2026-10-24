@@ -1,0 +1,43 @@
+$ drive metrics --json
+exit 0
+--- stdout
+{
+  "Batch": "b1",
+  "From": "2026-10-23T01:00:00Z",
+  "To": "2026-10-23T01:02:12Z",
+  "Asks": 2,
+  "Answered": 1,
+  "Took": {
+    "amended": 1
+  },
+  "Explained": 1,
+  "Unanswered": 1,
+  "OwnerWait": 8000000000,
+  "MedianAnswer": 0,
+  "Sessions": 2,
+  "Merged": null,
+  "Unread": 0,
+  "PerMerge": 0,
+  "Sends": 2,
+  "Snippets": 1,
+  "ByKey": {
+    "land-pr": 1
+  },
+  "Commands": 0,
+  "OwnWords": 1,
+  "Refusals": {
+    "already open": 1,
+    "stale view": 1
+  },
+  "Failures": null,
+  "Unknown": 0,
+  "Recovered": 0,
+  "Garbled": 0,
+  "Other": 0,
+  "Wakes": 0,
+  "Timers": 0,
+  "WakeFails": 0,
+  "Unhandled": 0,
+  "Unwatched": 0
+}
+--- stderr

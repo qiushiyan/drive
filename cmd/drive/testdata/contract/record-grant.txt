@@ -1,0 +1,5 @@
+$ drive record grant --source "you can merge on my behalf" (02:08) --scope merge this batch's PRs
+exit 0
+--- stdout
+recorded grant G1
+--- stderr

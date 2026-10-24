@@ -1,0 +1,6 @@
+$ drive watch T1
+exit 1
+--- stdout
+--- stderr
+drive: batch b1 wakes no one (wake: none)
+next: wait for it yourself, in the background: drive wait T1

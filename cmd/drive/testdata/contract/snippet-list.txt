@@ -1,0 +1,5 @@
+$ drive snippet --list $ROOT/work
+exit 0
+--- stdout
+land-pr	$HOME/.config/tabtype/config.toml
+--- stderr

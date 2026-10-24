@@ -1,0 +1,5 @@
+$ drive batch use nope
+exit 1
+--- stdout
+--- stderr
+drive: no batch "nope"; `drive batch list` shows them

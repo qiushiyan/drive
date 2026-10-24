@@ -405,3 +405,12 @@ func cmdClose(d *drive.Driver, argv []string) int {
 	fmt.Printf("closed %s\n", strings.SplitN(a.pos[0], "@", 2)[0])
 	return 0
 }
+
+// clockNow is the driver's clock, which a test sets, so every time drive
+// prints and records comes from one clock.
+func clockNow(d *drive.Driver) time.Time {
+	if d.Now != nil {
+		return d.Now()
+	}
+	return time.Now()
+}

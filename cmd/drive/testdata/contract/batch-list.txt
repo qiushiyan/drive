@@ -1,0 +1,6 @@
+$ drive batch list
+exit 0
+--- stdout
+  b1  started 2026-10-23 02:00  wakes: none
+* b2  started 2026-10-23 02:02  wakes: none
+--- stderr

@@ -1,0 +1,5 @@
+$ drive batch use b1
+exit 0
+--- stdout
+batch b1 is current
+--- stderr

@@ -86,7 +86,7 @@ func cmdStatus(d *drive.Driver, argv []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	now := time.Now()
+	now := clockNow(d)
 	if a.on("json") {
 		rows := func(rs []drive.Row) []map[string]any {
 			var out []map[string]any
@@ -320,7 +320,7 @@ func cmdWait(d *drive.Driver, argv []string) int {
 		return fail(err)
 	}
 	if a.on("notify") {
-		fmt.Printf("%s woke the driver for %s (%s)\n", time.Now().Format(time.RFC3339), e.Label, e.State)
+		fmt.Printf("%s woke the driver for %s (%s)\n", clockNow(d).Format(time.RFC3339), e.Label, e.State)
 	}
 	if a.on("json") {
 		printJSON(map[string]any{"session": e.Label, "block": rex.Short(e.Block), "state": e.State, "error": e.Error,
@@ -394,7 +394,7 @@ func cmdLog(d *drive.Driver, argv []string) int {
 		}
 		return 0
 	}
-	zone, now := b.Zone(), time.Now()
+	zone, now := b.Zone(), clockNow(d)
 	for _, e := range evs {
 		fmt.Printf("%s  %-12s %-8s %s\n", clock(e.At, zone, now), e.Kind, e.Session, describe(e))
 	}
@@ -562,7 +562,7 @@ func cmdBatch(d *drive.Driver, argv []string) int {
 		}
 		if tz != "" {
 			if _, err := time.LoadLocation(tz); err != nil {
-				return bad(fmt.Sprintf("--tz %q is not a zone name such as Asia/Shanghai", tz))
+				return bad(fmt.Sprintf("--tz %q is not a zone name such as Europe/London", tz))
 			}
 		}
 		rs := a.str("rex-session")
@@ -581,7 +581,7 @@ func cmdBatch(d *drive.Driver, argv []string) int {
 		for _, w := range argv {
 			again.WriteString(" " + shellWord(w))
 		}
-		st, err := d.StartBatch(batch.Meta{Name: a.pos[1], Started: time.Now(), Wake: wake, Webhook: a.str("webhook"),
+		st, err := d.StartBatch(batch.Meta{Name: a.pos[1], Started: clockNow(d), Wake: wake, Webhook: a.str("webhook"),
 			RexSession: rs, TZ: tz, AfterWake: after}, again.String())
 		if err != nil {
 			return fail(err)

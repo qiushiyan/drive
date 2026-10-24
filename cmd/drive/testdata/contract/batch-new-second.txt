@@ -1,0 +1,5 @@
+$ drive batch new b2
+exit 0
+--- stdout
+batch b2 started and current ($HOME/state/batches/b2)
+--- stderr

@@ -1,0 +1,59 @@
+$ drive status --quick --json
+exit 0
+--- stdout
+{
+  "batch": {
+    "name": "b1",
+    "started": "2026-10-23T01:00:00Z",
+    "wake": "none",
+    "rex_session": "",
+    "tz": "Europe/London"
+  },
+  "closed": 0,
+  "grants": null,
+  "holds": null,
+  "in_flight": null,
+  "open_asks": null,
+  "others": [
+    {
+      "account": "acct@example.com",
+      "block": "a00002",
+      "error": "",
+      "for_seconds": 1,
+      "input": "empty",
+      "jobs": null,
+      "label": "a00002",
+      "last_sent": "",
+      "name": "T2",
+      "sid": "sid-2",
+      "stage": "",
+      "state": "working",
+      "unhandled_wake": false,
+      "view": "a00002@46abfde4",
+      "wake_due": "",
+      "watch": "",
+      "window": "2"
+    }
+  ],
+  "sessions": [
+    {
+      "account": "acct@example.com",
+      "block": "a00001",
+      "error": "",
+      "for_seconds": 123,
+      "input": "empty",
+      "jobs": null,
+      "label": "T1",
+      "last_sent": "snippet land-pr",
+      "sid": "sid-1",
+      "stage": "",
+      "state": "done",
+      "unhandled_wake": false,
+      "view": "T1@fefb9f5c",
+      "wake_due": "never watched",
+      "watch": "none",
+      "window": "1"
+    }
+  ]
+}
+--- stderr

@@ -1,0 +1,5 @@
+$ drive record note plan: T1 land-pr; T2 approve and build
+exit 0
+--- stdout
+recorded note N1
+--- stderr

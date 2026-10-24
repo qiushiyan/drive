@@ -41,7 +41,7 @@ type Config struct {
 	Notice string `toml:"notice"`
 	// RexSession is where new batches open their sessions; empty is Rex's default.
 	RexSession string `toml:"rex_session"`
-	// TZ is the zone times are shown in, such as "Asia/Shanghai"; empty is local.
+	// TZ is the zone times are shown in, such as "Europe/London"; empty is local.
 	TZ string `toml:"tz"`
 	// AfterWake runs after each wake is posted, such as archiving the chat
 	// the wake went to. Its failure is logged and does not fail the wake.

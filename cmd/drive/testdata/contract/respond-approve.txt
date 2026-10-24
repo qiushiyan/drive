@@ -1,0 +1,5 @@
+$ drive respond a00002@46abfde4 approve
+exit 0
+--- stdout
+approve a00002 (Bash: pnpm install); it now reads working
+--- stderr

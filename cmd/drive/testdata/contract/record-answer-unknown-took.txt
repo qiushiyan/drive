@@ -1,0 +1,5 @@
+$ drive record answer A2 --source no --took maybe
+exit 1
+--- stdout
+--- stderr
+drive: --took "maybe": one of recommended, amended, delegated, moot

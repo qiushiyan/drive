@@ -1,0 +1,6 @@
+$ drive open J1 --dir $ROOT/work again
+exit 1
+--- stdout
+--- stderr
+drive: J1 is already open as block a00003 (since 02:02)
+next: send to it instead: drive read J1

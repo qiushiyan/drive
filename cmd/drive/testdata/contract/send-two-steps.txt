@@ -1,0 +1,5 @@
+$ drive send a00001@e274d317 go --file $HOME/nope.md
+exit 2
+--- stdout
+--- stderr
+drive: give one step: a line, --file PATH or --snippet KEY; `drive --help` lists the commands

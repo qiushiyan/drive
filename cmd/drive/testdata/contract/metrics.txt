@@ -1,0 +1,13 @@
+$ drive metrics
+exit 0
+--- stdout
+batch b1, 10-23 02:00 → 10-23 02:02 BST, 2 sessions
+asks: 2 (1 answered, 1 open); took the recommendation 0, amended 1, delegated 0, moot 0; needed explaining 1
+owner wait: 0s in all, median answer 0s
+merged: 0
+sends: 2 — 1 the owner's snippets, 0 slash commands typed, 1 the driver's own words; 0 retyped after a lost start, 0 left garbled, 0 received as something else; 0 with delivery unknown
+snippets: land-pr 1
+wakes: 0 posted for sessions and 0 for timers, 0 failed; 0 followed by no action on the session before its next wake or the batch's end
+turns left unwatched: 0 (a send or respond that no wake, park or close of its session followed)
+refused: already open 1, stale view 1
+--- stderr
