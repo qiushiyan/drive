@@ -90,7 +90,7 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 	if err != nil {
 		return nil, d.refuse(b, label, unsent(err, again))
 	}
-	if err := checkView(o, v, opt.Queue, b.Zone()); err != nil {
+	if err := checkView(o, v, opt.Queue, b.Zone(), evs); err != nil {
 		return nil, d.refuse(b, o.Label, err)
 	}
 	if err := d.ready(o, opt, step); err != nil {

@@ -31,7 +31,8 @@ driver acts on a session at a time.
 
   drive status [--json] [--quick]          every session in the batch, live
   drive read SESSION [MODE] [--json]       its newest reply, its view, and next: where its
-                                           state decides it; MODE is one of
+                                           state decides it; a closed or gone session's from
+                                           its transcript, with no view; MODE is one of
            --prompts [N]  what it was told   --pending  the call a prompt waits on
            --user         its newest prompt  --screen   the end of its screen
   drive wait SESSION [--quiet S] [--bg S]  block until its turn ends; prints the reply's end
@@ -88,7 +89,7 @@ status columns:
   hold lines name who holds each hold and who waits for it with the step it was refused
 
 SESSION is a label in the batch (T1) or a block id (its last six characters).
---batch NAME acts in that batch instead of the current one.
+--batch NAME, anywhere on the line, acts in that batch instead of the current one.
 
 A refusal or failure that leaves something to do ends with next:, a command
 that runs as written on the session as it stands. Exit status: 0 done;
@@ -102,9 +103,13 @@ func main() {
 }
 
 func run(argv []string) int {
+	// --batch NAME may stand anywhere on the line: a driver writes it after the command as often as before.
 	batchName := ""
-	if len(argv) >= 2 && argv[0] == "--batch" {
-		batchName, argv = argv[1], argv[2:]
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == "--batch" {
+			batchName, argv = argv[i+1], append(append([]string{}, argv[:i]...), argv[i+2:]...)
+			break
+		}
 	}
 	if len(argv) == 0 || argv[0] == "--help" || argv[0] == "-h" || argv[0] == "help" {
 		fmt.Print(usage)

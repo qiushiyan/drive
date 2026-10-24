@@ -191,16 +191,20 @@ func (d *Driver) ownView(v turn.View, what string, promptOnly bool, again string
 	if err != nil {
 		return nil, nil, nil, d.refuse(b, label, err)
 	}
-	_, _, members, err = d.members()
+	var evs []batch.Event
+	_, evs, members, err = d.members()
 	if err == nil && b != nil {
 		err = d.settle(b, label, block)
+	}
+	if err == nil && b != nil {
+		evs, err = b.Events() // settling may have recorded what an earlier driver sent
 	}
 	var o *Observation
 	if err == nil {
 		o, err = d.observe(members, v.Session)
 	}
 	if err == nil {
-		if err = checkView(o, v, promptOnly, d.zone()); err != nil {
+		if err = checkView(o, v, promptOnly, d.zone(), evs); err != nil {
 			err = d.refuse(b, o.Label, err)
 		}
 	}
@@ -255,7 +259,15 @@ func (d *Driver) Close(view string) error {
 		_ = d.Watches.Stop(watchName(b, o.Session.Block))
 	}
 	if b != nil {
-		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindClose, Session: o.Label, Block: o.Session.Block, View: v.String()})
+		closed := batch.Event{At: d.now(), Kind: batch.KindClose, Session: o.Label, Block: o.Session.Block, View: v.String()}
+		// Whether its branch merged is read now: the cleanup after a close removes the branch.
+		if l, ok := d.landed(o.Session.Dir, o.Session.ID, o.Frontier.Branches); ok {
+			closed.Branch, closed.Dir, closed.Outcome = l.branch, l.repo, "unmerged"
+			if l.merged {
+				closed.Outcome = "merged"
+			}
+		}
+		_ = b.Append(closed)
 	}
 	return nil
 }

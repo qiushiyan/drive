@@ -64,6 +64,9 @@ type Host interface {
 	Cwd(pid int) string
 	// Shells are the background shells a Claude Code process runs.
 	Shells(pid int) []Shell
+	// Transcript is the transcript of the session with this id, which
+	// outlives its process and its block; "" when none is found.
+	Transcript(id string) string
 }
 
 // Shell is a background shell a Claude Code session runs: a Bash call it
@@ -223,6 +226,21 @@ func (Machine) Started(pid int) string {
 		return ""
 	}
 	return Lstart(string(out))
+}
+
+// Transcript implements Host. Every account's projects directory is one
+// directory (~/.claude-accounts/*/projects links to ~/.claude/projects), but
+// each is looked in, in case one is not linked.
+func (m Machine) Transcript(id string) string {
+	for _, pattern := range []string{
+		filepath.Join(m.Home, ".claude", "projects", "*", id+".jsonl"),
+		filepath.Join(m.Home, ".claude-accounts", "*", "projects", "*", id+".jsonl"),
+	} {
+		if found, _ := filepath.Glob(pattern); len(found) > 0 {
+			return found[0]
+		}
+	}
+	return ""
 }
 
 // Cwd implements Host.

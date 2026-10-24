@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -54,6 +55,10 @@ type Frontier struct {
 	Error       *APIError // an API error after the newest prompt
 	Pending     *ToolCall
 	Interrupted bool // the newest prompt's turn was interrupted, a denied prompt included, and nothing followed
+	// Branches are the git branches the session worked on, each once, the
+	// one it was on most recently last: a session that built in a worktree
+	// and went back to merge names its branch, then the trunk.
+	Branches []string
 }
 
 // Newest is the newest prompt the session received, queued or taken.
@@ -135,6 +140,7 @@ type row struct {
 	Reason     string          `json:"reason"`
 	Content    json.RawMessage `json:"content"`
 	Attachment json.RawMessage `json:"attachment"`
+	GitBranch  string          `json:"gitBranch"`
 }
 
 type block struct {
@@ -214,6 +220,9 @@ func Read(r io.Reader) (Frontier, error) {
 		var e row
 		if json.Unmarshal(line, &e) != nil {
 			continue
+		}
+		if b := e.GitBranch; b != "" && b != "HEAD" && (len(f.Branches) == 0 || f.Branches[len(f.Branches)-1] != b) {
+			f.Branches = append(slices.DeleteFunc(f.Branches, func(x string) bool { return x == b }), b)
 		}
 		switch e.Type {
 		case "assistant":

@@ -177,3 +177,26 @@ func TestAReadThatFailsBeforeAnyEffectIsARefusal(t *testing.T) {
 		t.Fatalf("nothing typed or pressed: %q %q", typed, keys)
 	}
 }
+
+// A step decided on a view another run has since acted on is refused naming
+// the step that run sent, so the driver knows the session did not move by
+// itself: the prompt it took, and the one it is still answering.
+func TestAStaleViewNamesTheStepAnotherRunSent(t *testing.T) {
+	r := newRig(t, "none")
+	a := adopted(t, r, "T1")
+	old := r.view("T1")
+	a.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} })
+	if _, err := r.d.Send(old, drive.Step{Line: "recap please"}, drive.SendOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.d.Send(old, drive.Step{Line: "recap please"}, drive.SendOptions{})
+	if !isRefused(err) || !strings.Contains(err.Error(), `received another prompt since: the step "recap please" drive sent at`) {
+		t.Fatalf("the prompt it took since: %v", err)
+	}
+	mid := r.view("T1")
+	a.Say("Recap: built the flag.")
+	_, err = r.d.Send(mid, drive.Step{Line: "next"}, drive.SendOptions{})
+	if !isRefused(err) || !strings.Contains(err.Error(), `written more since, answering the step "recap please" drive sent at`) {
+		t.Fatalf("the step it is still answering: %v", err)
+	}
+}

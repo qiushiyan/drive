@@ -16,11 +16,11 @@ Rex alone is not enough: no hook reports a deny, an interrupt, a typed `/compact
 
 A session's background jobs are the Bash shells it left running, each known by the command it runs (`session.Shell`): `status`, `read` and the wake list them, and wherever a job bears on what comes next, a turn that ended while it runs or a hold, interrupt or close it stands in the way of, the `next:` gives the step that has the session stop it, since the session owns its jobs and a driver only reads and sends.
 
-A session whose process has gone, or whose pid another process now holds, is no session: `Locate` checks the registry's `procStart`, which Claude Code writes as `ps` prints `lstart` in UTC, against the live process, and treats a start it cannot read as a match rather than hide a live session. An API error belongs to the process that wrote it: accounts share one transcript directory (`~/.claude-accounts/*/projects` links to `~/.claude/projects`), so a session resumed on another account reads the error that ended the one it replaced, and an error older than the process's start does not count (`liveError`).
+A session whose process has gone, or whose pid another process now holds, is no session: `Locate` checks the registry's `procStart`, which Claude Code writes as `ps` prints `lstart` in UTC, against the live process, and treats a start it cannot read as a match rather than hide a live session. An API error belongs to the process that wrote it: accounts share one transcript directory (`~/.claude-accounts/*/projects` links to `~/.claude/projects`), so a session resumed on another account reads the error that ended the one it replaced, and an error older than the process's start does not count (`liveError`). Its transcript outlives both the process and the block, so `read` of a session closed or gone reads that (`Host.Transcript`), saying which, with no view, since nothing can act on it: a report run after a reset still has the recaps.
 
 ## Views
 
-Every action on a session is decided on a view, `T1@3fa91c07`: the session, then a short hash of its newest prompt followed by one of its newest answer (`internal/turn/view.go`). `read`, `wait`, `status` and every wake print one; `send`, `respond`, `park` and `close` take one and refuse once the session has moved past it. That is what keeps a step decided on an old turn from landing on a new one when several drivers act at once.
+Every action on a session is decided on a view, `T1@3fa91c07`: the session, then a short hash of its newest prompt followed by one of its newest answer (`internal/turn/view.go`). `read`, `wait`, `status` and every wake print one; `send`, `respond`, `park` and `close` take one and refuse once the session has moved past it. That is what keeps a step decided on an old turn from landing on a new one when several drivers act at once, and why the refusal names the prompt the session moved on and, when drive sent it, which step and when (`checkView`): a run refused over another run's step learns the session did not move by itself.
 
 A working session's view changes as it writes, so a send is decided on a turn that has ended. `--queue` sends to a working session and checks only the prompt half: nothing new was sent to it since.
 
@@ -58,5 +58,6 @@ The suite drives a fake Rex and fake Claude Code sessions (`internal/testkit`) t
 - **A rejected login** answers with an API error row and no Stop.
 - **Typing** can lose a line's start to a line break, Enter can be lost, a send can be caught mid-typing (`TypeGate`), a prompt draws its options where the input box would be, and Rex can fail a read or a key (`StatusFails`, `KeyFails`).
 - **A watch name** already running is refused.
+- **A closed block** leaves its transcript behind, as the real one does.
 
 `TestMain` points `HOME`, `DRIVE_STATE_DIR` and `DRIVE_CONFIG_DIR` at a temporary directory, so no test reaches live state. `cmd/drive/main_test.go` runs the command itself against the fake world through `newDriver`.

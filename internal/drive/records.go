@@ -8,6 +8,7 @@ import (
 
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/skill"
+	"github.com/qiushiyan/drive/internal/turn"
 )
 
 // Grant records authority the owner handed over, in their words and with
@@ -150,10 +151,13 @@ var driverActions = map[string]bool{
 }
 
 // MergedPR is a change the batch merged, with the sessions that name it:
-// its builder, and its strategic reviewer when one merged it.
+// its builder, and its strategic reviewer when one merged it. A change
+// merged without a pull request, as a personal tool's closeout merges it, is
+// its branch, with Number 0 and Repo the repository's main checkout.
 type MergedPR struct {
 	Repo     string
 	Number   int
+	Branch   string `json:",omitempty"`
 	At       time.Time
 	Sessions []string
 }
@@ -274,37 +278,51 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 			m.Unwatched += n
 		}
 	}
-	merged := map[string]int{}   // repo#number to its index in m.Merged
+	merged := map[string]int{}   // repo#number, or repo@branch, to its index in m.Merged
 	looked := map[string]error{} // repo#number to how its lookup went: each is looked up once
+	add := func(key, label string, c MergedPR) {
+		if i, ok := merged[key]; ok {
+			m.Merged[i].Sessions = append(m.Merged[i].Sessions, label)
+			return
+		}
+		c.Sessions = []string{label}
+		m.Merged = append(m.Merged, c)
+		merged[key] = len(m.Merged) - 1
+	}
 	for _, mem := range batch.Members(evs) {
 		m.Sessions++
 		if d.Progress == nil || mem.SID == "" {
 			continue
 		}
-		s, err := d.Progress.Steps(mem.SID)
-		if err != nil {
-			m.Unread++
-			continue
+		viaPR, unread := false, false
+		if s, err := d.Progress.Steps(mem.SID); err != nil {
+			unread = true
+		} else {
+			for _, ref := range s.PRs {
+				key := fmt.Sprintf("%s#%d", ref.Repo, ref.Number)
+				if _, ok := merged[key]; ok {
+					add(key, mem.Label, MergedPR{})
+					viaPR = true
+					continue
+				}
+				if err, ok := looked[key]; ok {
+					unread = unread || err != nil
+					continue
+				}
+				pr, err := d.Progress.PR(ref)
+				if looked[key] = err; err != nil {
+					unread = true
+					continue
+				}
+				if pr.State == "MERGED" && !pr.MergedAt.Before(b.Meta.Started) {
+					add(key, mem.Label, MergedPR{Repo: ref.Repo, Number: pr.Number, At: pr.MergedAt})
+					viaPR = true
+				}
+			}
 		}
-		unread := false
-		for _, ref := range s.PRs {
-			key := fmt.Sprintf("%s#%d", ref.Repo, ref.Number)
-			if i, ok := merged[key]; ok {
-				m.Merged[i].Sessions = append(m.Merged[i].Sessions, mem.Label)
-				continue
-			}
-			if err, ok := looked[key]; ok {
-				unread = unread || err != nil
-				continue
-			}
-			pr, err := d.Progress.PR(ref)
-			if looked[key] = err; err != nil {
-				unread = true
-				continue
-			}
-			if pr.State == "MERGED" && !pr.MergedAt.Before(b.Meta.Started) {
-				m.Merged = append(m.Merged, MergedPR{Repo: ref.Repo, Number: pr.Number, At: pr.MergedAt, Sessions: []string{mem.Label}})
-				merged[key] = len(m.Merged) - 1
+		if !viaPR {
+			if c, ok := d.mergedBranch(mem, evs, m.To); ok {
+				add(c.Repo+"@"+c.Branch, mem.Label, c)
 			}
 		}
 		if unread {
@@ -315,6 +333,61 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 		m.PerMerge = m.OwnerWait / time.Duration(len(m.Merged))
 	}
 	return m, nil
+}
+
+// mergedBranch is a member's branch, when it merged into its trunk with no
+// pull request: as recorded when the session was closed, since the cleanup
+// after a close removes the branch, or as gwt judges it now for a session
+// still open.
+func (d *Driver) mergedBranch(mem *batch.Member, evs []batch.Event, now time.Time) (MergedPR, bool) {
+	if mem.Closed {
+		for i := len(evs) - 1; i >= 0; i-- {
+			if e := evs[i]; e.Kind == batch.KindClose && e.Session == mem.Label {
+				return MergedPR{Repo: e.Dir, Branch: e.Branch, At: e.At}, e.Outcome == "merged" && e.Branch != ""
+			}
+		}
+		return MergedPR{}, false
+	}
+	var branches []string
+	if path := d.Host.Transcript(mem.SID); path != "" {
+		if f, err := turn.ReadFile(path); err == nil {
+			branches = f.Branches
+		}
+	}
+	l, ok := d.landed(mem.Dir, mem.SID, branches)
+	return MergedPR{Repo: l.repo, Branch: l.branch, At: now}, ok && l.merged
+}
+
+// branchLanding is how a session's branch stands against its trunk.
+type branchLanding struct {
+	branch, repo string
+	merged       bool
+}
+
+// landed judges the branch a session worked on: the newest one other than
+// the trunk, which it may have gone back to for the merge, among those its
+// transcript names and those checked out where it committed (a session that
+// worked in a worktree through its shell names only the trunk). ok is false
+// when there is no such branch or no verdict on it.
+func (d *Driver) landed(dir, sid string, branches []string) (branchLanding, bool) {
+	if d.Progress == nil || dir == "" {
+		return branchLanding{}, false
+	}
+	var commitDirs []string
+	if s, err := d.Progress.Steps(sid); err == nil {
+		commitDirs = s.CommitDirs
+	}
+	l, err := d.Progress.Landed(dir, branches, commitDirs)
+	if err != nil {
+		return branchLanding{}, false
+	}
+	for i := len(l.Branches) - 1; i >= 0; i-- {
+		if b := l.Branches[i]; b != l.Trunk {
+			merged, judged := l.Merged[b]
+			return branchLanding{branch: b, repo: l.Repo, merged: merged}, judged
+		}
+	}
+	return branchLanding{}, false
 }
 
 // refusalKind groups refusal reasons by what stopped the action.

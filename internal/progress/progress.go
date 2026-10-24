@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 )
@@ -18,6 +20,9 @@ type Steps struct {
 	Branch  string
 	PR      *PRRef  // the newest pull request the session opened or named
 	PRs     []PRRef // every one it opened or named, each once, in the order first named
+	// CommitDirs are the directories the session committed in, each once,
+	// the newest last: its worktree, however it reached it.
+	CommitDirs []string
 }
 
 // PRRef names a pull request.
@@ -40,10 +45,23 @@ type PR struct {
 	MergedAt time.Time
 }
 
-// Source answers both questions; tests substitute their own.
+// Landing is how a session's branches stand against their repository's
+// trunk, which is how a change merged without a pull request is known.
+type Landing struct {
+	Repo     string          // the repository's main checkout
+	Trunk    string          // the trunk's name, such as main
+	Branches []string        // the branches judged, the newest worked on last
+	Merged   map[string]bool // each branch that could be judged: merged into the trunk or not
+}
+
+// Source answers these questions; tests substitute their own.
 type Source interface {
 	Steps(sessionID string) (Steps, error)
 	PR(ref PRRef) (PR, error)
+	// Landed judges a session's branches in the repository dir is a
+	// checkout of: those it names, then those checked out in the
+	// directories it committed in that still exist.
+	Landed(dir string, branches, commitDirs []string) (Landing, error)
 }
 
 // Tools runs claude-steps and gh.
@@ -58,6 +76,55 @@ func run(name string, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
 	return out, nil
+}
+
+// Landed implements Source through gwt, which owns every merged verdict, a
+// squash or rebase merge included. gwt exits 1 when a branch cannot be
+// judged, such as one already removed, and still judges the rest.
+func (Tools) Landed(dir string, branches, commitDirs []string) (Landing, error) {
+	branches = append([]string{}, branches...)
+	for _, d := range commitDirs {
+		git := exec.Command("git", "branch", "--show-current")
+		git.Dir = d
+		if out, err := git.Output(); err == nil {
+			if b := strings.TrimSpace(string(out)); b != "" {
+				branches = append(slices.DeleteFunc(branches, func(x string) bool { return x == b }), b)
+			}
+		}
+	}
+	if len(branches) == 0 {
+		return Landing{}, fmt.Errorf("no branch to judge")
+	}
+	cmd := exec.Command("gwt", append(append([]string{"merged"}, branches...), "--json")...)
+	cmd.Dir = dir
+	out, runErr := cmd.Output()
+	var v struct {
+		Trunk struct {
+			Name string `json:"name"`
+		} `json:"trunk"`
+		Branches []struct {
+			Branch string `json:"branch"`
+			Merged *bool  `json:"merged"`
+		} `json:"branches"`
+	}
+	if err := json.Unmarshal(out, &v); err != nil || v.Trunk.Name == "" {
+		if runErr != nil {
+			return Landing{}, fmt.Errorf("gwt merged: %w", runErr)
+		}
+		return Landing{}, fmt.Errorf("gwt merged --json: %v", err)
+	}
+	l := Landing{Trunk: v.Trunk.Name, Branches: branches, Merged: map[string]bool{}}
+	for _, b := range v.Branches {
+		if b.Merged != nil {
+			l.Merged[b.Branch] = *b.Merged
+		}
+	}
+	git := exec.Command("git", "rev-parse", "--path-format=absolute", "--git-common-dir")
+	git.Dir = dir
+	if common, err := git.Output(); err == nil {
+		l.Repo = strings.TrimSuffix(strings.TrimSpace(string(common)), "/.git")
+	}
+	return l, nil
 }
 
 // Steps implements Source.
@@ -80,11 +147,26 @@ func (Tools) Steps(id string) (Steps, error) {
 			Number int       `json:"number"`
 			URL    string    `json:"url"`
 		} `json:"pull_requests"`
+		Events []struct {
+			At   time.Time `json:"at"`
+			Kind string    `json:"kind"`
+			Dir  string    `json:"dir"`
+		} `json:"events"`
 	}
 	if err := json.Unmarshal(out, &v); err != nil {
 		return Steps{}, fmt.Errorf("claude-steps show --json: %w", err)
 	}
 	s := Steps{Branch: v.Branch}
+	commits := v.Events[:0:0]
+	for _, e := range v.Events {
+		if e.Kind == "commit" && e.Dir != "" {
+			commits = append(commits, e)
+		}
+	}
+	sort.SliceStable(commits, func(i, j int) bool { return commits[i].At.Before(commits[j].At) })
+	for _, e := range commits {
+		s.CommitDirs = append(slices.DeleteFunc(s.CommitDirs, func(x string) bool { return x == e.Dir }), e.Dir)
+	}
 	for _, l := range v.Labels {
 		if l.Latest != nil && l.Latest.At.After(s.StageAt) {
 			s.Stage, s.StageAt = l.Name, l.Latest.At

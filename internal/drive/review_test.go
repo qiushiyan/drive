@@ -348,6 +348,65 @@ func (p prs) PR(ref progress.PRRef) (progress.PR, error) {
 	return progress.PR{Number: ref.Number, State: "MERGED", MergedAt: time.Now().Add(time.Hour)}, nil
 }
 
+func (p prs) Landed(string, []string, []string) (progress.Landing, error) {
+	return progress.Landing{}, errors.New("gwt: not here")
+}
+
+// landing is prs with git's checkouts and gwt's verdicts: the branch each
+// directory has checked out, and the branches merged into main.
+type landing struct {
+	prs
+	at     map[string]string
+	merged map[string]bool
+}
+
+func (l landing) Landed(dir string, branches, commitDirs []string) (progress.Landing, error) {
+	out := progress.Landing{Repo: "/work/tool", Trunk: "main", Branches: append([]string{}, branches...), Merged: map[string]bool{}}
+	for _, d := range commitDirs {
+		if b, ok := l.at[d]; ok {
+			out.Branches = append(out.Branches, b)
+		}
+	}
+	for _, b := range out.Branches {
+		out.Merged[b] = b == "main" || l.merged[b]
+	}
+	return out, nil
+}
+
+// A change merged into the trunk without a pull request, as a personal
+// tool's closeout merges it, counts as merged: the session's branch landed.
+// A closed session's verdict is the one read at its close, since the
+// cleanup after removes the branch; an open session's is read now.
+func TestMetricsCountABranchMergedWithoutAPullRequest(t *testing.T) {
+	r := newRig(t, "none")
+	worked := func(c *testkit.Claude, branch string) {
+		c.Write(map[string]any{"type": "attachment", "gitBranch": branch}, map[string]any{"type": "attachment", "gitBranch": "main"})
+	}
+	a, b, c, e := adopted(t, r, "T1"), adopted(t, r, "T2"), adopted(t, r, "T3"), adopted(t, r, "T4")
+	worked(a, "shout")
+	worked(b, "subtract")
+	worked(e, "wip")
+	// T3 worked in its worktree through its shell: its transcript names only main, and claude-steps where it committed.
+	src := landing{prs{a.SID: {}, b.SID: {}, c.SID: {CommitDirs: []string{"/work/tool/.wt/publish"}}, e.SID: {}},
+		map[string]string{"/work/tool/.wt/publish": "publish"}, map[string]bool{"shout": true, "subtract": true, "publish": true}}
+	r.d.Progress = src
+	if err := r.d.Close(r.view("T1")); err != nil {
+		t.Fatal(err)
+	}
+	delete(src.merged, "shout") // its cleanup removed the branch
+	m, err := r.d.Metrics("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, p := range m.Merged {
+		got = append(got, p.Branch+":"+strings.Join(p.Sessions, ","))
+	}
+	if strings.Join(got, " ") != "shout:T1 subtract:T2 publish:T3" || m.Unread != 0 {
+		t.Fatalf("the closed session's branch as its close found it, the open ones' now, the unmerged one not: %v (unread %d)", got, m.Unread)
+	}
+}
+
 // The builder and its strategic reviewer name the same pull request, and
 // the builder an earlier one it landed first.
 func TestMetricsCountAMergedChangeOnce(t *testing.T) {

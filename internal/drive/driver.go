@@ -425,22 +425,54 @@ func (d *Driver) members() (*batch.Batch, []batch.Event, []*batch.Member, error)
 	return b, evs, batch.Members(evs), nil
 }
 
-// checkView refuses an action decided on a view the session has moved past.
+// checkView refuses an action decided on a view the session has moved past,
+// naming the prompt it moved on and, from the batch's record evs, the step
+// drive sent that the prompt is: several runs act on one batch, and a run
+// refused over another's step should know the session did not move alone.
 // Queued sends only need the session to have received nothing since.
-func checkView(o *Observation, v turn.View, promptOnly bool, zone *time.Location) error {
+func checkView(o *Observation, v turn.View, promptOnly bool, zone *time.Location, evs []batch.Event) error {
 	cur := o.View
 	if v.Prompt == cur.Prompt && (promptOnly || v.Reply == cur.Reply) {
 		return nil
 	}
-	what := "it has written more since"
+	what, on := "it has written more since", ", answering "
 	if v.Prompt != cur.Prompt {
-		what = "it has received another prompt since"
-		if p := o.Frontier.Newest(); p != nil {
-			what += fmt.Sprintf(" (%s: %s)", p.At.In(zone).Format("15:04"), clip(promptText(*p), 80))
+		what, on = "it has received another prompt since", ": "
+	}
+	if p := o.Frontier.Newest(); p != nil {
+		step := sentStep(evs, o.Label, *p, zone)
+		if step == "" {
+			step = fmt.Sprintf("its newest prompt (%s: %s)", p.At.In(zone).Format("15:04"), clip(promptText(*p), 80))
 		}
+		what += on + step
 	}
 	return &Refused{Reason: fmt.Sprintf("%s has moved past view %s: %s", o.Label, v, what),
 		Next: fmt.Sprintf("read it again and decide on what it shows now: drive read %s", o.Label)}
+}
+
+// sentStep names the step drive sent to label that prompt p is, as the
+// batch's record evs has it: "" for a prompt drive did not send.
+func sentStep(evs []batch.Event, label string, p turn.Prompt, zone *time.Location) string {
+	if !p.Known {
+		return ""
+	}
+	for i := len(evs) - 1; i >= 0; i-- {
+		e := evs[i]
+		if e.Kind != batch.KindSend || e.Session != label || e.Text == "" || strings.TrimSpace(e.Text) != strings.TrimSpace(p.Text) {
+			continue
+		}
+		what := fmt.Sprintf("the step %q", clip(e.Text, 60))
+		switch {
+		case e.Key != "":
+			what = "the " + e.Key + " snippet"
+		case e.Mode == "notice":
+			what = "the notice"
+		case e.Mode == "file":
+			what = "the file step"
+		}
+		return what + " drive sent at " + e.At.In(zone).Format("15:04")
+	}
+	return ""
 }
 
 func promptText(p turn.Prompt) string {

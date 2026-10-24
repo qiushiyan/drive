@@ -49,7 +49,8 @@ type Event struct {
 	Hold    string `json:"hold,omitempty"`
 	View    string `json:"view,omitempty"` // the view an action was decided on
 	Action  string `json:"action,omitempty"`
-	Call    string `json:"call,omitempty"` // the tool call a respond answered
+	Call    string `json:"call,omitempty"`   // the tool call a respond answered
+	Branch  string `json:"branch,omitempty"` // a closed session's branch; Outcome says whether it had merged
 
 	ID             string `json:"id,omitempty"`     // G1, A1, N1
 	Ref            string `json:"ref,omitempty"`    // the ask an answer answers; the session an open resumed

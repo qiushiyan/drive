@@ -48,6 +48,7 @@ type World struct {
 	StatusFails int
 	KeyFails    int
 	sessions    map[string]bool // Rex sessions by label
+	closed      []*Claude       // sessions whose blocks were closed: their transcripts remain
 	// Primary is the name the owner's shell gives the primary account's
 	// launcher: x-<Primary> starts a session under ~/.claude, which its
 	// session reports as account "primary".
@@ -589,9 +590,11 @@ func (w *World) EnsureSession(label string) (bool, error) {
 func (w *World) Close(block string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if _, ok := w.blocks[block]; !ok {
+	c, ok := w.blocks[block]
+	if !ok {
 		return fmt.Errorf("no block")
 	}
+	w.closed = append(w.closed, c)
 	delete(w.blocks, block)
 	return nil
 }
@@ -638,6 +641,22 @@ func (w *World) Cwd(pid int) string {
 	for _, c := range w.blocks {
 		if c.PID == pid {
 			return c.Cwd
+		}
+	}
+	return ""
+}
+
+func (w *World) Transcript(id string) string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, c := range w.blocks {
+		if c.SID == id {
+			return c.Transcript()
+		}
+	}
+	for _, c := range w.closed {
+		if c.SID == id {
+			return c.Transcript()
 		}
 	}
 	return ""

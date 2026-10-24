@@ -305,3 +305,16 @@ func TestALocalCommandAnswersWithASystemRow(t *testing.T) {
 		t.Fatalf("a /cd recorded as system rows is a prompt, answered: newest %+v last %+v", p, moved.Last)
 	}
 }
+
+// A session that built in a worktree and went back to the trunk to merge
+// names its branch, then the trunk, each once.
+func TestBranchesAreTheOnesWorkedOnNewestLast(t *testing.T) {
+	f := read(t,
+		`{"type":"user","gitBranch":"main","message":{"content":"start"}}`,
+		`{"type":"assistant","gitBranch":"dogfood/shout","message":{"content":[{"type":"text","text":"built"}]}}`,
+		`{"type":"attachment","gitBranch":"main"}`,
+		`{"type":"system","gitBranch":"main"}`)
+	if got := strings.Join(f.Branches, ","); got != "dogfood/shout,main" {
+		t.Fatalf("branches: %s", got)
+	}
+}

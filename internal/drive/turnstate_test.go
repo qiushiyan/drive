@@ -193,3 +193,30 @@ func TestACompactionsOutputIsItsAnswer(t *testing.T) {
 		t.Fatalf("read shows the compaction's output: %q", rd.Text)
 	}
 }
+
+// A session closed after its last step is still read from its transcript,
+// as a report run after a reset needs its recap; it has no view to act on.
+func TestAClosedSessionIsReadFromItsTranscript(t *testing.T) {
+	r := newRig(t, "none")
+	c := adopted(t, r, "T1")
+	done(c, "recap", "Recap: built --shout.")
+	if err := r.d.Close(r.view("T1")); err != nil {
+		t.Fatal(err)
+	}
+	rd, err := r.d.Read("T1", drive.ReadLast, 1)
+	if err != nil || rd.State != "closed" || !strings.Contains(rd.Text, "built --shout") || rd.View.Session != "" {
+		t.Fatalf("its recap, read closed: %+v %v", rd, err)
+	}
+	if rd, err := r.d.Read("T1", drive.ReadUser, 1); err != nil || rd.Text != "recap" {
+		t.Fatalf("its last prompt: %+v %v", rd, err)
+	}
+	if _, err := r.d.Read("T1", drive.ReadScreen, 1); !isRefused(err) || !strings.Contains(err.Error(), "drive read T1") {
+		t.Fatalf("no screen, and what to read instead: %v", err)
+	}
+	// One whose process ended without a close reads the same way, as gone.
+	c2 := adopted(t, r, "T2")
+	c2.Crash()
+	if rd, err := r.d.Read("T2", drive.ReadLast, 1); err != nil || rd.State != "gone" || rd.View.Session != "" {
+		t.Fatalf("a crashed session, read gone: %+v %v", rd, err)
+	}
+}

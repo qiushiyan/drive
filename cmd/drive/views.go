@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/qiushiyan/drive/internal/drive"
 	"github.com/qiushiyan/drive/internal/rex"
 	"github.com/qiushiyan/drive/internal/snippet"
+	"github.com/qiushiyan/drive/internal/turn"
 )
 
 func printJSON(v any) {
@@ -234,7 +236,7 @@ func cmdRead(d *drive.Driver, argv []string) int {
 	}
 	if a.on("json") {
 		printJSON(map[string]any{"session": r.Label, "sid": r.SID, "state": r.State, "account": r.Account, "input": r.Input,
-			"input_text": r.Typed, "text": r.Text, "at": r.At, "view": r.View.String(), "next": r.Next, "jobs": r.Jobs})
+			"input_text": r.Typed, "text": r.Text, "at": r.At, "view": viewOrEmpty(r.View), "next": r.Next, "jobs": r.Jobs})
 		return 0
 	}
 	fmt.Println(r.Text)
@@ -250,7 +252,9 @@ func cmdRead(d *drive.Driver, argv []string) int {
 		line += "; a background job of its runs: " + clip(j.Command, 100)
 	}
 	fmt.Println(line)
-	fmt.Printf("view: %s\n", r.View)
+	if r.View.Session != "" { // a closed or gone session has nothing to act on
+		fmt.Printf("view: %s\n", r.View)
+	}
 	if r.Next != "" {
 		fmt.Printf("next: %s\n", r.Next)
 	}
@@ -483,6 +487,10 @@ func cmdMetrics(d *drive.Driver, argv []string) int {
 	fmt.Println()
 	fmt.Printf("merged: %d", len(m.Merged))
 	for _, p := range m.Merged {
+		if p.Branch != "" {
+			fmt.Printf(" %s %s, no pull request (%s)", filepath.Base(p.Repo), p.Branch, strings.Join(p.Sessions, ", "))
+			continue
+		}
 		fmt.Printf(" %s#%d (%s)", p.Repo, p.Number, strings.Join(p.Sessions, ", "))
 	}
 	if m.Unread > 0 {
@@ -636,6 +644,14 @@ func cmdSnippet(d *drive.Driver, argv []string) int {
 	fmt.Fprintf(os.Stderr, "from: %s\n", s.From)
 	fmt.Println(s.Text)
 	return 0
+}
+
+// viewOrEmpty is a view as JSON gives it: "" for a closed or gone session, which has none.
+func viewOrEmpty(v turn.View) string {
+	if v.Session == "" {
+		return ""
+	}
+	return v.String()
 }
 
 // shellWord quotes an argument so a command printed for a driver runs as written.

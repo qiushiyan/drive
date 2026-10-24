@@ -1,6 +1,7 @@
 package drive
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -46,14 +47,59 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 	if err != nil {
 		return nil, err
 	}
+	m := batch.Find(members, ref)
+	if m != nil && m.Closed {
+		return d.readEnded(m, "closed", mode, n)
+	}
 	o, err := d.observe(members, ref)
 	if err != nil {
+		if m != nil {
+			if _, lerr := session.Locate(d.Term, d.Host, m.Block); errors.Is(lerr, session.ErrNoClaude) {
+				return d.readEnded(m, "gone", mode, n)
+			}
+		}
 		return nil, err
 	}
 	r := &Reading{Label: o.Label, SID: o.Session.ID, State: o.State(), Account: o.Session.Account, Input: o.Input, Typed: o.Typed, View: o.View}
 	r.Jobs = d.Host.Shells(o.Session.Status.PID)
 	r.Next = d.nextFor(o, r.State, r.Jobs)
-	f := o.Frontier
+	if mode == ReadScreen {
+		screen, err := d.Term.Capture(o.Session.Block, false)
+		if err != nil {
+			return r, &Refused{Reason: fmt.Sprintf("%s's screen cannot be read: %v", o.Label, err), Next: fmt.Sprintf("try again: drive read %s --screen", o.Label)}
+		}
+		r.Text = lastLines(strings.TrimRight(screen, "\r\n "), 40)
+		return r, nil
+	}
+	return r, d.readText(r, o.Frontier, mode, n)
+}
+
+// readEnded reads a member whose session has ended, its block closed or its
+// process gone, from its transcript, which outlives both: a report run after
+// a reset still has its recap. It has no screen, prompt or view to act on.
+func (d *Driver) readEnded(m *batch.Member, state string, mode ReadMode, n int) (*Reading, error) {
+	path := ""
+	if m.SID != "" {
+		path = d.Host.Transcript(m.SID)
+	}
+	if path == "" {
+		return nil, &Refused{Reason: fmt.Sprintf("%s is %s, and no transcript of its session (%s) is found", m.Label, state, m.SID),
+			Next: "drive log has what was sent to it and how each step went"}
+	}
+	if mode == ReadScreen || mode == ReadPending {
+		return nil, &Refused{Reason: fmt.Sprintf("%s is %s: it has no screen and no prompt waiting", m.Label, state),
+			Next: "read its transcript as it ended: drive read " + m.Label}
+	}
+	f, err := turn.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s's transcript: %w", m.Label, err)
+	}
+	r := &Reading{Label: m.Label, SID: m.SID, State: state, Account: m.Account}
+	return r, d.readText(r, f, mode, n)
+}
+
+// readText fills a reading's text from the transcript, as mode asks.
+func (d *Driver) readText(r *Reading, f turn.Frontier, mode ReadMode, n int) error {
 	switch mode {
 	case ReadPrompts:
 		ps := f.Prompts
@@ -74,24 +120,18 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 		r.Text = strings.TrimRight(b.String(), "\n")
 	case ReadPending:
 		if f.Pending == nil {
-			return r, &Refused{Reason: fmt.Sprintf("%s has no tool call waiting", o.Label)}
+			return &Refused{Reason: fmt.Sprintf("%s has no tool call waiting", r.Label)}
 		}
 		r.Text = f.Pending.Name + ":\n" + f.Pending.Input
 	case ReadUser:
 		p := f.Newest()
 		if p == nil {
-			return r, &Refused{Reason: fmt.Sprintf("%s has received no prompt yet", o.Label)}
+			return &Refused{Reason: fmt.Sprintf("%s has received no prompt yet", r.Label)}
 		}
 		r.Text, r.At = promptText(*p), p.At
 		if p.Queued {
 			r.Text = "(queued) " + r.Text
 		}
-	case ReadScreen:
-		screen, err := d.Term.Capture(o.Session.Block, false)
-		if err != nil {
-			return r, &Refused{Reason: fmt.Sprintf("%s's screen cannot be read: %v", o.Label, err), Next: fmt.Sprintf("try again: drive read %s --screen", o.Label)}
-		}
-		r.Text = lastLines(strings.TrimRight(screen, "\r\n "), 40)
 	default:
 		if f.Error != nil {
 			r.Text, r.At = fmt.Sprintf("[%s] %s", f.Error.Kind, f.Error.Text), f.Error.At
@@ -101,7 +141,7 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 			r.Text = "(no reply yet)"
 		}
 	}
-	return r, nil
+	return nil
 }
 
 // Row is one session in the status table.

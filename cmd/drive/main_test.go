@@ -122,4 +122,13 @@ func TestTheHotPathThroughTheCommand(t *testing.T) {
 	if code, _, _ := cli(t, "frobnicate"); code != 2 {
 		t.Fatalf("an unknown command is a usage error: %d", code)
 	}
+	// --batch reaches another batch wherever it stands on the line, as a driver writes it after the command too.
+	if code, _, errs := cli(t, "batch", "new", "b2"); code != 0 {
+		t.Fatalf("batch new b2: %d %s", code, errs)
+	}
+	for _, args := range [][]string{{"--batch", "b1", "log"}, {"log", "--batch", "b1"}} {
+		if code, out, errs := cli(t, args...); code != 0 || !strings.Contains(out, "arrived: go") {
+			t.Fatalf("%v reads b1's log: %d %q %s", args, code, out, errs)
+		}
+	}
 }
