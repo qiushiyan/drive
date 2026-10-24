@@ -456,6 +456,40 @@ func TestAnIntentLeftByAGoneDriverIsSettled(t *testing.T) {
 	}
 }
 
+// A session that cannot be read for a moment says nothing about whether a
+// step an earlier driver left arrived: the step stays in flight, and the
+// hold it took stands, until a read can tell.
+func TestAnUnreadableSessionSettlesNothing(t *testing.T) {
+	r := newRig(t, "none")
+	a := adopted(t, r, "T5")
+	adopted(t, r, "T3")
+	// T5's driver admitted a release and went before recording how it went;
+	// the release reached T5 and runs.
+	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindSendIntent, Session: "T5", Intent: "left", Hold: "release", Text: "release"})
+	r.w.Clock.Sleep(time.Second)
+	a.Busy("release")
+	v := r.view("T5")
+	r.w.StatusFails = 1 // Rex is busy for a moment as the next driver reads T5
+	if _, err := r.d.Send(v, drive.Step{Line: "and the changelog"}, drive.SendOptions{Queue: true}); !isRefused(err) || !strings.Contains(nextOf(err), "try it again") {
+		t.Fatalf("an unreadable session is a refusal to try again: %v", err)
+	}
+	if st, _ := r.d.Status(false); len(st.InFlight) != 1 || st.InFlight[0].Intent != "left" {
+		t.Fatalf("the step stays in flight: %+v", st.InFlight)
+	}
+	if _, err := r.d.Send(r.view("T3"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); !isRefused(err) || !strings.Contains(err.Error(), "held by T5") {
+		t.Fatalf("and its hold stands: %v", err)
+	}
+	if _, err := r.d.Send(v, drive.Step{Line: "and the changelog"}, drive.SendOptions{Queue: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range r.events(batch.KindSend) {
+		if e.Intent == "left" && e.Outcome == "arrived" {
+			return
+		}
+	}
+	t.Fatalf("once T5 reads, the step is settled as arrived: %+v", r.events(batch.KindSend))
+}
+
 func TestWaitEndsOnAnAPIErrorRexWasNotToldAbout(t *testing.T) {
 	r := newRig(t, "none")
 	c := r.w.Add("T2")

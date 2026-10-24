@@ -139,7 +139,10 @@ func (d *Driver) whenTurnEnds(label, block string) string {
 
 // settle gives an outcome to the sends an earlier driver of this session
 // admitted and never finished. The caller owns the session, so that driver
-// has gone; whether its line arrived is read from the transcript.
+// has gone; whether its line arrived is read from the transcript. A session
+// that cannot be read for now settles nothing, since a step it took and
+// still runs would read as one that never reached it and free its hold; a
+// session gone or closed holds nothing, and settles from what it shows.
 func (d *Driver) settle(b *batch.Batch, label, block string) error {
 	evs, err := b.Events()
 	if err != nil {
@@ -155,8 +158,12 @@ func (d *Driver) settle(b *batch.Batch, label, block string) error {
 		return nil
 	}
 	var f turn.Frontier
-	if s, err := session.Locate(d.Term, d.Host, block); err == nil {
-		f, _ = s.Frontier()
+	s, err := session.Locate(d.Term, d.Host, block)
+	if err == nil {
+		f, err = s.Frontier()
+	}
+	if err != nil && !errors.Is(err, session.ErrNoClaude) && d.blockExists(block) {
+		return fmt.Errorf("%s cannot be read to settle the step an earlier driver left it: %v", label, err)
 	}
 	for _, p := range orphans {
 		e := batch.Event{At: d.now(), Session: label, Intent: p.Intent, Hold: p.Hold, View: p.View, Key: p.Key,
