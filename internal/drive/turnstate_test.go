@@ -237,9 +237,11 @@ func TestAClosedSessionIsReadFromItsTranscript(t *testing.T) {
 }
 
 // A session parked to wait for a hold says so while it waits, and that the
-// hold is free once it is: its park reason alone would still name the holder.
+// hold is free once it is: its park reason alone would still name the
+// holder. The watchdog then arms it, since nothing else wakes a parked
+// session.
 func TestAParkedWaiterSaysWhenItsHoldIsFree(t *testing.T) {
-	r := newRig(t, "none")
+	r := newRig(t, "webhook")
 	a := adopted(t, r, "T1")
 	adopted(t, r, "T2")
 	a.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} })
@@ -258,5 +260,8 @@ func TestAParkedWaiterSaysWhenItsHoldIsFree(t *testing.T) {
 		if row.Label == "T2" && !strings.Contains(row.Watch, "main is free now") {
 			t.Fatalf("its line says the hold is free: %q", row.Watch)
 		}
+	}
+	if armed, _, err := r.d.Due(); err != nil || len(armed) != 1 || armed[0].Label != "T2" || !strings.Contains(armed[0].Why, "main, which is free") {
+		t.Fatalf("--due arms the parked waiter: %+v %v", armed, err)
 	}
 }

@@ -170,6 +170,40 @@ func (d *Driver) holder(evs []batch.Event, members []*batch.Member, name, label 
 	return heldBy{}, false
 }
 
+// holdNow is a hold as status lists it: whether it is held, by whom and
+// why, and the sessions waiting for it with the step each was refused.
+type holdNow struct {
+	Name    string
+	held    bool
+	by      heldBy
+	waiting []batch.Hold
+}
+
+// holdsNow reads every hold the batch has taken or refused a step for, in
+// name order.
+func (d *Driver) holdsNow(evs []batch.Event, members []*batch.Member) []holdNow {
+	names := map[string]bool{}
+	for _, h := range batch.Holds(evs) {
+		names[h.Name] = true
+	}
+	waiting := batch.Waiting(evs)
+	for _, w := range waiting {
+		names[w.Name] = true
+	}
+	var out []holdNow
+	for _, name := range sortedKeys(names) {
+		h := holdNow{Name: name}
+		h.by, h.held = d.holder(evs, members, name, "")
+		for _, w := range waiting {
+			if w.Name == name {
+				h.waiting = append(h.waiting, w)
+			}
+		}
+		out = append(out, h)
+	}
+	return out
+}
+
 // sentSince says whether the holder was sent a step after the one that
 // took the hold.
 func sentSince(evs []batch.Event, h batch.Hold) bool {
