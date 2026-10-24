@@ -4,7 +4,7 @@
 
 ## Where a turn stands
 
-Every reader asks one function, `turnState` in `internal/drive/driver.go`, and gets one word: working, done, idle, interrupted, error, blocked:permission, blocked:question, blocked:auth. A second, local answer to that question is how drive goes wrong, so a new reader of session state calls it, `turnOf` for whether the turn is over, and `nextFor` for what to run about it.
+Every reader asks one function, `turnState` in `internal/drive/state.go`, and gets one `State`, the word drive prints: working, done, idle, interrupted, error, blocked:permission, blocked:question, blocked:auth. A second, local answer to that question is how drive goes wrong, so a new reader of session state calls it, `turnOf` for whether the turn is over, `State.onPrompt` for whether it waits on a prompt someone answers (a rejected login reads blocked, but only a relaunch moves it), and `nextFor` for what to run about it.
 
 Its sources each answer what only they know:
 
@@ -26,9 +26,9 @@ A working session's view changes as it writes, so a send is decided on a turn th
 
 ## One driver at a time
 
-An action owns its session through a lease (`own` in `internal/drive/driver.go`), from the read it is decided on to the record of how it went: an exclusive lock per block under the state directory's `locks/` (`Store.Own` in `internal/batch/lock.go`). A second driver is refused with what the first is doing, never queued behind it, because whatever it decided it decided on what the first is changing. `open` owns the label it opens under the same way. Checking a hold, or listing what is in flight, probes another driver's lock for an instant; `Own` retries briefly before refusing, which is what tells a probe from a driver that holds the lock for seconds.
+An action owns its session from the read it is decided on to the record of how it went (`action` in `internal/drive/action.go`): an exclusive lock per block under the state directory's `locks/` (`Store.Own` in `internal/batch/lock.go`), and the batch it runs in, fixed for the whole run, so what it records, the wake it arms and every message it builds belong to that batch whatever becomes current meanwhile; an `Observation` keeps the batch it was read in for the same reason. A second driver is refused with what the first is doing, never queued behind it, because whatever it decided it decided on what the first is changing. `open` owns the label it opens the same way, then the block Rex opened for it. Checking a hold, or listing what is in flight, probes another driver's lock for an instant; `Own` retries briefly before refusing, which is what tells a probe from a driver that holds the lock for seconds.
 
-An action reaches the session's keyboard only through `typeInto` and `press`, and the lease arms the wake of whatever they reached when it ends (`docs/batches.md` § Wakes).
+`onView` takes the session a view names, settles what an earlier driver left, reads it and checks the view. `finish` ends the action: it records the refusal the action ended on, once and while the session is still owned, so the log has it before another driver acts, then arms the wake of a session the action touched (`docs/batches.md` § Wakes). An action reaches the session's keyboard only through its `typeInto` and `press`, which is how `finish` knows it touched the session.
 
 ## Delivering a step
 
@@ -43,9 +43,10 @@ The first step a session gets in a batch carries the notice (`~/.agents/skills/d
 
 ## When delivery goes wrong
 
-- **The line's start is lost in typing:** it comes back as a line break where the start was. The garbled turn is interrupted and the line typed again, prose behind eight spaces that absorb the loss, a slash command as it is, since one behind spaces is only words. Only while that turn is the one running: Ctrl+C stops whatever turn runs, so a garbled turn that already ended, or a garbled line still queued behind the session's own work, is reported `garbled` for the driver to read.
+- **The line's start is lost in typing:** it comes back as a line break where the start was. The garbled turn is interrupted and the line typed again, prose behind eight spaces that absorb the loss, a slash command as it is, since one behind spaces is only words. Only while that turn is the one running, as `turnState` reads it, since Rex can still be on the turn before: Ctrl+C stops whatever turn runs, so a garbled turn that already ended, or a garbled line still queued behind the session's own work, is reported `garbled` for the driver to read.
 - **The session received something else:** whitespace or a typed line Claude Code recorded its own way. It is `other`, a send that reached the session, so its hold stands, and the message says to read it before interrupting.
 - **Nothing new reaches the transcript in time:** the send is `unknown`, and the message says whether the line still sits in the input box. A line left there blocks the next send until someone clears it, since it may be the owner's.
+- **Rex refuses the Enter after the line is typed:** a failure, the line left in the box, whose `next:` clears it before the step goes again.
 - **The login was rejected:** a send to a session already showing it is refused; one whose step the rejection answers fails with exit 4; a wake for it ends the same way. Each prints the relaunch, close on the view the session stands at and open again on another account with `--resume` and the step it was last sent. The account offered is one this batch has not seen rejected, the primary among them under the launcher name `primary_name` gives (`internal/config`); with none left, the message says to tell the owner.
 
 ## What a driver reads
