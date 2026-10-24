@@ -457,17 +457,22 @@ func TestRespondRefusesWhatTheSessionDoesNotWaitOn(t *testing.T) {
 	}
 }
 
-// Respond, park and close are decided on a view as a send is, and refused
-// once the session has moved past it, in a state where each would otherwise
-// go: nothing pressed, parked or closed.
+// Every action is decided on a view and refused once the session has moved
+// past it, in a state where it would otherwise go: nothing typed, pressed,
+// parked or closed, and the refusal recorded once, as metrics count it.
 func TestAnActionOnAViewTheSessionMovedPastIsRefused(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		act  func(r *rig, view string) error
+		name    string
+		working bool // an interrupt goes on a running turn; the others on a finished one
+		act     func(r *rig, view string) error
 	}{
-		{"an interrupt", func(r *rig, v string) error { _, err := r.d.Respond(v, "interrupt"); return err }},
-		{"a park", func(r *rig, v string) error { return r.d.Park(v, "waits on the owner") }},
-		{"a close", func(r *rig, v string) error { return r.d.Close(v) }},
+		{"a send", false, func(r *rig, v string) error {
+			_, err := r.d.Send(v, drive.Step{Line: "recap"}, drive.SendOptions{})
+			return err
+		}},
+		{"an interrupt", true, func(r *rig, v string) error { _, err := r.d.Respond(v, "interrupt"); return err }},
+		{"a park", false, func(r *rig, v string) error { return r.d.Park(v, "waits on the owner") }},
+		{"a close", false, func(r *rig, v string) error { return r.d.Close(v) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newRig(t, "none")
@@ -476,15 +481,18 @@ func TestAnActionOnAViewTheSessionMovedPastIsRefused(t *testing.T) {
 			old := r.view("T1")
 			c.Done("A built")
 			c.Busy("build B")
-			if tc.name != "an interrupt" {
-				c.Done("B built") // a park and a close go on a finished turn
+			if !tc.working {
+				c.Done("B built")
 			}
-			_, keys0 := c.Seen()
+			typed0, keys0 := c.Seen()
 			if err := tc.act(r, old); !isRefused(err) || !strings.Contains(err.Error(), "moved past") {
 				t.Fatalf("refused on the old view: %v", err)
 			}
-			if _, keys := c.Seen(); len(keys) != len(keys0) || r.w.Session(c.Block) == nil || len(r.events(batch.KindPark)) != 0 {
-				t.Fatalf("nothing pressed, parked or closed: %q", keys[len(keys0):])
+			if typed, keys := c.Seen(); len(typed) != len(typed0) || len(keys) != len(keys0) || r.w.Session(c.Block) == nil || len(r.events(batch.KindPark)) != 0 {
+				t.Fatalf("nothing typed, pressed, parked or closed: %q %q", typed[len(typed0):], keys[len(keys0):])
+			}
+			if n := len(r.events(batch.KindRefused)); n != 1 {
+				t.Fatalf("the refusal is recorded once, got %d", n)
 			}
 		})
 	}

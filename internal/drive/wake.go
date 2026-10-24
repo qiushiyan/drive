@@ -81,11 +81,11 @@ func (d *Driver) Watch(ref string) (*Watched, error) {
 	if err != nil {
 		return nil, err
 	}
-	l, err := d.own(label, block, "arming "+label+"'s wake")
+	release, err := d.own(label, block, "arming "+label+"'s wake")
 	if err != nil {
 		return nil, err
 	}
-	defer l.release()
+	defer release()
 	o, err := d.observe(members, ref)
 	if err != nil {
 		return nil, err

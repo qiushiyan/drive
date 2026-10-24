@@ -22,29 +22,31 @@ type Responded struct {
 // Respond answers what a session waits on, decided on view: approve or deny
 // a permission prompt (or a held message), interrupt a working turn, or
 // clear text left in the input box.
-func (d *Driver) Respond(view, action string) (res *Responded, err error) {
+func (d *Driver) Respond(view, response string) (res *Responded, err error) {
 	v, err := turn.ParseView(view)
 	if err != nil {
 		return nil, &Refused{Reason: err.Error()}
 	}
 	doing := map[string]string{"approve": "approving %s's prompt", "deny": "denying %s's prompt", "interrupt": "interrupting %s",
-		"clear": "clearing %s's input box"}[action]
+		"clear": "clearing %s's input box"}[response]
 	if doing == "" {
-		return nil, &Refused{Reason: fmt.Sprintf("unknown response %q: approve, deny, interrupt or clear", action)}
+		return nil, &Refused{Reason: fmt.Sprintf("unknown response %q: approve, deny, interrupt or clear", response)}
 	}
-	b, l, o, err := d.ownView(v, fmt.Sprintf(doing, v.Session), action == "interrupt", d.run("respond", view, action))
+	again := d.run("respond", view, response)
+	b, err := d.inBatch()
+	if err != nil {
+		return nil, unsent(err, again)
+	}
+	a, err := d.onView(b, v, func(label string) string { return fmt.Sprintf(doing, label) }, response == "interrupt", again)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
-		watched, werr := l.end()
-		if res != nil {
+		if watched := a.finish(&err); res != nil {
 			res.Watched = watched
 		}
-		if werr != nil && err == nil {
-			err = d.wakeFailed(o.Label, werr)
-		}
 	}()
+	o := a.o
 	before := o.State()
 	block := o.Session.Block
 	call := ""
@@ -52,12 +54,12 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 		call = p.Name + ": " + clip(p.Input, 300)
 	}
 	var keys []string
-	switch action {
+	switch response {
 	case "approve", "deny":
 		if !strings.HasPrefix(before, "blocked") || before == "blocked:auth" {
-			return nil, d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s is %s, not waiting on a prompt", o.Label, before)})
+			return nil, &Refused{Reason: fmt.Sprintf("%s is %s, not waiting on a prompt", o.Label, before)}
 		}
-		keys = []string{map[string]string{"approve": "enter", "deny": "escape"}[action]}
+		keys = []string{map[string]string{"approve": "enter", "deny": "escape"}[response]}
 	case "interrupt":
 		if before != "working" {
 			r := &Refused{Reason: fmt.Sprintf("%s is %s; there is no turn to interrupt", o.Label, before)}
@@ -65,25 +67,25 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 				r.Reason += fmt.Sprintf(", but a background job of its runs: %s", clip(jobs[0].Command, 120))
 				r.Next = "an interrupt stops a turn, not a job; if the job should have ended, have the session stop it: " + d.stopJob(o.View.String(), jobs[0])
 			}
-			return nil, d.refuse(b, o.Label, r)
+			return nil, r
 		}
 		keys = []string{"ctrl+c"} // once: a second press quits Claude Code
 	case "clear":
 		if strings.HasPrefix(before, "blocked") && before != "blocked:auth" {
 			// A prompt draws its options behind the box's ❯, which reads as typed text.
-			return nil, d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: what reads as typed text is the prompt's options", o.Label, strings.TrimPrefix(before, "blocked:")),
-				Next: d.answerNext(o.Label, o.View.String(), before)})
+			return nil, &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: what reads as typed text is the prompt's options", o.Label, strings.TrimPrefix(before, "blocked:")),
+				Next: d.answerNext(o.Label, o.View.String(), before)}
 		}
 		if o.Input != turn.InputTyped {
-			return nil, d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s's input box holds nothing typed", o.Label)})
+			return nil, &Refused{Reason: fmt.Sprintf("%s's input box holds nothing typed", o.Label)}
 		}
 	}
 	var uncleared *Failed
-	if action == "clear" {
+	if response == "clear" {
 		kind, typed := turn.InputUnknown, ""
 		for i := 0; i < 5 && kind != turn.InputEmpty && kind != turn.InputSuggestion; i++ {
-			if err := d.press(block, "ctrl+u"); err != nil && i == 0 {
-				return nil, unsent(err, d.run("respond", view, "clear"))
+			if err := a.press("ctrl+u"); err != nil && i == 0 {
+				return nil, unsent(err, again)
 			} else if err != nil {
 				return nil, &Failed{What: fmt.Sprintf("pressed ctrl+u in %s %d times, then Rex failed: %v", o.Label, i, err),
 					Next: "look at its box: " + d.run("read", o.Label, "--screen")}
@@ -102,13 +104,13 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 			uncleared = &Failed{What: fmt.Sprintf("pressed ctrl+u in %s and %s", o.Label, what),
 				Next: "look at its screen: " + d.run("read", o.Label, "--screen")}
 		}
-	} else if err := d.press(block, keys...); err != nil {
-		return nil, unsent(err, d.run("respond", view, action)) // its one key, which Rex did not press
+	} else if err := a.press(keys...); err != nil {
+		return nil, unsent(err, again) // its one key, which Rex did not press
 	}
 	// Rex hears nothing of a deny or an interrupt, so the session's own record
 	// says whether it moved: its turn state, or a new entry in its transcript.
-	out := &Responded{Label: o.Label, Action: action, Call: call, After: before}
-	moved := action == "clear"
+	out := &Responded{Label: o.Label, Action: response, Call: call, After: before}
+	moved := response == "clear"
 	for end := d.now().Add(10 * time.Second); !moved && d.now().Before(end); {
 		d.sleep(d.poll() / 2)
 		s, err := session.Locate(d.Term, d.Host, block)
@@ -123,7 +125,7 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 		moved = out.After != before || turn.ViewOf(o.Label, s.ID, f) != o.View
 	}
 	if b != nil {
-		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindRespond, Session: o.Label, Action: action, Call: call, View: v.String(), Outcome: out.After})
+		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindRespond, Session: o.Label, Action: response, Call: call, View: v.String(), Outcome: out.After})
 	}
 	if uncleared != nil {
 		return out, uncleared
@@ -131,7 +133,7 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 	if !moved {
 		f := &Failed{What: fmt.Sprintf("pressed %s in %s, and it still reads %s with nothing new in its transcript", strings.Join(keys, " "), o.Label, out.After),
 			Next: "look at its screen: " + d.run("read", o.Label, "--screen")}
-		if action == "approve" {
+		if response == "approve" {
 			f.What += "; an approved command that runs long leaves it so until the command ends"
 			f.Next = fmt.Sprintf("approving again does nothing; %s tells when it moves on", d.run("wait", o.Label))
 			if webhook, _ := d.wakes(block); webhook {
@@ -147,7 +149,7 @@ func (d *Driver) Respond(view, action string) (res *Responded, err error) {
 // something only the owner can give. It is decided on a view like any
 // action, so a park decided before another driver's send never silences
 // the wake that send armed.
-func (d *Driver) Park(view, reason string) error {
+func (d *Driver) Park(view, reason string) (err error) {
 	v, err := turn.ParseView(view)
 	if err != nil {
 		return &Refused{Reason: err.Error()}
@@ -156,11 +158,16 @@ func (d *Driver) Park(view, reason string) error {
 		return &Refused{Reason: "say why it is parked; the report and the next driver read it"}
 	}
 	again := d.run("park", view, text(reason))
-	b, l, o, err := d.ownView(v, "parking "+v.Session, true, again)
+	b, err := d.inBatch()
+	if err != nil {
+		return unsent(err, again)
+	}
+	a, err := d.onView(b, v, func(label string) string { return "parking " + label }, true, again)
 	if err != nil {
 		return err
 	}
-	defer l.end()
+	defer a.finish(&err)
+	o := a.o
 	if b == nil || o.Member == nil {
 		return &Refused{Reason: fmt.Sprintf("%s is not in the batch", o.Label)}
 	}
@@ -173,75 +180,39 @@ func (d *Driver) Park(view, reason string) error {
 	return nil
 }
 
-// ownView owns the session a view names and reads it under that ownership,
-// refusing the view once the session has moved past it. promptOnly accepts a
-// view whose reply has grown since, as long as no prompt came. Nothing has
-// been done when it fails, so again, the action's own command, is what to
-// try when what failed was a read.
-func (d *Driver) ownView(v turn.View, what string, promptOnly bool, again string) (*batch.Batch, *lease, *Observation, error) {
-	b, _, members, err := d.members()
-	if err != nil {
-		return nil, nil, nil, unsent(err, again)
-	}
-	label, block, err := d.target(members, v.Session)
-	if err != nil {
-		return nil, nil, nil, unsent(err, again)
-	}
-	l, err := d.own(label, block, what)
-	if err != nil {
-		return nil, nil, nil, d.refuse(b, label, err)
-	}
-	var evs []batch.Event
-	_, evs, members, err = d.members()
-	if err == nil && b != nil {
-		err = d.settle(b, label, block)
-	}
-	if err == nil && b != nil {
-		evs, err = b.Events() // settling may have recorded what an earlier driver sent
-	}
-	var o *Observation
-	if err == nil {
-		o, err = d.observe(members, v.Session)
-	}
-	if err == nil {
-		if err = d.checkView(o, v, promptOnly, d.zone(), evs); err != nil {
-			err = d.refuse(b, o.Label, err)
-		}
-	}
-	if err != nil {
-		l.release()
-		return nil, nil, nil, d.refuse(b, label, unsent(err, again))
-	}
-	return b, l, o, nil
-}
-
 // Close closes a session's block once its last step has run, decided on
 // view: refused while it works, waits on a prompt, runs a background job,
 // or holds typed text.
-func (d *Driver) Close(view string) error {
+func (d *Driver) Close(view string) (err error) {
 	v, err := turn.ParseView(view)
 	if err != nil {
 		return &Refused{Reason: err.Error()}
 	}
-	b, l, o, err := d.ownView(v, "closing "+v.Session, false, d.run("close", view))
+	again := d.run("close", view)
+	b, err := d.inBatch()
+	if err != nil {
+		return unsent(err, again)
+	}
+	a, err := d.onView(b, v, func(label string) string { return "closing " + label }, false, again)
 	if err != nil {
 		return err
 	}
-	defer l.end()
+	defer a.finish(&err)
+	o := a.o
 	st, state := o.Session.Status, o.State()
 	// A session left open is left untouched, so no wake of its own comes:
 	// one that waits on something is parked with why.
 	park := func(why string) string { return d.run("park", view, text(why)) }
 	switch {
 	case state == "working":
-		return d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s is working", o.Label),
-			Next: d.whenTurnEnds(o.Label, o.Session.Block) + "; close it then, on the view that comes with it"})
+		return &Refused{Reason: fmt.Sprintf("%s is working", o.Label),
+			Next: d.whenTurnEnds(o.Label, o.Session.Block) + "; close it then, on the view that comes with it"}
 	case strings.HasPrefix(state, "blocked") && state != "blocked:auth":
-		return d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: its turn has not ended", o.Label, strings.TrimPrefix(state, "blocked:")),
-			Next: d.answerNext(o.Label, view, state)})
+		return &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: its turn has not ended", o.Label, strings.TrimPrefix(state, "blocked:")),
+			Next: d.answerNext(o.Label, view, state)}
 	case o.Input == turn.InputTyped:
-		return d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s's input box holds an unsent line: %q", o.Label, clip(o.Typed, 80)),
-			Next: "leave the block, as the line may be the owner's, and park it so the report names it: " + park("an unsent line in its input box")})
+		return &Refused{Reason: fmt.Sprintf("%s's input box holds an unsent line: %q", o.Label, clip(o.Typed, 80)),
+			Next: "leave the block, as the line may be the owner's, and park it so the report names it: " + park("an unsent line in its input box")}
 	case len(d.Host.Shells(st.PID)) > 0:
 		job := d.Host.Shells(st.PID)[0]
 		next := "if the job should have ended, have the session stop it, and close it once that turn ends: " + d.stopJob(view, job) +
@@ -250,7 +221,7 @@ func (d *Driver) Close(view string) error {
 			next = "if the job should have ended, have the session stop it, and close it once that turn ends: " + d.stopJob(view, job) +
 				fmt.Sprintf("; if it should run on, wait for it (%s) and close the session then", d.run("wait", o.Label))
 		}
-		return d.refuse(b, o.Label, &Refused{Reason: fmt.Sprintf("%s still runs a background job: %s", o.Label, clip(job.Command, 120)), Next: next})
+		return &Refused{Reason: fmt.Sprintf("%s still runs a background job: %s", o.Label, clip(job.Command, 120)), Next: next}
 	}
 	if err := d.Term.Close(o.Session.Block); err != nil {
 		return &Refused{Reason: fmt.Sprintf("Rex did not close %s's block: %v", o.Label, err), Next: "try it again: " + d.run("close", view)}

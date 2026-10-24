@@ -50,17 +50,31 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return nil, &Refused{Reason: "the primary account's launcher is not known: its name is the owner's shell's",
 			Next: "open on another account, or tell the owner to set primary_name in ~/.config/drive/config.toml"}
 	}
-	opening, err := d.own(label, "open:"+label, "opening "+label)
+	release, err := d.own(label, "open:"+label, "opening "+label)
 	if err != nil {
 		return nil, d.refuse(b, label, err)
 	}
-	defer opening.release()
+	defer release()
+	// A refusal means no block was opened, and is recorded; once one is
+	// open, whatever stops the first step is a failure that says so, never a
+	// refusal, which would mean nothing was done.
+	var block string
+	defer func() {
+		r, ok := errors.AsType[*Refused](err)
+		switch {
+		case !ok:
+		case block == "":
+			err = d.refuse(b, label, err)
+		default:
+			err = &Failed{What: fmt.Sprintf("opened %s in block %s, but its first step was not sent: %s", label, rex.Short(block), r.Reason), Next: r.Next}
+		}
+	}()
 	again := d.openCommand(label, opt, Step{})
 	whole := d.openCommand(label, opt, step) // the open as it was asked for, its step on it
 	if !step.empty() {
 		// The account is the launcher's choice, so skills are read from the default one.
 		if _, err := d.plan(opt.Dir, filepath.Join(d.Cfg.Home, ".claude"), again, step, !d.readNotice(b, opt.Resume)); err != nil {
-			return nil, d.refuse(b, label, err)
+			return nil, err
 		}
 	}
 	intent := newIntent()
@@ -86,10 +100,10 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return b.Append(batch.Event{At: d.now(), Kind: batch.KindOpenIntent, Session: label, Intent: intent, Dir: opt.Dir, Text: clip(stepSummary(step), 200)})
 	})
 	if err != nil {
-		return nil, d.refuse(b, label, unsent(err, whole))
+		return nil, unsent(err, whole)
 	}
 
-	block, err := d.Term.Run(rex.Open{Session: b.Meta.RexSession, Dir: opt.Dir, Label: label, Command: d.launch(opt)})
+	block, err = d.Term.Run(rex.Open{Session: b.Meta.RexSession, Dir: opt.Dir, Label: label, Command: d.launch(opt)})
 	if err != nil {
 		f := &Failed{What: fmt.Sprintf("Rex did not open a block for %s: %v", label, err),
 			Next: d.run("status") + " lists the blocks; if none opened for it, try it again: " + whole}
@@ -114,39 +128,27 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return nil, d.unrecorded(label, block, err)
 	}
 	out = &Opened{Label: label, Block: block, Account: s.Account, Session: s.ID}
-	// From here the block is open: whatever stops the first step is a
-	// failure that says so, never a refusal, which would mean nothing was done.
-	defer func() {
-		if r, ok := errors.AsType[*Refused](err); ok {
-			err = &Failed{What: fmt.Sprintf("opened %s in block %s, but its first step was not sent: %s", label, rex.Short(block), r.Reason), Next: r.Next}
-		}
-	}()
-	l, err := d.own(label, block, fmt.Sprintf("sending %s its first step", label))
+	a, err := d.take(b, label, block, fmt.Sprintf("sending %s its first step", label))
 	if err != nil {
 		return out, err
 	}
-	d.touch(block) // a session drive started is watched like one it typed into
+	a.touched = true // a session drive started is watched like one it typed into
 	defer func() {
-		watched, werr := l.end()
-		if out.Sent != nil {
+		if watched := a.finish(&err); out.Sent != nil {
 			out.Sent.Watched = watched
-		}
-		if werr != nil && err == nil {
-			err = d.wakeFailed(label, werr)
 		}
 	}()
 	if step.empty() {
 		return out, nil
 	}
 	f, _ := s.Frontier()
-	o := &Observation{Label: label, Session: s, Frontier: f, View: turn.ViewOf(label, s.ID, f)}
+	a.o = &Observation{Label: label, Session: s, Frontier: f, View: turn.ViewOf(label, s.ID, f)}
 	// A resumed session read the notice in the conversation it resumes.
-	p, err := d.plan(s.Dir, s.Config, d.run("send", o.View.String()), step, !d.readNotice(b, opt.Resume))
+	p, err := d.plan(s.Dir, s.Config, d.run("send", a.o.View.String()), step, !d.readNotice(b, opt.Resume))
 	if err != nil {
 		return out, err
 	}
-	sent, err := d.send(b, o, p, SendOptions{Hold: opt.Hold}, o.View.String())
-	out.Sent = sent
+	out.Sent, err = a.send(p, SendOptions{Hold: opt.Hold}, a.o.View.String())
 	return out, err
 }
 

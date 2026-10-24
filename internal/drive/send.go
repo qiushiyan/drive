@@ -63,55 +63,25 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 	if err != nil {
 		return nil, &Refused{Reason: err.Error()}
 	}
-	again := d.sendCommand(view, step, opt)
-	evs, err := b.Events()
+	what := func(label string) string { return fmt.Sprintf("sending %s %q", label, clip(stepSummary(step), 60)) }
+	a, err := d.onView(b, v, what, opt.Queue, d.sendCommand(view, step, opt))
 	if err != nil {
-		return nil, unsent(err, again)
+		return nil, err
 	}
-	label, block, err := d.target(batch.Members(evs), v.Session)
-	if err != nil {
-		return nil, unsent(err, again)
-	}
-	l, err := d.own(label, block, fmt.Sprintf("sending %s %q", label, clip(stepSummary(step), 60)))
-	if err != nil {
-		return nil, d.refuse(b, label, err)
-	}
-	defer func() { sent, err = d.endSend(l, sent, err) }()
-	if err := d.settle(b, label, block); err != nil {
-		return nil, unsent(err, again)
-	}
-	if evs, err = b.Events(); err != nil {
-		return nil, unsent(err, again)
-	}
-	members := batch.Members(evs)
-	o, err := d.observe(members, v.Session)
-	if err != nil {
-		return nil, d.refuse(b, label, unsent(err, again))
-	}
-	if err := d.checkView(o, v, opt.Queue, b.Zone(), evs); err != nil {
-		return nil, d.refuse(b, o.Label, err)
-	}
+	defer func() {
+		if watched := a.finish(&err); sent != nil {
+			sent.Watched = watched
+		}
+	}()
+	o := a.o
 	if err := d.ready(o, opt, step); err != nil {
-		return nil, d.refuse(b, o.Label, err)
+		return nil, err
 	}
-	m := batch.Find(members, o.Label)
-	p, err := d.plan(o.Session.Dir, o.Session.Config, d.run("send", o.View.String()), step, m == nil || !m.Noticed && !m.Resumed)
+	p, err := d.plan(o.Session.Dir, o.Session.Config, d.run("send", o.View.String()), step, o.Member == nil || !o.Member.Noticed && !o.Member.Resumed)
 	if err != nil {
-		return nil, d.refuse(b, o.Label, err)
+		return nil, err
 	}
-	return d.send(b, o, p, opt, v.String())
-}
-
-// unsent is an error met before anything reached the session, such as a
-// transcript or the batch's log that could not be read, as the refusal it
-// is: nothing was done, so the action can be tried again as it was.
-func unsent(err error, again string) error {
-	var r *Refused
-	var f *Failed
-	if err == nil || errors.As(err, &r) || errors.As(err, &f) {
-		return err
-	}
-	return &Refused{Reason: err.Error(), Next: "nothing was done; try it again: " + again}
+	return a.send(p, opt, v.String())
 }
 
 // wakes says whether the driver is a chat bot brought back by the session's
@@ -296,28 +266,6 @@ func since(now, t time.Time) string {
 	return strings.TrimSuffix(d.String(), "0s")
 }
 
-func (d *Driver) refuse(b *batch.Batch, label string, err error) error {
-	if b == nil {
-		return err
-	}
-	if h, ok := errors.AsType[*holdRefused](err); ok {
-		e := batch.Event{At: d.now(), Kind: batch.KindRefused, Session: label, Reason: h.Reason, Hold: h.hold,
-			Key: h.step.Key, Text: h.step.Line, Path: h.step.File}
-		if h.step.Key != "" {
-			e.Text = h.step.Text
-		}
-		if h.open != "" {
-			e.Mode, e.Key, e.Text, e.Path = "open", "", h.open, ""
-		}
-		_ = b.Append(e)
-		return &h.Refused
-	}
-	if r, ok := errors.AsType[*Refused](err); ok {
-		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindRefused, Session: label, Reason: r.Reason, Account: r.account})
-	}
-	return err
-}
-
 func newIntent() string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
@@ -432,9 +380,10 @@ func firstLine(s string) string {
 	return ""
 }
 
-// send admits, records, delivers and confirms one planned step. The caller
-// owns the session, and o is what its checks read.
-func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, view string) (*Sent, error) {
+// send admits, records, delivers and confirms one planned step, decided on
+// view, on the session the action read.
+func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
+	d, b, o := a.d, a.b, a.o
 	intent := newIntent()
 	var noticeLine, noticeIntent string
 	err := b.Locked(func(evs []batch.Event) error {
@@ -488,7 +437,7 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 		return b.Append(add...)
 	})
 	if err != nil {
-		return nil, d.refuse(b, o.Label, unsent(err, d.sendCommand(view, p.step, opt)))
+		return nil, unsent(err, d.sendCommand(view, p.step, opt))
 	}
 	record := func(e batch.Event) {
 		e.At, e.Session, e.Intent, e.Hold, e.View = d.now(), o.Label, intent, opt.Hold, view
@@ -506,7 +455,7 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 
 	if noticeLine != "" {
 		// A typed first step follows the notice once the notice's turn ends.
-		outcome, err := d.deliver(o, noticeLine)
+		outcome, err := a.deliver(noticeLine)
 		notice := batch.Event{At: d.now(), Kind: batch.KindSend, Session: o.Label, Intent: noticeIntent, View: view,
 			Outcome: outcome, Mode: "notice", Text: noticeLine, Notice: true}
 		if outcome == "" && err != nil {
@@ -547,9 +496,9 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 			failed(f)
 			return nil, f
 		}
-		o = after
+		o, a.o = after, after
 	}
-	outcome, err := d.deliver(o, p.typed)
+	outcome, err := a.deliver(p.typed)
 	sent := &Sent{Label: o.Label, Outcome: outcome, Typed: p.typed, Path: p.path, Notice: p.notice, From: p.from}
 	if outcome != "" {
 		record(batch.Event{Kind: batch.KindSend, Outcome: outcome, Mode: p.mode(), Text: p.typed, Path: p.path, Key: p.key, Notice: p.notice && !p.alone})
@@ -559,22 +508,6 @@ func (d *Driver) send(b *batch.Batch, o *Observation, p *plan, opt SendOptions, 
 		return sent, err
 	}
 	return sent, nil
-}
-
-// endSend ends a send's lease and says whether its wake is armed.
-func (d *Driver) endSend(l *lease, sent *Sent, err error) (*Sent, error) {
-	watched, werr := l.end()
-	if sent != nil {
-		sent.Watched = watched
-	}
-	if werr != nil && err == nil {
-		label := ""
-		if sent != nil {
-			label = sent.Label
-		}
-		return sent, d.wakeFailed(label, werr)
-	}
-	return sent, err
 }
 
 func stepSummary(s Step) string {
@@ -619,8 +552,9 @@ const pad = "        "
 // line typed again behind eight spaces, which absorb the loss and change
 // nothing a session reads. A slash command is never padded: behind spaces
 // it is words, so it is typed again as it is.
-func (d *Driver) deliver(o *Observation, line string) (string, error) {
-	outcome, got, err := d.typeAndConfirm(o, line)
+func (a *action) deliver(line string) (string, error) {
+	d, o := a.d, a.o
+	outcome, got, err := a.typeAndConfirm(line)
 	if err != nil || got == nil {
 		return outcome, err
 	}
@@ -636,7 +570,7 @@ func (d *Driver) deliver(o *Observation, line string) (string, error) {
 		return "garbled", &Failed{What: fmt.Sprintf("%s received the line without its start (%q), and that turn is not one drive can take back", o.Label, clip(got.Text, 120)),
 			Next: fmt.Sprintf("read what it made of it (%s) before sending the step again", d.run("read", o.Label))}
 	}
-	_ = d.press(block, "ctrl+c")
+	_ = a.press("ctrl+c")
 	d.sleep(d.poll())
 	for range 5 {
 		screen, err := d.Term.Capture(block, true)
@@ -646,13 +580,13 @@ func (d *Driver) deliver(o *Observation, line string) (string, error) {
 		if k, _ := turn.InputBox(screen); k != turn.InputTyped {
 			break
 		}
-		_ = d.press(block, "ctrl+u")
+		_ = a.press("ctrl+u")
 	}
 	retype := pad + line
 	if skill.Command(line) != "" {
 		retype = line
 	}
-	outcome, got, err = d.typeAndConfirm(o, retype)
+	outcome, got, err = a.typeAndConfirm(retype)
 	if err != nil {
 		return outcome, err
 	}
@@ -667,7 +601,8 @@ func (d *Driver) deliver(o *Observation, line string) (string, error) {
 // have before: the line, the outcome; the line with its head lost, the
 // prompt that arrived. A prompt it already had, however recent and alike, is
 // never taken for this one.
-func (d *Driver) typeAndConfirm(o *Observation, line string) (string, *turn.Prompt, error) {
+func (a *action) typeAndConfirm(line string) (string, *turn.Prompt, error) {
+	d, o := a.d, a.o
 	block := o.Session.Block
 	before := ""
 	if f, err := o.Session.Frontier(); err == nil {
@@ -675,11 +610,11 @@ func (d *Driver) typeAndConfirm(o *Observation, line string) (string, *turn.Prom
 			before = p.ID
 		}
 	}
-	if err := d.typeInto(block, line); err != nil {
+	if err := a.typeInto(line); err != nil {
 		return "", nil, err
 	}
 	d.sleep(time.Second)
-	if err := d.press(block, "enter"); err != nil {
+	if err := a.press("enter"); err != nil {
 		return "", nil, err
 	}
 	want := strings.TrimSpace(line)
