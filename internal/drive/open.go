@@ -152,33 +152,6 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	return out, err
 }
 
-// settleOpen gives an outcome to the opens of label an earlier driver
-// admitted and never finished. The caller owns the label, so that driver has
-// gone; a block Rex opened under the label is the one it opened.
-func (d *Driver) settleOpen(b *batch.Batch, evs []batch.Event, label string) error {
-	members := batch.Members(evs)
-	for _, e := range batch.Unresolved(evs, label) {
-		if e.Kind != batch.KindOpenIntent {
-			continue
-		}
-		ev := batch.Event{At: d.now(), Kind: batch.KindFailure, Session: label, Intent: e.Intent,
-			Reason: "settled: its driver ended before Rex opened a block"}
-		if blocks, err := d.Term.Blocks(b.Meta.RexSession); err == nil {
-			for _, bl := range blocks {
-				if bl.Label == label && batch.Find(members, bl.ID) == nil {
-					ev = batch.Event{At: d.now(), Kind: batch.KindOpen, Session: label, Intent: e.Intent, Block: bl.ID, Dir: e.Dir,
-						Outcome: "settled", Note: "its driver ended before Claude Code started"}
-					break
-				}
-			}
-		}
-		if err := b.Append(ev); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // unrecorded is a block Rex opened that the batch's log did not take.
 func (d *Driver) unrecorded(label, block string, err error) *Failed {
 	return &Failed{What: fmt.Sprintf("Rex opened block %s for %s, but the batch's log did not take it: %v", rex.Short(block), label, err),
