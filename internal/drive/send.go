@@ -378,8 +378,7 @@ func (d *Driver) refuse(b *batch.Batch, label string, err error) error {
 	if b == nil {
 		return err
 	}
-	var h *holdRefused
-	if errors.As(err, &h) {
+	if h, ok := errors.AsType[*holdRefused](err); ok {
 		e := batch.Event{At: d.now(), Kind: batch.KindRefused, Session: label, Reason: h.Reason, Hold: h.hold,
 			Key: h.step.Key, Text: h.step.Line, Path: h.step.File}
 		if h.step.Key != "" {
@@ -391,8 +390,7 @@ func (d *Driver) refuse(b *batch.Batch, label string, err error) error {
 		_ = b.Append(e)
 		return &h.Refused
 	}
-	var r *Refused
-	if errors.As(err, &r) {
+	if r, ok := errors.AsType[*Refused](err); ok {
 		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindRefused, Session: label, Reason: r.Reason, Account: r.account})
 	}
 	return err
@@ -504,7 +502,7 @@ func typable(line string) error {
 }
 
 func firstLine(s string) string {
-	for _, l := range strings.Split(s, "\n") {
+	for l := range strings.SplitSeq(s, "\n") {
 		if strings.TrimSpace(l) != "" {
 			return strings.TrimSpace(l)
 		}
@@ -715,7 +713,7 @@ func (d *Driver) deliver(o *Observation, line string) (string, error) {
 	}
 	_ = d.press(block, "ctrl+c")
 	d.sleep(d.poll())
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		screen, err := d.Term.Capture(block, true)
 		if err != nil {
 			break

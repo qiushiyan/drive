@@ -2,6 +2,7 @@ package batch
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -260,9 +261,9 @@ func Holds(evs []Event) []Hold {
 	var out []Hold
 	for _, n := range names {
 		ts := takings[n]
-		for i := len(ts) - 1; i >= 0; i-- {
-			if ts[i].Pending || sent[ts[i].Intent] {
-				out = append(out, ts[i])
+		for _, t := range slices.Backward(ts) {
+			if t.Pending || sent[t.Intent] {
+				out = append(out, t)
 				break
 			}
 		}

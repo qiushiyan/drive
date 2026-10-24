@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -265,8 +266,7 @@ func (d *Driver) target(members []*batch.Member, ref string) (label, block strin
 // meanwhile is refused, never queued behind the first.
 func (d *Driver) own(label, key, what string) (*lease, error) {
 	release, err := d.Store.Own(key, what)
-	var busy *batch.Busy
-	if errors.As(err, &busy) {
+	if busy, ok := errors.AsType[*batch.Busy](err); ok {
 		return nil, &Refused{Reason: fmt.Sprintf("another driver is %s (pid %d, since %s)", busy.What, busy.PID, busy.Since.In(d.zone()).Format("15:04:05")),
 			Next: fmt.Sprintf("leave %s to it; once it is done, drive read %s shows where it stands", label, label)}
 	}
@@ -351,8 +351,7 @@ func (d *Driver) press(block string, keys ...string) error {
 // wakeFailed is an action that did what it was asked whose wake did not start.
 func wakeFailed(label string, err error) *Failed {
 	f := &Failed{What: fmt.Sprintf("%s's wake did not start: %v", label, err), Next: fmt.Sprintf("start it: drive watch %s", label)}
-	var nw *noWebhook
-	if errors.As(err, &nw) {
+	if nw, ok := errors.AsType[*noWebhook](err); ok {
 		f.Next = nw.next("drive watch " + label)
 	}
 	return f
@@ -456,8 +455,8 @@ func sentStep(evs []batch.Event, label string, p turn.Prompt, zone *time.Locatio
 	if !p.Known {
 		return ""
 	}
-	for i := len(evs) - 1; i >= 0; i-- {
-		e := evs[i]
+	for _, e := range slices.Backward(evs) {
+
 		if e.Kind != batch.KindSend || e.Session != label || e.Text == "" || strings.TrimSpace(e.Text) != strings.TrimSpace(p.Text) {
 			continue
 		}
@@ -535,8 +534,8 @@ func (d *Driver) relaunchHint(o *Observation) string { return d.relaunch(o, d.la
 // a snippet goes again as the copy drive saved of it.
 func (d *Driver) lastStep(label string) string {
 	if _, evs, _, err := d.members(); err == nil {
-		for i := len(evs) - 1; i >= 0; i-- {
-			e := evs[i]
+		for _, e := range slices.Backward(evs) {
+
 			if e.Kind != batch.KindSendIntent || e.Session != label || e.Mode == "notice" {
 				continue
 			}

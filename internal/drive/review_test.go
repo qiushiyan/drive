@@ -3,6 +3,7 @@ package drive_test
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -36,7 +37,7 @@ func adopted(t *testing.T, r *rig, label string) *testkit.Claude {
 // admitted waits until a send of text to session is on record: past its
 // admission, on its way to the session.
 func admitted(r *rig, session, text string) {
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		for _, e := range r.events(batch.KindSendIntent) {
 			if e.Session == session && e.Text == text {
 				return
@@ -321,7 +322,7 @@ func TestALineReceivedOtherwiseReachedTheSession(t *testing.T) {
 
 func TestStatusReadsManySessions(t *testing.T) {
 	r := newRig(t, "none")
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		adopted(t, r, fmt.Sprintf("S%d", i))
 	}
 	st, err := r.d.Status(false)
@@ -371,9 +372,7 @@ func (l landing) Landed(dir string, branches []string, commits []progress.Commit
 	if n := len(commits); n > 0 {
 		out.Commit = l.ids[commits[n-1].Text]
 	}
-	for k, v := range l.merged {
-		out.Merged[k] = v
-	}
+	maps.Copy(out.Merged, l.merged)
 	return out, nil
 }
 
@@ -559,11 +558,9 @@ func TestCloseWaitsForADriverMidSend(t *testing.T) {
 	gate := make(chan struct{})
 	c.Edit(func(c *testkit.Claude) { c.TypeGate = gate })
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, _ = r.d.Send(v, drive.Step{Line: "recap"}, drive.SendOptions{})
-	}()
+	})
 	admitted(r, "T1", "recap")
 	err := r.d.Close(v)
 	close(gate)
@@ -796,7 +793,7 @@ func relaunch(t *testing.T, r *rig, next string) *drive.Opened {
 		t.Fatalf("no relaunch in %q", next)
 	}
 	var opened *drive.Opened
-	for _, cmd := range strings.Split(next[i:], " && ") {
+	for cmd := range strings.SplitSeq(next[i:], " && ") {
 		w := shellWords(t, cmd)
 		switch w[1] {
 		case "close":

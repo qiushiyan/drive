@@ -2,7 +2,7 @@ package drive
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -203,7 +203,7 @@ func (d *Driver) Metrics(name string) (*Metrics, error) {
 		waits = append(waits, w)
 	}
 	if len(waits) > 0 {
-		sort.Slice(waits, func(i, j int) bool { return waits[i] < waits[j] })
+		slices.Sort(waits)
 		m.MedianAnswer = waits[len(waits)/2]
 	}
 	woken := map[string]bool{}    // a session's posted wake that no driver action has followed yet
@@ -378,8 +378,8 @@ func (d *Driver) landed(dir, sid string, branches []string) (workLanding, bool) 
 		return workLanding{}, false
 	}
 	w := workLanding{commit: l.Commit, repo: l.Repo}
-	for i := len(l.Branches) - 1; i >= 0; i-- {
-		if b := l.Branches[i]; b != l.Trunk {
+	for _, b := range slices.Backward(l.Branches) {
+		if b != l.Trunk {
 			w.branch = b
 			break
 		}

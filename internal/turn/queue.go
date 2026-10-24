@@ -2,6 +2,7 @@ package turn
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"time"
 )
@@ -42,7 +43,7 @@ func releasedRow(text string) int {
 
 func (q *queue) enqueue(e row) {
 	// A slash command typed while busy is enqueued without its text.
-	w := waiting{Prompt: Prompt{ID: "queued:" + e.Timestamp, At: e.at(), Queued: true}, prompt: true}
+	w := waiting{ID: "queued:" + e.Timestamp, At: e.at(), Queued: true, prompt: true}
 	if c, ok := e.text(); ok {
 		w.content, w.Text, w.Known, w.prompt = &c, c, true, typed(c)
 	}
@@ -117,9 +118,9 @@ func (q *queue) taken() {
 
 // newest is the newest typed line still waiting.
 func (q *queue) newest() *Prompt {
-	for i := len(q.items) - 1; i >= 0; i-- {
-		if q.items[i].prompt {
-			p := q.items[i].Prompt
+	for _, v := range slices.Backward(q.items) {
+		if v.prompt {
+			p := v.Prompt
 			return &p
 		}
 	}
@@ -136,8 +137,8 @@ func (q *queue) index(match func(waiting) bool) int {
 }
 
 func (q *queue) last(match func(waiting) bool) int {
-	for i := len(q.items) - 1; i >= 0; i-- {
-		if match(q.items[i]) {
+	for i, v := range slices.Backward(q.items) {
+		if match(v) {
 			return i
 		}
 	}

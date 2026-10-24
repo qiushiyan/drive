@@ -158,7 +158,7 @@ func commitID(dir string, commits []Commit) string {
 		return ""
 	}
 	best, gap := "", 5*time.Minute
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		f := strings.SplitN(line, "\x1f", 3)
 		if len(f) != 3 || f[2] != newest.Text {
 			continue

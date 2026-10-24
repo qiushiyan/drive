@@ -558,9 +558,9 @@ func (w *World) Run(o rex.Open) (string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	account := "acct@example.com"
-	for _, f := range strings.Fields(strings.Join(o.Command, " ")) {
-		if strings.HasPrefix(f, "x-") {
-			account = strings.TrimSuffix(strings.TrimPrefix(f, "x-"), ";")
+	for f := range strings.FieldsSeq(strings.Join(o.Command, " ")) {
+		if after, ok := strings.CutPrefix(f, "x-"); ok {
+			account = strings.TrimSuffix(after, ";")
 		}
 	}
 	c := w.add(o.Label, o.Dir, account)

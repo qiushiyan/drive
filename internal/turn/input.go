@@ -25,7 +25,7 @@ var leadingSGR = regexp.MustCompile(`^(?:\x1b\[[0-9;]*m)*`)
 func InputBox(vt string) (InputKind, string) {
 	line := ""
 	found := false
-	for _, row := range strings.Split(vt, "\n") {
+	for row := range strings.SplitSeq(vt, "\n") {
 		if strings.Contains(row, "❯") {
 			line, found = row, true
 		}

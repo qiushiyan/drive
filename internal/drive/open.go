@@ -119,8 +119,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	// From here the block is open: whatever stops the first step is a
 	// failure that says so, never a refusal, which would mean nothing was done.
 	defer func() {
-		var r *Refused
-		if errors.As(err, &r) {
+		if r, ok := errors.AsType[*Refused](err); ok {
 			err = &Failed{What: fmt.Sprintf("opened %s in block %s, but its first step was not sent: %s", label, rex.Short(block), r.Reason), Next: r.Next}
 		}
 	}()
@@ -188,13 +187,14 @@ func unrecorded(label, block string, err error) *Failed {
 
 // openCommand is the drive open that opens label as opt says; its step follows.
 func openCommand(label string, opt OpenOptions) string {
-	c := "drive open " + label
+	var c strings.Builder
+	c.WriteString("drive open " + label)
 	for _, f := range [][2]string{{"dir", opt.Dir}, {"resume", opt.Resume}, {"account", opt.Account}, {"model", opt.Model}, {"hold", opt.Hold}} {
 		if f[1] != "" {
-			c += " --" + f[0] + " " + shellQuote(f[1])
+			c.WriteString(" --" + f[0] + " " + shellQuote(f[1]))
 		}
 	}
-	return c
+	return c.String()
 }
 
 // launch is the command a new block runs: the owner's launcher in a login

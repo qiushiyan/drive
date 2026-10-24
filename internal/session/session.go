@@ -249,7 +249,7 @@ func (Machine) Cwd(pid int) string {
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		if strings.HasPrefix(line, "n") {
 			return line[1:]
 		}
@@ -266,7 +266,7 @@ func (Machine) Shells(pid int) []Shell {
 		return nil
 	}
 	var out []Shell
-	for _, k := range strings.Fields(string(kids)) {
+	for k := range strings.FieldsSeq(string(kids)) {
 		cmd := exec.Command("ps", "-ww", "-o", "lstart=,command=", "-p", k)
 		cmd.Env = append(os.Environ(), "LC_ALL=C")
 		line, err := cmd.Output()

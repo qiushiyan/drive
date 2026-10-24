@@ -127,7 +127,7 @@ func TestEveryNextRunsAsWritten(t *testing.T) {
 				t.Errorf("a chat driver cannot hold a wait open: %s", next)
 			}
 			for _, m := range printedView.FindAllStringSubmatch(next, -1) {
-				label := strings.SplitN(m[1], "@", 2)[0]
+				label, _, _ := strings.Cut(m[1], "@")
 				if now := r.view(label); m[1] != now {
 					t.Errorf("printed view %s, but %s stands at %s: %s", m[1], label, now, next)
 				}

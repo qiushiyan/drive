@@ -241,17 +241,18 @@ func cmdRead(d *drive.Driver, argv []string) int {
 	}
 	fmt.Println(r.Text)
 	fmt.Println()
-	line := fmt.Sprintf("%s is %s on account %s (session %s)", r.Label, r.State, orDash(r.Account), orDash(r.SID))
+	var line strings.Builder
+	line.WriteString(fmt.Sprintf("%s is %s on account %s (session %s)", r.Label, r.State, orDash(r.Account), orDash(r.SID)))
 	switch r.Input {
 	case "typed":
-		line += fmt.Sprintf("; its input box holds typed text nobody sent: %q", r.Typed)
+		line.WriteString(fmt.Sprintf("; its input box holds typed text nobody sent: %q", r.Typed))
 	case "suggestion":
-		line += "; its input box shows only Claude Code's suggestion"
+		line.WriteString("; its input box shows only Claude Code's suggestion")
 	}
 	for _, j := range r.Jobs {
-		line += "; a background job of its runs: " + clip(j.Command, 100)
+		line.WriteString("; a background job of its runs: " + clip(j.Command, 100))
 	}
-	fmt.Println(line)
+	fmt.Println(line.String())
 	if r.View.Session != "" { // a closed or gone session has nothing to act on
 		fmt.Printf("view: %s\n", r.View)
 	}
@@ -575,12 +576,13 @@ func cmdBatch(d *drive.Driver, argv []string) int {
 		if c := a.str("after-wake"); c != "" {
 			after = []string{c}
 		}
-		again := "drive batch"
+		var again strings.Builder
+		again.WriteString("drive batch")
 		for _, w := range argv {
-			again += " " + shellWord(w)
+			again.WriteString(" " + shellWord(w))
 		}
 		st, err := d.StartBatch(batch.Meta{Name: a.pos[1], Started: time.Now(), Wake: wake, Webhook: a.str("webhook"),
-			RexSession: rs, TZ: tz, AfterWake: after}, again)
+			RexSession: rs, TZ: tz, AfterWake: after}, again.String())
 		if err != nil {
 			return fail(err)
 		}

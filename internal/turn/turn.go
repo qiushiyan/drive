@@ -329,8 +329,8 @@ func Read(r io.Reader) (Frontier, error) {
 		}
 	}
 	f.Queued = q.newest()
-	for i := len(order) - 1; i >= 0; i-- {
-		if c, ok := pending[order[i]]; ok {
+	for _, o := range slices.Backward(order) {
+		if c, ok := pending[o]; ok {
 			f.Pending = &c
 			break
 		}
