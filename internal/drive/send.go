@@ -177,11 +177,10 @@ func (d *Driver) settle(b *batch.Batch, label, block string) error {
 }
 
 // arrival looks for an intent's line among the prompts the session received
-// since the intent was recorded: arrived, queued, or garbled (its tail) when
-// one is the line; else the newest prompt that came instead, such as the
-// owner's own words.
+// since the intent was recorded: arrived, queued, or garbled when one is the
+// line; else the newest prompt that came instead, such as the owner's own
+// words.
 func arrival(f turn.Frontier, intent batch.Event) (outcome, instead string) {
-	want := asTyped(intent.Text)
 	ps := f.Prompts
 	if f.Queued != nil {
 		ps = append(append([]turn.Prompt{}, ps...), *f.Queued)
@@ -190,31 +189,41 @@ func arrival(f turn.Frontier, intent batch.Event) (outcome, instead string) {
 		if p.At.Before(intent.At) {
 			continue
 		}
-		if !p.Known {
-			// Claude Code queues a slash command typed while busy without its text.
-			if skill.Command(want) != "" {
-				return "queued", ""
-			}
-			continue
-		}
-		switch got := asTyped(p.Text); {
-		case got == want && p.Queued:
-			return "queued", ""
-		case got == want:
-			return "arrived", ""
-		case got != "" && strings.HasSuffix(want, got):
-			return "garbled", ""
+		switch got := received(intent.Text, p); got {
+		case "":
+		case "other":
+			instead = strings.TrimSpace(p.Text)
 		default:
-			instead = got
+			return got, ""
 		}
 	}
 	return "", instead
 }
 
-// asTyped is a line as it was typed, a slash command's markup undone and
-// the whitespace around it, a retype's padding or a lost head's line break,
-// trimmed.
-func asTyped(s string) string { return strings.TrimSpace(turn.AsTyped(s)) }
+// received is what the session made of line, typed into it, in prompt p:
+// arrived, or queued behind a running turn; garbled when p is the line with
+// its head lost, which comes back as a line break; other when it is
+// something else. "" is a prompt that tells nothing: one Claude Code queued
+// without its text, which only a slash command is. Whitespace around
+// either, a retype's padding or a lost head's line break, does not count.
+func received(line string, p turn.Prompt) string {
+	want := strings.TrimSpace(line)
+	if !p.Known {
+		if skill.Command(want) != "" {
+			return "queued"
+		}
+		return ""
+	}
+	switch got := strings.TrimSpace(p.Text); {
+	case got == want && p.Queued:
+		return "queued"
+	case got == want:
+		return "arrived"
+	case got != "" && strings.HasSuffix(want, got):
+		return "garbled"
+	}
+	return "other"
+}
 
 // ready refuses a send the session cannot take as it stands. --queue lets a
 // working session take a step mid-turn; nothing lets a step through a
@@ -663,7 +672,7 @@ func (d *Driver) typeAndConfirm(o *Observation, line string) (string, *turn.Prom
 	if err := d.press(block, "enter"); err != nil {
 		return "", nil, err
 	}
-	want := strings.TrimLeftFunc(line, unicode.IsSpace)
+	want := strings.TrimSpace(line)
 	limit := time.Minute
 	if strings.HasPrefix(want, "/compact") {
 		limit = 10 * time.Minute // a Claude Code older than 2.1.308 may record it only once compaction ends
@@ -684,29 +693,21 @@ func (d *Driver) typeAndConfirm(o *Observation, line string) (string, *turn.Prom
 		if p == nil || p.ID == before {
 			continue
 		}
-		if !p.Known {
-			// Claude Code queues a slash command typed while busy without its text.
-			if skill.Command(want) != "" {
-				return "queued", nil, nil
-			}
+		switch received(line, *p) {
+		case "":
 			continue
-		}
-		got := strings.TrimLeftFunc(p.Text, unicode.IsSpace) // a lost head comes back as a line break
-		switch {
-		case got == want:
-			if p.Queued {
-				return "queued", nil, nil
-			}
+		case "arrived":
 			return "arrived", nil, d.checkAnswer(o, p.At)
-		case got != "" && strings.HasSuffix(want, got):
+		case "queued":
+			return "queued", nil, nil
+		case "garbled":
 			return "", p, nil
-		default:
-			// Something reached the session, the line among it or not: a send
-			// that reached it, so a hold it took stands while that turn runs.
-			return "other", nil, &Failed{What: fmt.Sprintf("%s received %q where %q was typed", o.Label, clip(got, 120), clip(want, 120)),
-				Next: fmt.Sprintf("read what it made of it before interrupting anything: %s; only if it works on the wrong thing, interrupt it: %s",
-					d.run("read", o.Label), d.run("respond", viewNow(o), "interrupt"))}
 		}
+		// Something reached the session, the line among it or not: a send
+		// that reached it, so a hold it took stands while that turn runs.
+		return "other", nil, &Failed{What: fmt.Sprintf("%s received %q where %q was typed", o.Label, clip(strings.TrimSpace(p.Text), 120), clip(want, 120)),
+			Next: fmt.Sprintf("read what it made of it before interrupting anything: %s; only if it works on the wrong thing, interrupt it: %s",
+				d.run("read", o.Label), d.run("respond", viewNow(o), "interrupt"))}
 	}
 	what := fmt.Sprintf("nothing new reached %s's transcript within %s; the send is recorded as unknown", o.Label, limit)
 	if screen, err := d.Term.Capture(block, true); err == nil {
