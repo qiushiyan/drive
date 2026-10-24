@@ -20,6 +20,7 @@ make install                                  # builds into ~/.local/bin/drive, 
 
 - **Acting on one session** (where a turn stands, views, the lock, delivery and its failures, the fake world): `docs/sessions.md`
 - **The batch record** (intents and settling, holds, the owner's records, metrics, wakes): `docs/batches.md`
+- **Trying a change with a real bot** (drive and the skill end to end, a dogfood batch on the mini): `~/dotfiles/claude/.claude/skills/drive-session/DOGFOOD.md`
 
 ## Rules that keep it correct
 
