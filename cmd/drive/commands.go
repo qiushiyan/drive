@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -571,6 +574,66 @@ func parseWhen(s string, zone *time.Location) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("--since %q: give a date or a date and time, such as \"2026-10-22 16:00\"", s)
+}
+
+type PageCmd struct {
+	runs
+	Listen string `default:"127.0.0.1:8792" placeholder:"ADDR" help:"The address to serve it on."`
+}
+
+func (c *PageCmd) Help() string {
+	return `
+Each request reads the batch: the current one, or the one --batch pins.
+The page shows each session's goal, where it stands, the pull requests it
+opened or named and their state, the questions waiting on the owner, and
+the sessions closed since; it changes nothing. A read is reused for 30
+seconds, and one that takes longer than 20 is answered from the batch's
+record while it finishes.
+
+It runs until stopped, and exits once the drive binary it runs is
+replaced, so a supervisor such as launchd restarts it on the new one. It
+answers anyone who reaches the address: on the mini, a loopback address
+that tailscale serve publishes on the tailnet.`
+}
+
+// replacedEvery is how often a running page checks whether its binary was
+// replaced by an install.
+var replacedEvery = 30 * time.Second
+
+func (c *PageCmd) act(ctx *kong.Context, d *drive.Driver) error {
+	ln, err := net.Listen("tcp", c.Listen)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{Handler: drive.NewPage(d), ReadHeaderTimeout: 10 * time.Second}
+	stop, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
+	go func() {
+		was, err := os.Stat(d.Self)
+		for err == nil {
+			select {
+			case <-stop.Done():
+				return
+			case <-time.After(replacedEvery):
+			}
+			if now, err := os.Stat(d.Self); err != nil || !os.SameFile(was, now) {
+				fmt.Fprintf(ctx.Stdout, "%s was replaced: stopping, for the new one to start\n", d.Self)
+				cancel()
+				return
+			}
+		}
+	}()
+	go func() {
+		<-stop.Done()
+		shut, done := context.WithTimeout(context.Background(), 5*time.Second)
+		defer done()
+		_ = srv.Shutdown(shut)
+	}()
+	fmt.Fprintf(ctx.Stdout, "serving the batch's page at http://%s/\n", ln.Addr())
+	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
 type MetricsCmd struct {

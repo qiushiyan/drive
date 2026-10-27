@@ -4,6 +4,7 @@
 package progress
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -38,6 +39,7 @@ type PRRef struct {
 	Repo   string
 	Number int
 	URL    string
+	Opened bool // the session opened it, rather than only naming it
 }
 
 // PR is a pull request's state.
@@ -76,8 +78,20 @@ type Source interface {
 // Tools runs claude-steps and gh.
 type Tools struct{}
 
+// lookupLimit bounds one lookup. These only read, so one that hangs, such
+// as gh on a network that went away, is killed rather than holding a status
+// or a page that waits on every lookup.
+var lookupLimit = 30 * time.Second
+
 func run(name string, args ...string) ([]byte, error) {
-	out, err := exec.Command(name, args...).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), lookupLimit)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = 2 * time.Second // a child it left holding the output does not hold the read
+	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("%s: no answer within %s", name, lookupLimit)
+	}
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
 			return nil, fmt.Errorf("%s: %s", name, strings.TrimSpace(strings.SplitN(string(ee.Stderr), "\n", 2)[0]))
@@ -189,10 +203,11 @@ func (Tools) Steps(id string) (Steps, error) {
 			} `json:"latest"`
 		} `json:"labels"`
 		PullRequests []struct {
-			At     time.Time `json:"at"`
-			Repo   string    `json:"repo"`
-			Number int       `json:"number"`
-			URL    string    `json:"url"`
+			At         time.Time `json:"at"`
+			Repo       string    `json:"repo"`
+			Number     int       `json:"number"`
+			URL        string    `json:"url"`
+			OpenedHere bool      `json:"opened_here"`
 		} `json:"pull_requests"`
 		Events []struct {
 			At   time.Time `json:"at"`
@@ -217,19 +232,22 @@ func (Tools) Steps(id string) (Steps, error) {
 		}
 	}
 	var newest time.Time
-	seen := map[PRRef]bool{}
+	seen := map[PRRef]int{} // to its place in PRs
 	for _, p := range v.PullRequests {
 		if p.Number <= 0 {
 			continue
 		}
-		ref := PRRef{Repo: p.Repo, Number: p.Number, URL: p.URL}
+		ref := PRRef{Repo: p.Repo, Number: p.Number, URL: p.URL, Opened: p.OpenedHere}
 		if !p.At.Before(newest) {
 			newest, s.PR = p.At, &ref
 		}
-		if key := (PRRef{Repo: p.Repo, Number: p.Number}); !seen[key] {
-			seen[key] = true
-			s.PRs = append(s.PRs, ref)
+		key := PRRef{Repo: p.Repo, Number: p.Number}
+		if i, ok := seen[key]; ok {
+			s.PRs[i].Opened = s.PRs[i].Opened || p.OpenedHere
+			continue
 		}
+		seen[key] = len(s.PRs)
+		s.PRs = append(s.PRs, ref)
 	}
 	return s, nil
 }

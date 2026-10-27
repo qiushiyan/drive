@@ -1,0 +1,31 @@
+Usage: drive page [flags]
+
+Serve the batch as a web page its owner opens: each session's goal, where it stands, its pull requests, and what waits on them.
+
+Each request reads the batch: the current one, or the one --batch pins.
+The page shows each session's goal, where it stands, the pull requests it
+opened or named and their state, the questions waiting on the owner, and
+the sessions closed since; it changes nothing. A read is reused for 30
+seconds, and one that takes longer than 20 is answered from the batch's
+record while it finishes.
+
+It runs until stopped, and exits once the drive binary it runs is
+replaced, so a supervisor such as launchd restarts it on the new one. It
+answers anyone who reaches the address: on the mini, a loopback address
+that tailscale serve publishes on the tailnet.
+
+Flags:
+      --listen=ADDR    The address to serve it on (default: 127.0.0.1:8792).
+
+Inherited flags:
+  -h, --help           Show context-sensitive help.
+      --batch=NAME     Act in this batch instead of the current one, which stays current. It may
+                       stand anywhere on the line.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; next: relaunches it on another account, or says to tell the
+       owner

@@ -48,8 +48,11 @@ type World struct {
 	// presses, fail, as a busy Rex server sometimes does.
 	StatusFails int
 	KeyFails    int
-	sessions    map[string]bool // Rex sessions by label
-	closed      []*Claude       // sessions whose blocks were closed: their transcripts remain
+	// BlocksFail makes the next listings of Rex's blocks fail, as they do
+	// while the Rex server is down.
+	BlocksFail int
+	sessions   map[string]bool // Rex sessions by label
+	closed     []*Claude       // sessions whose blocks were closed: their transcripts remain
 	// Primary is the name the owner's shell gives the primary account's
 	// launcher: x-<Primary> starts a session under ~/.claude, which its
 	// session reports as account "primary".
@@ -380,6 +383,10 @@ func (w *World) Status(block string) (*rex.Status, error) {
 func (w *World) Blocks(string) ([]rex.Block, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.BlocksFail > 0 {
+		w.BlocksFail--
+		return nil, fmt.Errorf("rex block list: connection refused")
+	}
 	var out []rex.Block
 	for i, id := range w.order {
 		if c, ok := w.blocks[id]; ok {

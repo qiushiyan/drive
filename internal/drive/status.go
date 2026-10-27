@@ -157,10 +157,13 @@ type Row struct {
 	Input    turn.InputKind
 	Typed    string
 	Stage    string
-	PR       *progress.PR
+	StageAt  time.Time    // when its stage's newest step was taken
+	PR       *progress.PR // the newest it named, as read
 	PRRef    *progress.PRRef
 	PRErr    string
-	LastSent string // the last step a driver sent, and when
+	PRs      []progress.PRRef // every one it opened or named
+	StepsErr string           // why its stage and pull requests could not be read
+	LastSent string           // the last step a driver sent, and when
 	SentAt   time.Time
 	View     turn.View
 	Member   bool
@@ -206,6 +209,12 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 	if err != nil {
 		return nil, err
 	}
+	return d.statusOf(b, evs, members, withProgress)
+}
+
+// statusOf is Status on the batch b as evs records it, read once by the
+// caller, so whatever else it builds from them is of the same batch.
+func (d *Driver) statusOf(b *batch.Batch, evs []batch.Event, members []*batch.Member, withProgress bool) (*Status, error) {
 	out := &Status{Zone: zoneOf(b)}
 	session := ""
 	if b != nil {
@@ -435,8 +444,10 @@ func (d *Driver) row(b *batch.Batch, members []*batch.Member, label string, with
 	r.Input, r.Typed, r.View = o.Input, o.Typed, o.View
 	r.Jobs = d.Host.Shells(o.Session.Status.PID)
 	if withProgress && d.Progress != nil && o.Session.ID != "" {
-		if s, err := d.Progress.Steps(o.Session.ID); err == nil {
-			r.Stage, r.PRRef = s.Stage, s.PR
+		if s, err := d.Progress.Steps(o.Session.ID); err != nil {
+			r.StepsErr = firstLine(err.Error())
+		} else {
+			r.Stage, r.StageAt, r.PRRef, r.PRs = s.Stage, s.StageAt, s.PR, s.PRs
 			if s.PR != nil {
 				if pr, err := d.Progress.PR(*s.PR); err == nil {
 					r.PR = &pr

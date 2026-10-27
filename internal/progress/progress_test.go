@@ -33,6 +33,9 @@ func TestStepsListsEveryPullRequestTheSessionLinked(t *testing.T) {
 	if len(s.PRs) != 2 || s.PRs[0].Number != 9520 || s.PRs[1].Number != 9531 {
 		t.Fatalf("every pull request linked, in the order linked: %+v", s.PRs)
 	}
+	if !s.PRs[0].Opened || s.PRs[1].Opened {
+		t.Fatalf("the one it opened is told from the one it only named: %+v", s.PRs)
+	}
 	if len(s.Commits) != 3 || s.Commits[0].Dir != "/w/a" || s.Commits[2].Dir != "/w/a" || s.Commits[1].Text != "second" {
 		t.Fatalf("its commits, oldest first: %+v", s.Commits)
 	}
@@ -90,5 +93,25 @@ func TestLandedJudgesTheNewestCommitByItsId(t *testing.T) {
 	l, err := Tools{}.Landed(repo, nil, []Commit{{At: t0.Add(50 * time.Second), Text: "Add --shout", Dir: filepath.Join(repo, "gone")}})
 	if err != nil || l.Commit != sha || !l.Merged[sha] {
 		t.Fatalf("its newest commit, by id: %+v %v (want %s)", l, err, sha)
+	}
+}
+
+// A lookup that hangs is killed at its limit and says so, rather than
+// holding whatever waits on it.
+func TestAHungLookupIsKilled(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "claude-steps"), []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	defer func(was time.Duration) { lookupLimit = was }(lookupLimit)
+	lookupLimit = 200 * time.Millisecond
+	start := time.Now()
+	_, err := Tools{}.Steps("s-1")
+	if err == nil || !strings.Contains(err.Error(), "no answer within") {
+		t.Fatalf("a hung lookup fails saying so: %v", err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("it is killed at its limit, not waited out: %s", took)
 	}
 }
