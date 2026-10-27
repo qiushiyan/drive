@@ -5,7 +5,7 @@ Serve the batch as a web page its owner opens: each session's goal, where it sta
 Each request reads the batch: the current one, or the one --batch pins.
 The page shows each session's goal, where it stands, the pull requests it
 opened or named and their state, the questions waiting on the owner, and
-the sessions closed since; it changes nothing. A read is reused for 30
+the batch's closed sessions; it changes nothing. A read is reused for 30
 seconds, and one that takes longer than 20 is answered from the batch's
 record while it finishes.
 

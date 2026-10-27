@@ -2,7 +2,6 @@ package drive
 
 import (
 	"errors"
-	"fmt"
 	"slices"
 	"sync"
 	"time"
@@ -38,14 +37,14 @@ type Group struct {
 // The groups, in the order the page shows them.
 const (
 	GroupPrompt  = "Waiting on a prompt"
-	GroupEnded   = "Turn ended"
+	GroupNext    = "Waiting for its next step"
 	GroupParked  = "Parked"
 	GroupWorking = "Working"
 	GroupUnread  = "Not read live"
 	GroupClosed  = "Closed"
 )
 
-var groupOrder = []string{GroupPrompt, GroupEnded, GroupParked, GroupWorking, GroupUnread, GroupClosed}
+var groupOrder = []string{GroupPrompt, GroupNext, GroupParked, GroupWorking, GroupUnread, GroupClosed}
 
 // Card is one session of the batch.
 type Card struct {
@@ -97,12 +96,14 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 	}
 	rows := map[string]*Row{}
 	if live {
-		if st, err := d.statusOf(b, evs, members, true); err != nil {
+		if _, err := d.Term.Blocks(b.Meta.RexSession); err != nil {
 			ov.Live = "the sessions could not be read: " + firstLine(err.Error())
 		} else {
-			ov.Holds = st.Holds
-			for i := range st.Rows {
-				rows[st.Rows[i].Label] = &st.Rows[i]
+			holds := d.holdsNow(evs, members)
+			ov.Holds = holdLines(holds, ov.Zone)
+			read := d.memberRows(b, members, nil, holds, ov.Zone, true)
+			for i := range read {
+				rows[read[i].Label] = &read[i]
 			}
 		}
 	}
@@ -116,17 +117,14 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 				c.Asks = append(c.Asks, a.ID)
 			}
 		}
-		switch {
-		case c.Row != nil:
-			c.Stage, c.StageAt, c.PRs = c.Row.Stage, c.Row.StageAt, views(c.Row.PRs)
+		if r := c.Row; r != nil {
+			c.Stage, c.StageAt, c.PRs = r.Stage, r.StageAt, views(r.PRs)
 			switch {
-			case c.Row.Error != "":
-				c.Unread = c.Row.Error
-			case c.Row.StepsErr != "":
-				c.Unread = "its stage and pull requests (" + c.Row.StepsErr + ")"
+			case r.Error != "":
+				c.Unread = r.Error
+			case r.StepsErr != "":
+				c.Unread = "its stage and pull requests (" + r.StepsErr + ")"
 			}
-		case !m.Closed && live && ov.Live == "":
-			c.Unread = "it was not among the sessions read"
 		}
 		cards[i] = c
 		if m.Closed && live && d.Progress != nil && m.SID != "" {
@@ -142,7 +140,20 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 	}
 	wg.Wait()
 	if live {
-		d.readPRs(cards)
+		var refs []progress.PRRef
+		for _, c := range cards {
+			for _, p := range c.PRs {
+				refs = append(refs, p.PRRef)
+			}
+		}
+		states := d.prStates(refs)
+		for i := range cards {
+			for j, p := range cards[i].PRs {
+				if s, ok := states[keyOf(p.PRRef)]; ok {
+					cards[i].PRs[j].PR, cards[i].PRs[j].Err = s.read()
+				}
+			}
+		}
 	}
 	ov.Groups = grouped(cards)
 	ov.Took = d.now().Sub(ov.At)
@@ -155,52 +166,6 @@ func views(refs []progress.PRRef) []PRView {
 		out = append(out, PRView{PRRef: ref})
 	}
 	return out
-}
-
-// readPRs fills each card's pull requests with their state, reading each
-// pull request once however many sessions name it, and reusing the one a
-// status row already read.
-func (d *Driver) readPRs(cards []Card) {
-	type read struct {
-		pr  *progress.PR
-		err string
-	}
-	key := func(r progress.PRRef) string { return fmt.Sprintf("%s#%d", r.Repo, r.Number) }
-	got := map[string]*read{}
-	for _, c := range cards {
-		if r := c.Row; r != nil && r.PRRef != nil && (r.PR != nil || r.PRErr != "") {
-			got[key(*r.PRRef)] = &read{pr: r.PR, err: r.PRErr}
-		}
-	}
-	var refs []progress.PRRef
-	for _, c := range cards {
-		for _, p := range c.PRs {
-			if _, ok := got[key(p.PRRef)]; !ok {
-				got[key(p.PRRef)] = &read{}
-				refs = append(refs, p.PRRef)
-			}
-		}
-	}
-	if d.Progress != nil {
-		var wg sync.WaitGroup
-		for _, ref := range refs {
-			r := got[key(ref)]
-			wg.Go(func() {
-				if pr, err := d.Progress.PR(ref); err != nil {
-					r.err = firstLine(err.Error())
-				} else {
-					r.pr = &pr
-				}
-			})
-		}
-		wg.Wait()
-	}
-	for i := range cards {
-		for j := range cards[i].PRs {
-			r := got[key(cards[i].PRs[j].PRRef)]
-			cards[i].PRs[j].PR, cards[i].PRs[j].Err = r.pr, r.err
-		}
-	}
 }
 
 // grouped puts each card in the group of where it stands: open sessions in
@@ -228,7 +193,7 @@ func groupOf(c Card) string {
 	switch {
 	case c.Member.Closed:
 		return GroupClosed
-	case read && r.State.blocked():
+	case read && r.State.onPrompt():
 		return GroupPrompt
 	case c.Member.Parked != "":
 		return GroupParked
@@ -237,5 +202,5 @@ func groupOf(c Card) string {
 	case r.State == "working":
 		return GroupWorking
 	}
-	return GroupEnded
+	return GroupNext
 }

@@ -143,6 +143,9 @@ func (st *Status) Text(now time.Time) string {
 	} else if st.Batch != nil {
 		b.WriteString("no sessions in this batch yet\n")
 	}
+	if st.NoGoal != "" {
+		b.WriteString(st.NoGoal + "\n")
+	}
 	for _, r := range st.Rows {
 		if r.Input == "typed" {
 			fmt.Fprintf(&b, "%s's input box holds typed text nobody sent: %q\n", r.Label, r.Typed)

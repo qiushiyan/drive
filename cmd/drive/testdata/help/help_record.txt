@@ -1,10 +1,10 @@
 Usage: drive record <command> [flags]
 
-Record what drive cannot see: the owner's grants, asks and answers, and notes.
+Record what drive cannot see: the owner's grants, asks and answers, notes, and each session's goal.
 
 The record is the batch's memory: status lists the grants and open asks,
-log has every record, and metrics measures the asks. Each prints the id it
-recorded, such as A3, which record answer takes.
+log has every record, and metrics measures the asks. A grant, ask, answer
+or note prints the id it recorded, such as A3, which record answer takes.
 
 Inherited flags:
   -h, --help          Show context-sensitive help.

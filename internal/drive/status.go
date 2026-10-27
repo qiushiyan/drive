@@ -177,6 +177,7 @@ type Row struct {
 // Wake is how a member's wake stands.
 type Wake struct {
 	Watch     string    // armed, woken at …, parked: why, none
+	Armed     bool      // its watch runs, stuck or not
 	Unhandled bool      // a wake was posted after the driver last acted on it
 	Due       string    // why the watchdog should arm its wake; "" when nothing is due
 	Again     time.Time // when the watchdog posts a wake nobody acted on once more, while that is still to come
@@ -194,6 +195,7 @@ type Status struct {
 	Asks     []*batch.Ask
 	Grants   []batch.Event
 	InFlight []InFlight
+	NoGoal   string // which open sessions have no goal recorded, and how to record one
 }
 
 // InFlight is an action admitted with no outcome yet.
@@ -209,12 +211,6 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 	if err != nil {
 		return nil, err
 	}
-	return d.statusOf(b, evs, members, withProgress)
-}
-
-// statusOf is Status on the batch b as evs records it, read once by the
-// caller, so whatever else it builds from them is of the same batch.
-func (d *Driver) statusOf(b *batch.Batch, evs []batch.Event, members []*batch.Member, withProgress bool) (*Status, error) {
 	out := &Status{Zone: zoneOf(b)}
 	session := ""
 	if b != nil {
@@ -228,6 +224,19 @@ func (d *Driver) statusOf(b *batch.Batch, evs []batch.Event, members []*batch.Me
 	// read before the rows.
 	holds := d.holdsNow(evs, members)
 	out.Rows, out.Others, out.Closed = d.rows(b, members, blocks, holds, out.Zone, withProgress)
+	if withProgress {
+		d.readNewestPRs(out.Rows)
+	}
+	var none []string
+	for _, r := range out.Rows {
+		if r.Goal == "" {
+			none = append(none, r.Label)
+		}
+	}
+	if len(none) > 0 {
+		out.NoGoal = fmt.Sprintf("no goal recorded for %s, which the owner's page shows beside each session: %s", strings.Join(none, ", "),
+			d.run("record", "goal", none[0], text("…")))
+	}
 	out.Holds = holdLines(holds, out.Zone)
 	grants, asks, _ := batch.Records(evs)
 	out.Grants = grants
@@ -244,41 +253,18 @@ func (d *Driver) statusOf(b *batch.Batch, evs []batch.Event, members []*batch.Me
 // sessions among blocks, at once, each reader filling a slot of its own;
 // closed counts the batch's sessions closed since.
 func (d *Driver) rows(b *batch.Batch, members []*batch.Member, blocks []rex.Block, holds []holdNow, zone *time.Location, withProgress bool) (rows, others []Row, closed int) {
-	free := map[string]string{} // a session waiting for a hold that is free, to that hold
-	for _, h := range holds {
-		for _, w := range h.waiting {
-			if !h.held {
-				free[w.Session] = h.Name
-			}
-		}
-	}
 	window := map[string]string{}
+	seen := map[string]bool{}
 	for _, bl := range blocks {
 		window[bl.ID] = bl.Window
 	}
-	var wg sync.WaitGroup
-	seen := map[string]bool{}
-	var open []*batch.Member
 	for _, m := range members {
 		seen[m.Block] = true
 		if m.Closed {
 			closed++
-			continue
 		}
-		open = append(open, m)
 	}
-	rows = make([]Row, len(open))
-	for i, m := range open {
-		wg.Go(func() {
-			r := d.row(b, members, m.Label, withProgress)
-			r.Window, r.Member, r.Goal = window[m.Block], true, m.Goal
-			if m.LastSend != nil {
-				r.LastSent, r.SentAt = sentLabel(m.LastSend), m.LastSend.At
-			}
-			r.Wake = d.wakeOf(b, m, r, zone, free[m.Label])
-			rows[i] = r
-		})
-	}
+	var wg sync.WaitGroup
 	outside := make([]*Row, len(blocks))
 	for i, bl := range blocks {
 		if seen[bl.ID] {
@@ -296,6 +282,7 @@ func (d *Driver) rows(b *batch.Batch, members []*batch.Member, blocks []rex.Bloc
 			outside[i] = &r
 		})
 	}
+	rows = d.memberRows(b, members, window, holds, zone, withProgress)
 	wg.Wait()
 	for _, r := range outside {
 		if r != nil {
@@ -303,6 +290,41 @@ func (d *Driver) rows(b *batch.Batch, members []*batch.Member, blocks []rex.Bloc
 		}
 	}
 	return rows, others, closed
+}
+
+// memberRows reads every open member of the batch at once, each reader
+// filling a slot of its own: its turn, its wake, and with withProgress its
+// stage and the pull requests it named. window places each block in Rex.
+func (d *Driver) memberRows(b *batch.Batch, members []*batch.Member, window map[string]string, holds []holdNow, zone *time.Location, withProgress bool) []Row {
+	free := map[string]string{} // a session waiting for a hold that is free, to that hold
+	for _, h := range holds {
+		for _, w := range h.waiting {
+			if !h.held {
+				free[w.Session] = h.Name
+			}
+		}
+	}
+	var open []*batch.Member
+	for _, m := range members {
+		if !m.Closed {
+			open = append(open, m)
+		}
+	}
+	rows := make([]Row, len(open))
+	var wg sync.WaitGroup
+	for i, m := range open {
+		wg.Go(func() {
+			r := d.row(b, members, m.Label, withProgress)
+			r.Window, r.Member, r.Goal = window[m.Block], true, m.Goal
+			if m.LastSend != nil {
+				r.LastSent, r.SentAt = sentLabel(m.LastSend), m.LastSend.At
+			}
+			r.Wake = d.wakeOf(b, m, r, zone, free[m.Label])
+			rows[i] = r
+		})
+	}
+	wg.Wait()
+	return rows
 }
 
 // holdLines is a line per hold that is held or waited for: who holds it,
@@ -369,9 +391,9 @@ func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, zone *time.Locat
 	case m.Parked != "":
 		return Wake{Watch: "parked: " + m.Parked}
 	case alive && stuck(r.State, d.now().Add(-r.For), m.Watched, d.now()):
-		return Wake{Watch: fmt.Sprintf("armed, but its turn ended %s ago: stuck (%s restarts it)", ago(r.For), d.run("watch", m.Label)), Due: "stuck"}
+		return Wake{Watch: fmt.Sprintf("armed, but its turn ended %s ago: stuck (%s restarts it)", ago(r.For), d.run("watch", m.Label)), Due: "stuck", Armed: true}
 	case alive:
-		return Wake{Watch: "armed"}
+		return Wake{Watch: "armed", Armed: true}
 	case m.Posting.After(m.Watched) && m.Posting.After(m.Woken) && m.Posting.After(m.WakeFailed):
 		return Wake{Watch: "posting since " + m.Posting.In(zone).Format("15:04")}
 	case woken && m.Woken.After(m.LastAction):
@@ -448,16 +470,78 @@ func (d *Driver) row(b *batch.Batch, members []*batch.Member, label string, with
 			r.StepsErr = firstLine(err.Error())
 		} else {
 			r.Stage, r.StageAt, r.PRRef, r.PRs = s.Stage, s.StageAt, s.PR, s.PRs
-			if s.PR != nil {
-				if pr, err := d.Progress.PR(*s.PR); err == nil {
-					r.PR = &pr
-				} else {
-					r.PRErr = firstLine(err.Error())
-				}
-			}
 		}
 	}
 	return r
+}
+
+// readNewestPRs gives each row the state of the newest pull request it
+// named.
+func (d *Driver) readNewestPRs(rows []Row) {
+	var refs []progress.PRRef
+	for _, r := range rows {
+		if r.PRRef != nil {
+			refs = append(refs, *r.PRRef)
+		}
+	}
+	states := d.prStates(refs)
+	for i := range rows {
+		if ref := rows[i].PRRef; ref != nil {
+			if s, ok := states[keyOf(*ref)]; ok {
+				rows[i].PR, rows[i].PRErr = s.read()
+			}
+		}
+	}
+}
+
+// prKey is a pull request, whichever session names it.
+type prKey struct {
+	repo   string
+	number int
+}
+
+func keyOf(r progress.PRRef) prKey { return prKey{r.Repo, r.Number} }
+
+// prRead is a pull request's state as read, or why it could not be.
+type prRead struct {
+	pr  progress.PR
+	err error
+}
+
+// read is the state, or why it could not be read, as a row or a card holds it.
+func (s prRead) read() (*progress.PR, string) {
+	if s.err != nil {
+		return nil, firstLine(s.err.Error())
+	}
+	pr := s.pr
+	return &pr, ""
+}
+
+// prStates reads the state of every pull request refs name, all at once
+// and each once however many sessions name it: status, the page and
+// metrics each ask for theirs in one call.
+func (d *Driver) prStates(refs []progress.PRRef) map[prKey]prRead {
+	out := map[prKey]prRead{}
+	if d.Progress == nil {
+		return out
+	}
+	var unique []progress.PRRef
+	for _, ref := range refs {
+		if _, ok := out[keyOf(ref)]; !ok {
+			out[keyOf(ref)] = prRead{}
+			unique = append(unique, ref)
+		}
+	}
+	reads := make([]prRead, len(unique))
+	var wg sync.WaitGroup
+	for i, ref := range unique {
+		wg.Go(func() { reads[i].pr, reads[i].err = d.Progress.PR(ref) })
+	}
+	wg.Wait()
+	for i, ref := range unique {
+		out[keyOf(ref)] = reads[i]
+	}
+	return out
 }
 
 // answerText is an answer as a driver reads it; a local command's output

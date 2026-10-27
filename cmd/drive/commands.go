@@ -441,8 +441,8 @@ type RecordCmd struct {
 func (RecordCmd) Help() string {
 	return `
 The record is the batch's memory: status lists the grants and open asks,
-log has every record, and metrics measures the asks. Each prints the id it
-recorded, such as A3, which record answer takes.`
+log has every record, and metrics measures the asks. A grant, ask, answer
+or note prints the id it recorded, such as A3, which record answer takes.`
 }
 
 // recorded prints the id a record got.
@@ -586,7 +586,7 @@ func (c *PageCmd) Help() string {
 Each request reads the batch: the current one, or the one --batch pins.
 The page shows each session's goal, where it stands, the pull requests it
 opened or named and their state, the questions waiting on the owner, and
-the sessions closed since; it changes nothing. A read is reused for 30
+the batch's closed sessions; it changes nothing. A read is reused for 30
 seconds, and one that takes longer than 20 is answered from the batch's
 record while it finishes.
 

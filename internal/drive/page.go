@@ -137,11 +137,16 @@ func cardOf(c Card, wakes bool, now time.Time, zone *time.Location) cardView {
 		v.Facts = append(v.Facts, fact{Text: "Last recorded step: " + c.Stage + ", " + at(c.StageAt)})
 	}
 	if r != nil && !m.Closed {
+		// Whether the driver will hear of it: a wake nobody acted on, one
+		// that should have come and has not, or none at all.
 		switch {
 		case r.Unhandled:
 			v.Facts = append(v.Facts, fact{Text: "The driver was woken " + at(m.Woken) + " and has done nothing since."})
-		case wakes && r.Due != "" && m.Parked == "":
-			v.Facts = append(v.Facts, fact{Text: "No wake is armed for it (" + r.Due + "), so the driver will not hear when its turn ends."})
+		case !wakes || r.Due == "" || m.Parked != "":
+		case r.Armed:
+			v.Facts = append(v.Facts, fact{Text: "Its wake is armed but has not come since its turn ended, so the driver may not have heard."})
+		default:
+			v.Facts = append(v.Facts, fact{Text: "No wake is armed for it, so the driver is not told when it needs its next step."})
 		}
 		if len(r.Jobs) > 0 {
 			v.Facts = append(v.Facts, fact{Text: fmt.Sprintf("Background jobs running: %d", len(r.Jobs)), Minor: true})
@@ -272,7 +277,7 @@ ul.facts li { margin: 3px 0; overflow-wrap: anywhere; }
 ul.facts li.minor { color: var(--muted); }
 ul.facts li.error { color: var(--error); }
 a { color: var(--link); }
-.pr { white-space: nowrap; }
+.pr a { white-space: nowrap; }
 .ask p { margin: 4px 0 0; }
 .ask .head { color: var(--muted); font-size: 0.9rem; margin: 0; }
 .ask .question { font-weight: 600; }

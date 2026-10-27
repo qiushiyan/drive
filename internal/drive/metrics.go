@@ -216,8 +216,7 @@ func (m *Metrics) actions(evs []batch.Event, wakes bool) {
 // however many sessions name it, else the session's work once it is in the
 // trunk.
 func (d *Driver) merges(m *Metrics, b *batch.Batch, evs []batch.Event) {
-	merged := map[string]int{}   // repo#number, or repo@branch, to its index in m.Merged
-	looked := map[string]error{} // repo#number to how its lookup went: each is looked up once
+	merged := map[string]int{} // repo#number, or repo@branch, to its index in m.Merged
 	add := func(key, label string, c MergedPR) {
 		if i, ok := merged[key]; ok {
 			m.Merged[i].Sessions = append(m.Merged[i].Sessions, label)
@@ -227,15 +226,26 @@ func (d *Driver) merges(m *Metrics, b *batch.Batch, evs []batch.Event) {
 		m.Merged = append(m.Merged, c)
 		merged[key] = len(m.Merged) - 1
 	}
-	for _, mem := range batch.Members(evs) {
+	members := batch.Members(evs)
+	steps := make([]*progress.Steps, len(members)) // nil where a session's steps could not be read
+	var refs []progress.PRRef
+	for i, mem := range members {
+		if d.Progress == nil || mem.SID == "" {
+			continue
+		}
+		if s, err := d.Progress.Steps(mem.SID); err == nil {
+			steps[i] = &s
+			refs = append(refs, s.PRs...)
+		}
+	}
+	states := d.prStates(refs)
+	for i, mem := range members {
 		m.Sessions++
 		if d.Progress == nil || mem.SID == "" {
 			continue
 		}
-		viaPR, unread := false, false
-		if s, err := d.Progress.Steps(mem.SID); err != nil {
-			unread = true
-		} else {
+		viaPR, unread := false, steps[i] == nil
+		if s := steps[i]; s != nil {
 			for _, ref := range s.PRs {
 				key := fmt.Sprintf("%s#%d", ref.Repo, ref.Number)
 				if _, ok := merged[key]; ok {
@@ -243,16 +253,12 @@ func (d *Driver) merges(m *Metrics, b *batch.Batch, evs []batch.Event) {
 					viaPR = true
 					continue
 				}
-				if err, ok := looked[key]; ok {
-					unread = unread || err != nil
-					continue
-				}
-				pr, err := d.Progress.PR(ref)
-				if looked[key] = err; err != nil {
+				st := states[keyOf(ref)]
+				if st.err != nil {
 					unread = true
 					continue
 				}
-				if pr.State == "MERGED" && !pr.MergedAt.Before(b.Meta.Started) {
+				if pr := st.pr; pr.State == "MERGED" && !pr.MergedAt.Before(b.Meta.Started) {
 					add(key, mem.Label, MergedPR{Repo: ref.Repo, Number: pr.Number, At: pr.MergedAt})
 					viaPR = true
 				}

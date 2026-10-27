@@ -331,11 +331,28 @@ func TestAGoalIsRecordedWithTheOpen(t *testing.T) {
 	if _, err := r.d.Send(r.view("T3"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
 		t.Fatal(err)
 	}
-	waiting := "-Ship the release notes."
+	waiting := "-Ship the\n  release notes." // as one paragraph, so the next: stays one line
 	_, err = r.d.Open("S2", drive.Step{Line: "write them"}, drive.OpenOptions{Dir: dir, Hold: "release", Goal: &waiting})
 	var refused *drive.Refused
 	if !errors.As(err, &refused) || !strings.Contains(refused.Next, "--goal=-Ship the release notes.") {
 		t.Fatalf("the open in next: keeps its goal as one word: %v", err)
+	}
+}
+
+// A driver that ended after Rex opened its block, before it recorded the
+// open, leaves the goal on its intent; the next driver to own the label
+// settles the open from the block, and the goal stands with it.
+func TestAGoalStandsWhenAnOpenIsSettled(t *testing.T) {
+	r := newRig(t, "none")
+	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindOpenIntent, Session: "S3", Intent: "gone",
+		Dir: filepath.Join(r.w.Root, "work"), Goal: "Give each saved schedule edit a receipt."})
+	r.w.Add("S3") // the block Rex opened under its label
+	if _, err := r.d.Open("S3", drive.Step{Line: "onboard"}, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work")}); !isRefused(err) || !strings.Contains(err.Error(), "already open") {
+		t.Fatalf("the settled open is the session, already open: %v", err)
+	}
+	evs, _ := r.b.Events()
+	if m := batch.Find(batch.Members(evs), "S3"); m == nil || m.Goal != "Give each saved schedule edit a receipt." {
+		t.Fatalf("the settled session keeps the goal its open carried: %+v", m)
 	}
 }
 

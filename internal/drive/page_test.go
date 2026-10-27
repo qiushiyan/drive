@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/qiushiyan/drive/internal/batch"
+	"github.com/qiushiyan/drive/internal/config"
 	"github.com/qiushiyan/drive/internal/drive"
 	"github.com/qiushiyan/drive/internal/progress"
 	"github.com/qiushiyan/drive/internal/testkit"
@@ -78,10 +79,11 @@ func (p *pageProgress) holdSteps() (release func()) {
 }
 
 // pageBatch is a batch with a session in each place one can stand: W
-// working, E whose turn ended with a wake nobody acted on, P parked, Q on a
-// permission prompt, and C closed. P and C both name #1, which merged; C
-// opened #2, whose checks fail. P has an ask, and the batch has one of its
-// own.
+// working, E whose turn ended with a wake nobody acted on and whose steps
+// cannot be read, L whose login was rejected, P parked, Q on a permission
+// prompt, and C and then D closed. W and P, both open, and C name #1, which
+// merged; C opened #2, whose checks fail. P has an ask, and the batch has
+// one of its own.
 func pageBatch(t *testing.T) (*rig, *pageProgress) {
 	t.Helper()
 	r := newRig(t, "none")
@@ -100,12 +102,18 @@ func pageBatch(t *testing.T) (*rig, *pageProgress) {
 	}
 	w, p, q, c := join("W"), join("P"), join("Q"), join("C")
 	join("E")
+	l, dd := join("L"), join("D")
 	ref := func(n int, opened bool) progress.PRRef {
 		return progress.PRRef{Repo: "acme/app", Number: n, URL: fmt.Sprintf("https://github.com/acme/app/pull/%d", n), Opened: opened}
 	}
 	one, two := ref(1, true), ref(2, true)
-	prog.steps[p.SID] = progress.Steps{Stage: "review", StageAt: r.w.Clock.Now(), PR: &one, PRs: []progress.PRRef{one}}
-	prog.steps[c.SID] = progress.Steps{Stage: "docs", StageAt: r.w.Clock.Now(), PR: &two, PRs: []progress.PRRef{ref(1, false), two}}
+	now := r.w.Clock.Now()
+	prog.steps[w.SID] = progress.Steps{Stage: "build", StageAt: now, PR: &one, PRs: []progress.PRRef{one}}
+	prog.steps[p.SID] = progress.Steps{Stage: "review", StageAt: now, PR: &one, PRs: []progress.PRRef{one}}
+	prog.steps[q.SID] = progress.Steps{Stage: "build", StageAt: now}
+	prog.steps[l.SID] = progress.Steps{Stage: "onboard", StageAt: now}
+	prog.steps[c.SID] = progress.Steps{Stage: "docs", StageAt: now, PR: &two, PRs: []progress.PRRef{ref(1, false), two}}
+	prog.steps[dd.SID] = progress.Steps{Stage: "docs", StageAt: now}
 
 	w.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} }) // its build runs on
 	if _, err := r.d.Send(r.view("W"), drive.Step{Line: "build it"}, drive.SendOptions{}); err != nil {
@@ -118,7 +126,13 @@ func pageBatch(t *testing.T) (*rig, *pageProgress) {
 		t.Fatal(err)
 	}
 	q.Ask("pnpm install")
+	l.Fail("authentication_failed", "Login expired · Please run /login")
+	l.Set("blocked", "auth", "Login expired · Please run /login")
 	if err := r.d.Close(r.view("C")); err != nil {
+		t.Fatal(err)
+	}
+	r.w.Clock.Sleep(time.Minute)
+	if err := r.d.Close(r.view("D")); err != nil {
 		t.Fatal(err)
 	}
 	for label, goal := range map[string]string{"W": "Build the importer.", "P": "Keep instruction pages whole.", "C": "Retire the old run-plan fields."} {
@@ -156,10 +170,28 @@ func card(ov *drive.Overview, label string) *drive.Card {
 	return nil
 }
 
+// clockOf is when the batch recorded the newest event of kind for session,
+// as the page prints a time from today.
+func clockOf(t *testing.T, r *rig, kind, session string) string {
+	t.Helper()
+	at := time.Time{}
+	for _, e := range r.events(kind) {
+		if e.Session == session {
+			at = e.At
+		}
+	}
+	if at.IsZero() {
+		t.Fatalf("no %s for %s", kind, session)
+	}
+	return "at " + at.In(r.b.Zone()).Format("15:04")
+}
+
 // The owner reads each session where it stands, by what was read rather
 // than by any claim that its work is done: a closed session is closed, a
-// park says when and why beside what has happened since, and every pull
-// request a session opened or named shows, each read once.
+// park says when and why beside what has happened since, a question waiting
+// on the owner says what it asks and what happens unanswered, and every
+// pull request a session opened or named shows, each read once however
+// many sessions, open or closed, name it.
 func TestTheOverviewGroupsSessionsByWhereTheyStand(t *testing.T) {
 	r, prog := pageBatch(t)
 	ov, err := r.d.Overview(true)
@@ -167,10 +199,14 @@ func TestTheOverviewGroupsSessionsByWhereTheyStand(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := labels(ov)
-	want := map[string][]string{drive.GroupWorking: {"W"}, drive.GroupEnded: {"E"}, drive.GroupParked: {"P"}, drive.GroupPrompt: {"Q"}, drive.GroupClosed: {"C"}}
+	want := map[string][]string{drive.GroupWorking: {"W"}, drive.GroupNext: {"E", "L"}, drive.GroupParked: {"P"},
+		drive.GroupPrompt: {"Q"}, drive.GroupClosed: {"D", "C"}}
+	if len(got) != len(want) {
+		t.Fatalf("groups: %v", got)
+	}
 	for title, ls := range want {
 		if strings.Join(got[title], ",") != strings.Join(ls, ",") {
-			t.Fatalf("%s holds %v, got %v (all: %v)", title, ls, got[title], got)
+			t.Fatalf("%s holds %v in that order, got %v (all: %v)", title, ls, got[title], got)
 		}
 	}
 	if len(ov.Asks) != 2 || card(ov, "P").Asks[0] != "A1" {
@@ -181,25 +217,70 @@ func TestTheOverviewGroupsSessionsByWhereTheyStand(t *testing.T) {
 		t.Fatalf("a closed session's pull requests, the one it named and the one it opened, as read: %+v", c.PRs)
 	}
 	if n := prog.prReads.Load(); n != 2 {
-		t.Fatalf("each pull request is read once, #1 though two sessions name it: %d reads", n)
+		t.Fatalf("each pull request is read once, #1 though three sessions name it: %d reads", n)
 	}
 
 	page := string(ov.HTML(r.w.Clock.Now()))
 	for _, want := range []string{
-		"Build the importer.", "No goal recorded.", "Parked by the driver at", "waits on the S3 baseline",
-		"Waits on you: A1", "A2 · the whole batch", "Pull requests it opened:", "Pull requests it named:",
-		"1 check failing", "The driver was woken at", "Waiting on a permission prompt", "Closed at",
+		"Build the importer.", "No goal recorded.",
+		"Parked by the driver " + clockOf(t, r, batch.KindPark, "P") + ": waits on the S3 baseline",
+		"Closed " + clockOf(t, r, batch.KindClose, "C"), "Closed " + clockOf(t, r, batch.KindClose, "D"),
+		"Waits on you: A1", "A2 · the whole batch",
+		"Merge before the baseline?", "Recommended: wait for it", "If unanswered: P stays parked", "If unanswered: nothing releases",
+		"Pull requests it opened:", "Pull requests it named:", "1 check failing",
+		"The driver was woken at", "Waiting on a permission prompt", "Its login was rejected",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the page says %q", want)
 		}
 	}
+	if n := strings.Count(page, "Not read: its stage and pull requests"); n != 1 {
+		t.Errorf("only E's steps could not be read, and the page says so once: %d", n)
+	}
 	if strings.Contains(page, "Done") {
 		t.Error("the page claims no session's work is done")
 	}
-	if strings.Contains(page, "No wake is armed") {
-		t.Error("a batch whose driver waits itself has no wakes to arm")
+	if strings.Contains(page, "wake is armed") {
+		t.Error("a batch whose driver waits itself has no wakes to speak of")
 	}
+}
+
+// In a batch that wakes its driver, the page says whether the driver will
+// hear of a session: a watch that ended leaves none armed, and one still
+// running long after its turn ended is armed but stuck, not absent.
+func TestTheWakeLineSaysWhatTheWakeIs(t *testing.T) {
+	r := newRig(t, "webhook")
+	r.d.Cfg.Webhook = config.Webhook{URL: "http://127.0.0.1:1/none"}
+	for _, label := range []string{"K", "N"} {
+		c := r.w.Add(label)
+		done(c, "onboard", "analysis")
+		if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "review"}, drive.SendOptions{Label: label}); err != nil {
+			t.Fatal(err)
+		}
+		if label == "K" {
+			c.Ask("pnpm install")
+		}
+	}
+	_ = r.watches.Stop("drive-b1-" + keyOfBlock(r, "N")) // N's watch ended without a wake
+	r.w.Clock.Sleep(time.Hour)                           // K's watch never posted
+	ov, err := r.d.Overview(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(ov.HTML(r.w.Clock.Now()))
+	if !strings.Contains(page, "Its wake is armed but has not come") || !strings.Contains(page, "No wake is armed for it") {
+		t.Fatalf("K's stuck wake is armed, N has none:\n%s", page)
+	}
+	if strings.Count(page, "No wake is armed for it") != 1 {
+		t.Fatal("only N has no wake armed")
+	}
+}
+
+// keyOfBlock is the part of a session's watch name its block gives.
+func keyOfBlock(r *rig, label string) string {
+	evs, _ := r.b.Events()
+	m := batch.Find(batch.Members(evs), label)
+	return m.Block[len(m.Block)-6:]
 }
 
 // With Rex down, the page still shows what the record holds: goals, asks,
@@ -215,7 +296,7 @@ func TestTheOverviewKeepsTheRecordWhenRexIsDown(t *testing.T) {
 		t.Fatalf("the page says what could not be read: %q", ov.Live)
 	}
 	got := labels(ov)
-	if strings.Join(got[drive.GroupUnread], ",") != "W,Q,E" || strings.Join(got[drive.GroupParked], ",") != "P" || strings.Join(got[drive.GroupClosed], ",") != "C" {
+	if strings.Join(got[drive.GroupUnread], ",") != "W,Q,E,L" || strings.Join(got[drive.GroupParked], ",") != "P" || strings.Join(got[drive.GroupClosed], ",") != "D,C" {
 		t.Fatalf("the record's places stand without Rex: %v", got)
 	}
 	if card(ov, "W").Member.Goal != "Build the importer." || len(ov.Asks) != 2 || len(card(ov, "C").PRs) != 2 {
@@ -230,20 +311,19 @@ func get(t *testing.T, url string) (int, http.Header, string) {
 	t.Helper()
 	resp, err := http.Get(url)
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
+		return 0, nil, ""
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, resp.Header, string(body)
 }
 
-// The page reads on request, reuses a read for its window rather than
-// costing a lookup per session per reload, and answers from the record
-// while a read runs past its deadline. It only reads.
+// The page reads on request and reuses a read for its window rather than
+// costing a lookup per session per reload. It only reads.
 func TestThePageReadsOnRequest(t *testing.T) {
 	r, prog := pageBatch(t)
-	p := drive.NewPage(r.d)
-	srv := httptest.NewServer(p)
+	srv := httptest.NewServer(drive.NewPage(r.d))
 	defer srv.Close()
 
 	code, h, body := get(t, srv.URL)
@@ -261,19 +341,6 @@ func TestThePageReadsOnRequest(t *testing.T) {
 		t.Fatal("a reload past the window reads again")
 	}
 
-	p.Deadline = 50 * time.Millisecond
-	release := prog.holdSteps()
-	r.w.Clock.Sleep(31 * time.Second)
-	_, _, body = get(t, srv.URL)
-	if !strings.Contains(body, "still being read") || !strings.Contains(body, "Build the importer.") || !strings.Contains(body, "waits on the S3 baseline") {
-		t.Fatalf("a read past its deadline is answered from the record:\n%s", body)
-	}
-	release()
-	p.Deadline = 5 * time.Second
-	if _, _, body = get(t, srv.URL); strings.Contains(body, "Not read live") {
-		t.Fatalf("once the read ends, the page is live again:\n%s", body)
-	}
-
 	resp, err := http.Post(srv.URL, "text/plain", strings.NewReader("x"))
 	if err != nil {
 		t.Fatal(err)
@@ -287,11 +354,14 @@ func TestThePageReadsOnRequest(t *testing.T) {
 	}
 }
 
-// A read is of one batch, the one current when it began: a batch started
-// while it runs shows on the next read, never spliced into this one.
-func TestAPageIsOneBatch(t *testing.T) {
+// A read slower than the window is still fresh when it ends: the window
+// counts from when it ended, so the next visit shows it instead of reading
+// again.
+func TestASlowReadIsReusedOnceItEnds(t *testing.T) {
 	r, prog := pageBatch(t)
-	srv := httptest.NewServer(drive.NewPage(r.d))
+	p := drive.NewPage(r.d)
+	p.Deadline = 5 * time.Second
+	srv := httptest.NewServer(p)
 	defer srv.Close()
 	release := prog.holdSteps()
 	got := make(chan string)
@@ -300,15 +370,63 @@ func TestAPageIsOneBatch(t *testing.T) {
 		got <- body
 	}()
 	<-prog.waiting
+	r.w.Clock.Sleep(40 * time.Second) // the read outlasts the window
+	release()
+	if body := <-got; strings.Contains(body, "Not read live") {
+		t.Fatalf("the read that ended answers its request:\n%s", body)
+	}
+	reads := prog.reads.Load()
+	if _, _, body := get(t, srv.URL); strings.Contains(body, "Not read live") || prog.reads.Load() != reads {
+		t.Fatalf("the next visit reuses it: %d reads, then %d", reads, prog.reads.Load())
+	}
+}
+
+// A read that outlasts its deadline is answered from the record, every
+// visit while it runs and at once once it is overdue, with no second read
+// started beside it; one that runs past the point of giving up on it is
+// left to finish, and the next visit starts another.
+func TestAnOverdueReadIsAnsweredFromTheRecord(t *testing.T) {
+	r, prog := pageBatch(t)
+	p := drive.NewPage(r.d)
+	p.Deadline = 400 * time.Millisecond
+	srv := httptest.NewServer(p)
+	defer srv.Close()
+	release := prog.holdSteps()
+	defer release()
+
+	_, _, body := get(t, srv.URL)
+	if !strings.Contains(body, "still being read") || !strings.Contains(body, "Build the importer.") || !strings.Contains(body, "waits on the S3 baseline") {
+		t.Fatalf("a read past its deadline is answered from the record:\n%s", body)
+	}
+	reads := prog.reads.Load()
+	start := time.Now()
+	_, _, body = get(t, srv.URL)
+	if took := time.Since(start); took > 200*time.Millisecond || !strings.Contains(body, "still being read") {
+		t.Fatalf("a visit to an overdue read is answered at once, not after a deadline of its own: %s", took)
+	}
+	if prog.reads.Load() != reads {
+		t.Fatal("one read at a time: the second visit started none")
+	}
+	p.GiveUpAfter = 0
+	get(t, srv.URL)
+	if prog.reads.Load() == reads {
+		t.Fatal("a read held past the point of giving up on it is replaced by a new one")
+	}
+}
+
+// Each batch has its own read: a batch started while the last one's read
+// is still fresh shows at once, not the old batch's page.
+func TestABatchStartedMeanwhileShowsAtOnce(t *testing.T) {
+	r, _ := pageBatch(t)
+	srv := httptest.NewServer(drive.NewPage(r.d))
+	defer srv.Close()
+	if _, _, body := get(t, srv.URL); !strings.Contains(body, "Batch b1") {
+		t.Fatalf("b1's page:\n%s", body)
+	}
 	if _, err := r.d.Store.New(batch.Meta{Name: "b2", Started: r.w.Clock.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	release()
-	if body := <-got; !strings.Contains(body, "Batch b1") || !strings.Contains(body, "Build the importer.") || strings.Contains(body, "b2") {
-		t.Fatalf("the read under way is wholly b1's:\n%s", body)
-	}
-	r.w.Clock.Sleep(31 * time.Second)
 	if _, _, body := get(t, srv.URL); !strings.Contains(body, "Batch b2") || !strings.Contains(body, "No session has joined the batch yet.") {
-		t.Fatalf("the next read is b2's:\n%s", body)
+		t.Fatalf("b2's page at once, though b1's read is fresh:\n%s", body)
 	}
 }
