@@ -238,7 +238,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 		}
 	}
 	if len(none) > 0 {
-		out.NoGoal = fmt.Sprintf("no goal recorded for %s, which the owner's page shows beside each session: %s", strings.Join(none, ", "),
+		out.NoGoal = fmt.Sprintf("no goal recorded for %s; the owner's page shows each session's goal: %s", strings.Join(none, ", "),
 			d.run("record", "goal", none[0], text("…")))
 	}
 	out.Holds = holdLines(holds, out.Zone)

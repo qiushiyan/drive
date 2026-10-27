@@ -3,8 +3,8 @@ Usage: drive read <session> [flags]
 Print a session's newest reply, where it stands, its view, and next: where its state decides it.
 
 Every mode prints what it read, then where the session stands, its goal as
-recorded, its view and next:. A closed or gone session is read from its transcript as it ended,
-with no view, since there is nothing left to act on.
+recorded, its view and next:. A closed or gone session is read from its
+transcript as it ended, with no view, since there is nothing left to act on.
 
 Arguments:
   <session>           The session: a label in the batch, or a block id for one outside it.

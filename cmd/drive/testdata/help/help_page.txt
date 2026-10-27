@@ -2,11 +2,9 @@ Usage: drive page [flags]
 
 Serve the batch as a web page its owner opens: each session's goal, where it stands, its pull requests, and what waits on them.
 
-Each request reads the batch: the current one, or the one --batch pins.
-The page shows each session's goal, where it stands, the pull requests it
-opened or named and their state, the questions waiting on the owner, and
-the batch's closed sessions; it changes nothing. A read is reused for 30
-seconds, and one that takes longer than 20 is answered from the batch's
+Each request reads the batch live, the current one or the one --batch pins,
+closed sessions included, and changes nothing. A read is reused for 30
+seconds; one that takes longer than 20 seconds is answered from the batch's
 record while it finishes.
 
 It runs until stopped, and exits once the drive binary it runs is

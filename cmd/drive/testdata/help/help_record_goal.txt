@@ -2,9 +2,10 @@ Usage: drive record goal <session> <text> ... [flags]
 
 Record what a session sets out to do, in plain terms for the owner.
 
-It replaces the session's goal, which open --goal set or no command did: for
-a session that joined the batch on a send, or once its purpose or scope
-changed. status --json and the page show the latest.
+Give a goal to a session that has none, which status names (it joined the
+batch on a send, or opened without --goal), and replace one once the
+session's purpose or scope changes. read and the owner's page show the
+latest.
 
 Arguments:
   <session>           The session, by its label in the batch; a closed one too.

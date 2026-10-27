@@ -110,8 +110,8 @@ type ReadCmd struct {
 func (c *ReadCmd) Help() string {
 	return `
 Every mode prints what it read, then where the session stands, its goal as
-recorded, its view and next:. A closed or gone session is read from its transcript as it ended,
-with no view, since there is nothing left to act on.`
+recorded, its view and next:. A closed or gone session is read from its
+transcript as it ended, with no view, since there is nothing left to act on.`
 }
 
 func (c *ReadCmd) HelpSections() []clikit.Section {
@@ -276,9 +276,9 @@ type OpenCmd struct {
 func (c *OpenCmd) Help() string {
 	return `
 The session opens in a new Rex block in the batch's Rex session and joins
-the batch under LABEL; the step, if given, is its first. Its goal stands
-once the block opens; an open without --goal keeps the goal LABEL already
-has, as a relaunch does.`
+the batch under LABEL; the step, if given, is its first. --goal is what the
+owner reads the session is for; an open without it, such as a relaunch,
+keeps the goal LABEL already has.`
 }
 
 func (c *OpenCmd) HelpSections() []clikit.Section { return stepSections }
@@ -516,9 +516,10 @@ type GoalCmd struct {
 
 func (c *GoalCmd) Help() string {
 	return `
-It replaces the session's goal, which open --goal set or no command did: for
-a session that joined the batch on a send, or once its purpose or scope
-changed. status --json and the page show the latest.`
+Give a goal to a session that has none, which status names (it joined the
+batch on a send, or opened without --goal), and replace one once the
+session's purpose or scope changes. read and the owner's page show the
+latest.`
 }
 
 func (c *GoalCmd) act(ctx *kong.Context, d *drive.Driver) error {
@@ -583,11 +584,9 @@ type PageCmd struct {
 
 func (c *PageCmd) Help() string {
 	return `
-Each request reads the batch: the current one, or the one --batch pins.
-The page shows each session's goal, where it stands, the pull requests it
-opened or named and their state, the questions waiting on the owner, and
-the batch's closed sessions; it changes nothing. A read is reused for 30
-seconds, and one that takes longer than 20 is answered from the batch's
+Each request reads the batch live, the current one or the one --batch pins,
+closed sessions included, and changes nothing. A read is reused for 30
+seconds; one that takes longer than 20 seconds is answered from the batch's
 record while it finishes.
 
 It runs until stopped, and exits once the drive binary it runs is
