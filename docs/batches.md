@@ -1,6 +1,6 @@
 # The batch record and wakes
 
-A batch is the sessions one driver drives together, usually a night's work, and the record of everything done to them. It is what a driver with no memory between runs (the chat bot is woken fresh each time) reads to know where things stand, and what the owner reads in the morning. `docs/sessions.md` is how each action on a session works; this doc is what those actions leave behind and how the driver is brought back.
+A batch is the sessions one driver drives together, usually a night's work, and the record of everything done to them. It is what a driver with no memory between runs (the chat bot is woken fresh each time) reads to know where things stand, and what the owner reads on the batch's page whenever they choose to look. `docs/sessions.md` is how each action on a session works; this doc is what those actions leave behind, how the driver is brought back, and how the owner reads it.
 
 ## The record
 
@@ -29,14 +29,25 @@ A hold is a name for something only one session may do at a time: a release, a c
 
 ## The owner's records
 
-Besides what drivers did, the log keeps what the owner said that grants or decides something (`drive record`):
+Besides what drivers did, the log keeps what the owner said that grants or decides something, and what the owner is told each session is for (`drive record`):
 
 - **Grant:** authority handed over, in the owner's words and with what it covers.
 - **Ask:** a question put to the owner, with the recommendation and what happens while nobody answers.
 - **Answer:** whether the owner took the recommendation, amended it, handed it to a fresh model, or it stopped mattering, and whether they needed it explained first.
 - **Note:** what a driver wants the next run to know.
+- **Goal:** what a session sets out to solve, one plain paragraph for an owner who remembers the product but not the session. It belongs to the label, the latest standing: an open's `--goal` rides on its intent and stands once the block opens, so a failed open or relaunch leaves the label's goal as it was, and `record goal` revises it or gives one to a session drive did not open. Nothing derives a goal, since a session's title and first prompt name only the file it was told to read; `drive status` names the open sessions without one. The goal is the one fact on the owner's page that live reads cannot supply.
 
 `drive metrics` measures a batch from the record, in the terms drivers are compared on: owner wait per merged change, an open ask counted to the batch's end; how often a recommendation was taken; the owner's snippets against typed slash commands and the driver's own words; deliveries that ended garbled, other or unknown; refusals by kind; wakes no action followed; and turns left unwatched, a send or respond that reached a session with no wake, park or close after it, which is the measure of a lost wake. A merged change is every pull request a session linked, counted once however many sessions name it, or, for a session with none, its work once it is in the trunk, as a personal tool's closeout merges it (`landed` in `internal/drive/metrics.go`). The work is the session's newest commit, found by the subject and time `claude-steps` saw it with, since a closeout often removes the branch itself and the commit outlives it; without one, its branch, the newest other than the trunk among those the transcript names and those checked out where it committed. gwt judges either. A measure whose progress lookups failed says so.
+
+## The owner's page
+
+`drive page` serves the batch as its owner reads it, from the phone, at moments they choose: nothing is pushed, and no model runs to write it. Each session shows its goal, where it stands, the pull requests it opened apart from those it only named (`claude-steps` marks which), when and why the driver parked it, and its last step; the questions waiting on the owner come first, and the batch's closed sessions last. Sessions are grouped by what was read, never by a claim that their work is done, since no record makes one: waiting on a prompt someone answers, waiting for its next step (a turn ended, an interrupt, an API error, a rejected login), parked, working, not read live, closed. A park is the driver's words at the time it parked, so the page dates it beside what has been read since. The bot still explains; the page shows state.
+
+The page is a third printer of the batch beside text and `--json` (`internal/drive/overview.go`, `page.go`): a read resolves one batch and reads its log once, so a batch started meanwhile is never spliced in, then reads its open sessions as status does (`memberRows`), the closed ones' steps from their transcripts, and every pull request named. One reader, `prStates`, reads the pull requests status, the page and metrics each need, once per pull request however many sessions name it. `claude-steps` and `gh` lookups are killed after 30 seconds, so a hung one fails a row rather than the command; Rex calls are not, since they sit in the send path.
+
+Serving (`internal/drive/serve.go`) is shaped by those costs and by Rex calls that can hang. One read of a batch runs at a time and is reused for 30 seconds from when it ended. A visit waits for what is left of the running read's 20 seconds, then is answered from the record alone (goals, asks, parks, closed sessions), as it is when Rex cannot be read; a read still running after 2 minutes is left to finish, and the next visit starts another. The server exits once an install replaces its binary, for its supervisor to start the new one.
+
+On the mini the dotfiles' launchd agent `com.qiushi.drive-page` keeps it listening on `127.0.0.1:8792`, with a PATH that reaches `rex`, `claude-steps` and `gh`, and `tailscale serve` publishes it on the company tailnet at `https://qiushi-mini.tailf7adf1.ts.net:8444`. Anyone on the tailnet can open it, by the owner's choice; it only reads.
 
 ## Wakes
 

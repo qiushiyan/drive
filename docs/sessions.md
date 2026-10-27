@@ -65,7 +65,7 @@ The suite drives a fake Rex and fake Claude Code sessions (`internal/testkit`) t
 - **A slash command typed while busy** is queued without its text; one behind spaces is words.
 - **A resume** carries on in the shared transcript, on the account the launch names.
 - **A rejected login** answers with an API error row and no Stop.
-- **Typing** can lose a line's start to a line break, Enter can be lost, a send can be caught mid-typing (`TypeGate`), a prompt draws its options where the input box would be, and Rex can fail a read or a key (`StatusFails`, `KeyFails`).
+- **Typing** can lose a line's start to a line break, Enter can be lost, a send can be caught mid-typing (`TypeGate`), a prompt draws its options where the input box would be, and Rex can fail a read, a key or its block list, as it does while its server is down (`StatusFails`, `KeyFails`, `BlocksFail`).
 - **A watch name** already running is refused, and one watch can fail to start while others do (`Watches.Refuse`).
 - **A closed block** leaves its transcript behind, as the real one does.
 
