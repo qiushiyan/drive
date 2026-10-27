@@ -299,6 +299,13 @@ func TestAGoalIsRecordedWithTheOpen(t *testing.T) {
 	if doc, _ := json.Marshal(st.JSON()); !strings.Contains(string(doc), `"goal":"Make Loopy's summary keep settled facts."`) {
 		t.Fatalf("status --json carries it: %s", doc)
 	}
+	rd, err := r.d.Read("S1", drive.ReadLast, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc, _ := json.Marshal(rd.JSON()); !strings.Contains(rd.Text(), "goal: Make Loopy's summary keep settled facts.\n") || !strings.Contains(string(doc), `"goal":"Make Loopy's summary keep settled facts."`) {
+		t.Fatalf("read prints it, as text and --json, so the driver tells the owner the goal the page shows: %s", doc)
+	}
 
 	// A session that joined on a send, and one since closed, take one later.
 	c := r.w.Add("P")

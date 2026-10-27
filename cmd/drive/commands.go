@@ -109,16 +109,16 @@ type ReadCmd struct {
 
 func (c *ReadCmd) Help() string {
 	return `
-Every mode prints what it read, then where the session stands, its view and
-next:. A closed or gone session is read from its transcript as it ended,
+Every mode prints what it read, then where the session stands, its goal as
+recorded, its view and next:. A closed or gone session is read from its transcript as it ended,
 with no view, since there is nothing left to act on.`
 }
 
 func (c *ReadCmd) HelpSections() []clikit.Section {
 	return []clikit.Section{{Title: "JSON", Body: `
-session, sid, state, account, input, input_text (a typed or suggested line), text (what was
-read), at (when it was written), view (left out for a closed or gone session), next, jobs
-(started, command)`}}
+session, sid, goal (what it sets out to do, as recorded; left out when none is), state, account,
+input, input_text (a typed or suggested line), text (what was read), at (when it was written),
+view (left out for a closed or gone session), next, jobs (started, command)`}}
 }
 
 func (c *ReadCmd) Validate() error {

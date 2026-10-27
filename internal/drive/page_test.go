@@ -225,7 +225,9 @@ func TestTheOverviewGroupsSessionsByWhereTheyStand(t *testing.T) {
 		"Build the importer.", "No goal recorded.",
 		"Parked by the driver " + clockOf(t, r, batch.KindPark, "P") + ": waits on the S3 baseline",
 		"Closed " + clockOf(t, r, batch.KindClose, "C"), "Closed " + clockOf(t, r, batch.KindClose, "D"),
-		"Waits on you: A1", "A2 · the whole batch",
+		// A question links to its session's card, and the card back to the question.
+		`<article class="card ask" id="ask-A1">`, `A1 · <a href="#P">P</a>`, `id="P"`, `Waits on you: <a href="#ask-A1">A1</a>`,
+		"A2 · the whole batch",
 		"Merge before the baseline?", "Recommended: wait for it", "If unanswered: P stays parked", "If unanswered: nothing releases",
 		"Pull requests it opened:", "Pull requests it named:", "1 check failing",
 		"The driver was woken at", "Waiting on a permission prompt", "Its login was rejected",

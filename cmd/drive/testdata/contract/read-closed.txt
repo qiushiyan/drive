@@ -4,4 +4,5 @@ exit 0
 ok
 
 T1 is closed on account acct@example.com (session sid-1)
+goal: Make the pool drain in one step, so a release never waits on it.
 --- stderr

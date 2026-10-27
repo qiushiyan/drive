@@ -2,8 +2,8 @@ Usage: drive read <session> [flags]
 
 Print a session's newest reply, where it stands, its view, and next: where its state decides it.
 
-Every mode prints what it read, then where the session stands, its view and
-next:. A closed or gone session is read from its transcript as it ended,
+Every mode prints what it read, then where the session stands, its goal as
+recorded, its view and next:. A closed or gone session is read from its transcript as it ended,
 with no view, since there is nothing left to act on.
 
 Arguments:
@@ -28,9 +28,9 @@ Constraints:
   At most one of --prompts, --pending, --user, --screen.
 
 JSON:
-  session, sid, state, account, input, input_text (a typed or suggested line), text (what was
-  read), at (when it was written), view (left out for a closed or gone session), next, jobs
-  (started, command)
+  session, sid, goal (what it sets out to do, as recorded; left out when none is), state, account,
+  input, input_text (a typed or suggested line), text (what was read), at (when it was written),
+  view (left out for a closed or gone session), next, jobs (started, command)
 
 Exit codes:
   0    success

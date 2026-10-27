@@ -134,6 +134,7 @@ func (st *Status) JSON() any {
 type readDoc struct {
 	Session   string          `json:"session"`
 	SID       string          `json:"sid"`
+	Goal      string          `json:"goal,omitempty"`
 	State     string          `json:"state"`
 	Account   string          `json:"account"`
 	Input     string          `json:"input"`
@@ -147,7 +148,7 @@ type readDoc struct {
 
 // JSON is what read --json prints.
 func (r *Reading) JSON() any {
-	d := readDoc{Session: r.Label, SID: r.SID, State: string(r.State), Account: r.Account, Input: string(r.Input), Text: r.Body,
+	d := readDoc{Session: r.Label, SID: r.SID, Goal: r.Goal, State: string(r.State), Account: r.Account, Input: string(r.Input), Text: r.Body,
 		View: viewOrEmpty(r.View), Next: r.Next, Jobs: jobs(r.Jobs)}
 	if r.Input == "typed" || r.Input == "suggestion" {
 		d.InputText = r.Typed

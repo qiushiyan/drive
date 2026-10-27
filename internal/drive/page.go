@@ -24,7 +24,9 @@ type pageView struct {
 }
 
 type askView struct {
-	Head           string // its id, the session it holds and when it was asked
+	ID             string
+	Session        string // the session it holds, whose card it links to; "" for the whole batch
+	Asked          string
 	Goal           string
 	Question       string
 	Recommendation string
@@ -37,9 +39,9 @@ type groupView struct {
 }
 
 type cardView struct {
-	Label  string
+	Label  string // also its anchor, so a link can name one session's card
 	State  string
-	Asks   string
+	Asks   []string // the open asks that name it, each linking to its question
 	Goal   string
 	Facts  []fact
 	Closed bool
@@ -75,13 +77,7 @@ func (ov *Overview) HTML(now time.Time) []byte {
 		}
 	}
 	for _, a := range ov.Asks {
-		head := a.ID
-		if a.Session != "" {
-			head += " · " + a.Session
-		} else {
-			head += " · the whole batch"
-		}
-		v.Asks = append(v.Asks, askView{Head: head + " · asked " + at(a.At), Goal: goals[a.Session], Question: a.Question,
+		v.Asks = append(v.Asks, askView{ID: a.ID, Session: a.Session, Asked: "asked " + at(a.At), Goal: goals[a.Session], Question: a.Question,
 			Recommendation: a.Recommendation, IfUnanswered: a.IfUnanswered})
 	}
 	for _, g := range ov.Groups {
@@ -113,7 +109,7 @@ func cardOf(c Card, wakes bool, now time.Time, zone *time.Location) cardView {
 		v.State = stateWords(r.State) + " for " + ago(r.For)
 	}
 	if len(c.Asks) > 0 {
-		v.Asks = "Waits on you: " + strings.Join(c.Asks, ", ")
+		v.Asks = c.Asks
 	}
 	if m.Parked != "" && !m.Closed {
 		v.Facts = append(v.Facts, fact{Text: "Parked by the driver " + at(m.ParkedAt) + ": " + m.Parked})
@@ -266,6 +262,8 @@ header.page p { margin: 0; color: var(--muted); font-size: 0.9rem; }
 h2 { font-size: 1rem; margin: 28px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 0 0 10px; }
 .card.closed { opacity: 0.85; }
+.card:target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
+.badge a { color: inherit; }
 .top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 .label { font-weight: 650; }
 .state { color: var(--muted); font-size: 0.9rem; }
@@ -295,8 +293,8 @@ footer { margin-top: 32px; color: var(--muted); font-size: 0.85rem; }
 {{if .Empty}}<p class="empty">{{.Empty}}</p>{{end}}
 {{if or .Asks .Groups}}
 <h2>Needs you</h2>
-{{range .Asks}}<article class="card ask">
-<p class="head">{{.Head}}</p>
+{{range .Asks}}<article class="card ask" id="ask-{{.ID}}">
+<p class="head">{{.ID}} · {{if .Session}}<a href="#{{.Session}}">{{.Session}}</a>{{else}}the whole batch{{end}} · {{.Asked}}</p>
 {{with .Goal}}<p class="goal">{{.}}</p>{{end}}
 <p class="question">{{.Question}}</p>
 {{with .Recommendation}}<p>Recommended: {{.}}</p>{{end}}
@@ -306,8 +304,8 @@ footer { margin-top: 32px; color: var(--muted); font-size: 0.85rem; }
 {{end}}
 {{end}}
 {{range .Groups}}<h2>{{.Title}}</h2>
-{{range .Cards}}<article class="card{{if .Closed}} closed{{end}}">
-<div class="top"><span class="label">{{.Label}}</span>{{with .State}}<span class="state">{{.}}</span>{{end}}{{with .Asks}}<span class="badge">{{.}}</span>{{end}}</div>
+{{range .Cards}}<article class="card{{if .Closed}} closed{{end}}" id="{{.Label}}">
+<div class="top"><span class="label">{{.Label}}</span>{{with .State}}<span class="state">{{.}}</span>{{end}}{{with .Asks}}<span class="badge">Waits on you:{{range $i, $a := .}}{{if $i}},{{end}} <a href="#ask-{{$a}}">{{$a}}</a>{{end}}</span>{{end}}</div>
 {{if .Goal}}<p class="goal">{{.Goal}}</p>{{else}}<p class="goal none">No goal recorded.</p>{{end}}
 {{if .Facts}}<ul class="facts">
 {{range .Facts}}<li{{if .Minor}} class="minor"{{else if .Error}} class="error"{{end}}>{{.Text}}{{range $i, $l := .Links}}{{if $i}};{{end}} <span class="pr">{{if .URL}}<a href="{{.URL}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}{{with .State}} {{.}}{{end}}</span>{{end}}</li>

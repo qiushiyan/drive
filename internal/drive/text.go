@@ -95,6 +95,9 @@ func (r *Reading) Text() string {
 		b.WriteString("; a background job of its runs: " + clip(j.Command, 100))
 	}
 	b.WriteString("\n")
+	if r.Goal != "" {
+		fmt.Fprintf(&b, "goal: %s\n", r.Goal)
+	}
 	if r.View.Session != "" { // a closed or gone session has nothing to act on
 		fmt.Fprintf(&b, "view: %s\n", r.View)
 	}

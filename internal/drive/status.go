@@ -30,6 +30,7 @@ const (
 type Reading struct {
 	Label   string
 	SID     string // the Claude Code session id, which claude-steps takes
+	Goal    string // what it sets out to do, as recorded for the owner
 	State   State
 	Account string
 	Input   turn.InputKind
@@ -61,6 +62,9 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 		return nil, err
 	}
 	r := &Reading{Label: o.Label, SID: o.Session.ID, State: o.State(), Account: o.Session.Account, Input: o.Input, Typed: o.Typed, View: o.View}
+	if o.Member != nil {
+		r.Goal = o.Member.Goal
+	}
 	r.Jobs = d.Host.Shells(o.Session.Status.PID)
 	r.Next = d.nextFor(o, r.State, r.Jobs)
 	if mode == ReadScreen {
@@ -94,7 +98,7 @@ func (d *Driver) readEnded(b *batch.Batch, m *batch.Member, state State, mode Re
 	if err != nil {
 		return nil, fmt.Errorf("reading %s's transcript: %w", m.Label, err)
 	}
-	r := &Reading{Label: m.Label, SID: m.SID, State: state, Account: m.Account}
+	r := &Reading{Label: m.Label, SID: m.SID, Goal: m.Goal, State: state, Account: m.Account}
 	return r, d.readText(r, f, mode, n, zoneOf(b))
 }
 
