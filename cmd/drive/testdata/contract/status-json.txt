@@ -14,6 +14,7 @@ exit 0
       "sid": "sid-1",
       "block": "a00001",
       "window": "1",
+      "goal": "Make the pool drain in one step, so a release never waits on it.",
       "state": "done",
       "for_seconds": 123,
       "account": "acct@example.com",

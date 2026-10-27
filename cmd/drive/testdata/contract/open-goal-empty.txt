@@ -1,0 +1,5 @@
+$ drive open J1 --dir $ROOT/work --goal   Review the spec in docs/spec.md
+exit 1
+--- stdout
+--- stderr
+drive: error: a goal needs words: what the session sets out to do, in plain terms

@@ -33,11 +33,12 @@ JSON:
   batch       name, started, wake, webhook, rex_session, tz; null with no current batch
   sessions    a row per session in the batch; others, a row per Claude session outside it:
               label, sid (Claude Code's session id), block, window, name (Rex's label, outside
-              the batch), state, for_seconds (in that state), account, input, input_text (a
-              typed or suggested line), stage, pr (number, state, draft, merge, review, passed,
-              failed, pending), last_sent, watch (the WAKE column's words), unhandled_wake
-              (a wake was posted and nothing done since), wake_due (why --due would arm its
-              wake; left out when nothing is due), view, error (why the row could not be read), jobs (started,
+              the batch), goal (what it sets out to do, as recorded; left out when none is),
+              state, for_seconds (in that state), account, input, input_text (a typed or
+              suggested line), stage, pr (number, state, draft, merge, review, passed, failed,
+              pending), last_sent, watch (the WAKE column's words), unhandled_wake (a wake was
+              posted and nothing done since), wake_due (why --due would arm its wake; left out
+              when nothing is due), view, error (why the row could not be read), jobs (started,
               command)
   closed      the batch's sessions closed since
   holds       a line per hold, as the table prints it

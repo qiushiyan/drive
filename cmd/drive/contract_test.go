@@ -149,6 +149,8 @@ func TestContracts(t *testing.T) {
 	v2 := view(t, c.run("read-pending", "read", block(t2), "--pending"))
 	c.run("respond-unknown-action", "respond", v2, "yes")
 	c.run("respond-approve", "respond", v2, "approve")
+	c.run("record-goal", "record", "goal", "T1", "Make the pool drain in one step, so a release never waits on it.")
+	c.run("record-goal-unknown", "record", "goal", "T9", "Never in the batch.")
 	c.run("status", "status", "--quick")
 	c.run("status-json", "status", "--quick", "--json")
 
@@ -170,7 +172,8 @@ func TestContracts(t *testing.T) {
 	c.run("snippet", "snippet", "land-pr", work, "D3", "waits")
 	c.run("snippets", "snippets", work)
 	c.run("snippet-unknown", "snippet", "nope", work)
-	c.run("open", "open", "J1", "--dir", work, "Review the spec in docs/spec.md")
+	c.run("open-goal-empty", "open", "J1", "--dir", work, "--goal", " ", "Review the spec in docs/spec.md")
+	c.run("open", "open", "J1", "--dir", work, "--goal", "Check docs/spec.md against the code it describes.", "Review the spec in docs/spec.md")
 	c.run("open-label-taken", "open", "J1", "--dir", work, "again")
 	v1 = view(t, c.run("read-label-parked", "read", "T1"))
 	c.run("close", "close", v1)

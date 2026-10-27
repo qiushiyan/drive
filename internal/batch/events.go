@@ -27,6 +27,7 @@ const (
 	KindAsk        = "ask"     // a question put to the owner
 	KindAnswer     = "answer"
 	KindNote       = "note"
+	KindGoal       = "goal" // what a session sets out to do, for the owner; the latest per label stands
 )
 
 // Event is one line of the log. Fields not used by a kind stay empty.
@@ -62,6 +63,7 @@ type Event struct {
 	Took           string `json:"took,omitempty"` // recommended, amended, delegated, moot
 	Explained      bool   `json:"explained,omitempty"`
 	Note           string `json:"note,omitempty"`
+	Goal           string `json:"goal,omitempty"` // on a goal, or an open-intent that sets one
 	HTTP           int    `json:"http,omitempty"`
 	Try            int    `json:"try,omitempty"`
 }
@@ -74,9 +76,15 @@ type Member struct {
 	Account string
 	Dir     string
 	Joined  time.Time
-	Parked  string // why, while parked; a later send unparks
-	Closed  bool
-	Resumed bool // it carries on a session that read the notice in this batch
+	// Goal is what the session sets out to do, in plain terms for the owner:
+	// the latest recorded for its label, which outlives a reopen and a
+	// relaunch under that label.
+	Goal     string
+	Parked   string    // why, while parked; a later send unparks
+	ParkedAt time.Time // so what the park says can be read against what happened since
+	Closed   bool
+	ClosedAt time.Time
+	Resumed  bool // it carries on a session that read the notice in this batch
 	// LastAction is the latest thing a driver did to it: a send, a respond, a park.
 	LastAction time.Time
 	LastSend   *Event
@@ -96,11 +104,25 @@ func Members(evs []Event) []*Member {
 	var order []*Member
 	by := map[string]*Member{}
 	read := map[string]bool{} // session ids that read the notice
+	goals := map[string]string{}
+	opening := map[string]string{} // an open's intent, to the goal it sets once the block opens
 	for i := range evs {
 		e := &evs[i]
 		m := by[e.Session]
 		switch e.Kind {
+		case KindOpenIntent:
+			if e.Goal != "" {
+				opening[e.Intent] = e.Goal
+			}
+		case KindGoal:
+			goals[e.Session] = e.Goal
 		case KindOpen, KindAdopt:
+			// An open's goal stands once its block opened; one that failed
+			// leaves the label's goal as it was.
+			if g, ok := opening[e.Intent]; ok && e.Intent != "" {
+				goals[e.Session] = g
+				delete(opening, e.Intent)
+			}
 			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Joined: e.At, Resumed: read[e.Ref]}
 			if old, ok := by[e.Session]; ok {
 				*old = *m // reopened under the same label
@@ -122,11 +144,11 @@ func Members(evs []Event) []*Member {
 			}
 		case KindPark:
 			if m != nil {
-				m.Parked, m.LastAction = e.Reason, e.At
+				m.Parked, m.ParkedAt, m.LastAction = e.Reason, e.At, e.At
 			}
 		case KindClose:
 			if m != nil {
-				m.Closed = true
+				m.Closed, m.ClosedAt = true, e.At
 			}
 		case KindWatch:
 			if m != nil {
@@ -149,6 +171,9 @@ func Members(evs []Event) []*Member {
 				m.WakeFailed = e.At
 			}
 		}
+	}
+	for _, m := range order {
+		m.Goal = goals[m.Label]
 	}
 	return order
 }

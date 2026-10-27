@@ -134,3 +134,62 @@ func TestAResumedSessionHasReadTheNoticeOnlyIfItDid(t *testing.T) {
 		}
 	}
 }
+
+// A goal belongs to its label: an open sets it once its block opens, a
+// failed open leaves the one the label had, and a reopen or relaunch without
+// a goal keeps it, whichever of an open's two records comes last.
+func TestAGoalOutlivesReopensAndFailedOpens(t *testing.T) {
+	t0 := time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
+	at := func(m int) time.Time { return t0.Add(time.Duration(m) * time.Minute) }
+	goal := func(evs []Event, label string) string {
+		if m := Find(Members(evs), label); m != nil {
+			return m.Goal
+		}
+		return "(no member)"
+	}
+	evs := []Event{
+		{At: at(0), Kind: KindOpenIntent, Session: "S1", Intent: "o1", Goal: "never opened"},
+		{At: at(1), Kind: KindFailure, Session: "S1", Intent: "o1", Reason: "Rex did not open a block"},
+	}
+	if got := goal(evs, "S1"); got != "(no member)" {
+		t.Fatalf("a failed open makes no member: %q", got)
+	}
+	evs = append(evs,
+		Event{At: at(2), Kind: KindOpenIntent, Session: "S1", Intent: "o2"},
+		Event{At: at(3), Kind: KindOpen, Session: "S1", Intent: "o2", Block: "b1", Outcome: "starting"},
+		Event{At: at(4), Kind: KindOpen, Session: "S1", Block: "b1", SID: "s1"})
+	if got := goal(evs, "S1"); got != "" {
+		t.Fatalf("a failed open's goal is not the label's: %q", got)
+	}
+	evs = append(evs,
+		Event{At: at(5), Kind: KindOpenIntent, Session: "S1", Intent: "o3", Goal: "keep settled facts"},
+		// A driver that ended before recording the open: the next one settles it from the block.
+		Event{At: at(6), Kind: KindOpen, Session: "S1", Intent: "o3", Block: "b2"},
+		Event{At: at(7), Kind: KindOpen, Session: "S1", Block: "b2", SID: "s2"})
+	if got := goal(evs, "S1"); got != "keep settled facts" {
+		t.Fatalf("an open's goal stands once its block opens, through both records: %q", got)
+	}
+	evs = append(evs,
+		Event{At: at(8), Kind: KindClose, Session: "S1"},
+		Event{At: at(9), Kind: KindOpenIntent, Session: "S1", Intent: "o4"},
+		Event{At: at(10), Kind: KindOpen, Session: "S1", Intent: "o4", Block: "b3"},
+		Event{At: at(11), Kind: KindOpen, Session: "S1", Block: "b3", SID: "s2", Ref: "s2"})
+	if got := goal(evs, "S1"); got != "keep settled facts" {
+		t.Fatalf("a relaunch without a goal keeps the label's: %q", got)
+	}
+	evs = append(evs,
+		Event{At: at(12), Kind: KindOpenIntent, Session: "S1", Intent: "o5", Goal: "a relaunch that failed"},
+		Event{At: at(13), Kind: KindFailure, Session: "S1", Intent: "o5"})
+	if got := goal(evs, "S1"); got != "keep settled facts" {
+		t.Fatalf("a relaunch that failed leaves the label's goal: %q", got)
+	}
+	evs = append(evs,
+		Event{At: at(14), Kind: KindGoal, Session: "S1", Goal: "decide whether the summariser replaces develop's"},
+		Event{At: at(15), Kind: KindAdopt, Session: "P0", Block: "b4", SID: "s4"})
+	if got := goal(evs, "S1"); got != "decide whether the summariser replaces develop's" {
+		t.Fatalf("a recorded goal replaces the open's: %q", got)
+	}
+	if got := goal(evs, "P0"); got != "" {
+		t.Fatalf("an adopted session has no goal until one is recorded: %q", got)
+	}
+}

@@ -1,0 +1,5 @@
+$ drive record goal T1 Make the pool drain in one step, so a release never waits on it.
+exit 0
+--- stdout
+recorded goal T1
+--- stderr

@@ -58,6 +58,12 @@ exit 0
   },
   {
     "at": "2026-10-23T01:02:04Z",
+    "kind": "goal",
+    "session": "T1",
+    "goal": "Make the pool drain in one step, so a release never waits on it."
+  },
+  {
+    "at": "2026-10-23T01:02:04Z",
     "kind": "grant",
     "id": "G1",
     "source": "\"you can merge on my behalf\" (02:08)",
@@ -113,7 +119,8 @@ exit 0
     "session": "J1",
     "dir": "$ROOT/work",
     "intent": "intent-2",
-    "text": "Review the spec in docs/spec.md"
+    "text": "Review the spec in docs/spec.md",
+    "goal": "Check docs/spec.md against the code it describes."
   },
   {
     "at": "2026-10-23T01:02:04Z",

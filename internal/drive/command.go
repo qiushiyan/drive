@@ -85,6 +85,9 @@ func (d *Driver) openCommand(label string, opt OpenOptions, step Step) string {
 			words = append(words, f[0], f[1])
 		}
 	}
+	if opt.Goal != nil {
+		words = append(words, "--goal="+*opt.Goal) // one word, so a goal starting with a dash stays the flag's value
+	}
 	return d.run(append(words, stepWords(step)...)...)
 }
 

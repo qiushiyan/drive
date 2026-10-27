@@ -16,7 +16,7 @@ JSON:
   The batch's events, oldest first, as recorded: at, kind, and the fields its kind carries,
   among session, block, sid, account, dir, intent, mode, key, path, text, notice, outcome,
   reason, hold, view, action, call, id, ref, source, scope, question, recommendation,
-  if_unanswered, took, explained, note, http, try.
+  if_unanswered, took, explained, note, goal, http, try.
 
 Exit codes:
   0    success

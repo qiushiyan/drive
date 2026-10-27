@@ -1,4 +1,4 @@
-$ drive open J1 --dir $ROOT/work Review the spec in docs/spec.md
+$ drive open J1 --dir $ROOT/work --goal Check docs/spec.md against the code it describes. Review the spec in docs/spec.md
 exit 0
 --- stdout
 opened J1 in block a00003 on account acct@example.com (session sid-3)

@@ -40,6 +40,7 @@ type rowDoc struct {
 	Block         string          `json:"block"`
 	Window        string          `json:"window"`
 	Name          string          `json:"name,omitempty"`
+	Goal          string          `json:"goal,omitempty"`
 	State         string          `json:"state"`
 	ForSeconds    int             `json:"for_seconds"`
 	Account       string          `json:"account"`
@@ -96,7 +97,7 @@ func (st *Status) JSON() any {
 	rows := func(rs []Row) []rowDoc {
 		out := []rowDoc{}
 		for _, r := range rs {
-			d := rowDoc{Label: r.Label, SID: r.SID, Block: rex.Short(r.Block), Window: r.Window, Name: r.Name, State: string(r.State),
+			d := rowDoc{Label: r.Label, SID: r.SID, Block: rex.Short(r.Block), Window: r.Window, Name: r.Name, Goal: r.Goal, State: string(r.State),
 				ForSeconds: int(r.For.Seconds()), Account: r.Account, Input: string(r.Input), Stage: r.Stage, LastSent: r.LastSent,
 				Watch: r.Watch, UnhandledWake: r.Unhandled, WakeDue: r.Due, View: viewOrEmpty(r.View), Error: r.Error, Jobs: jobs(r.Jobs)}
 			if r.Input == "typed" || r.Input == "suggestion" {

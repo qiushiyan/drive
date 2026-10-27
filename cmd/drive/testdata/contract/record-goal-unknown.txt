@@ -1,0 +1,6 @@
+$ drive record goal T9 Never in the batch.
+exit 1
+--- stdout
+--- stderr
+drive: error: T9 has never been in batch b1
+next: drive status lists the batch's sessions by label

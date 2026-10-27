@@ -67,11 +67,12 @@ Hold lines name who holds each hold, and who waits for it with the step it was r
 batch       name, started, wake, webhook, rex_session, tz; null with no current batch
 sessions    a row per session in the batch; others, a row per Claude session outside it:
             label, sid (Claude Code's session id), block, window, name (Rex's label, outside
-            the batch), state, for_seconds (in that state), account, input, input_text (a
-            typed or suggested line), stage, pr (number, state, draft, merge, review, passed,
-            failed, pending), last_sent, watch (the WAKE column's words), unhandled_wake
-            (a wake was posted and nothing done since), wake_due (why --due would arm its
-            wake; left out when nothing is due), view, error (why the row could not be read), jobs (started,
+            the batch), goal (what it sets out to do, as recorded; left out when none is),
+            state, for_seconds (in that state), account, input, input_text (a typed or
+            suggested line), stage, pr (number, state, draft, merge, review, passed, failed,
+            pending), last_sent, watch (the WAKE column's words), unhandled_wake (a wake was
+            posted and nothing done since), wake_due (why --due would arm its wake; left out
+            when nothing is due), view, error (why the row could not be read), jobs (started,
             command)
 closed      the batch's sessions closed since
 holds       a line per hold, as the table prints it
@@ -261,17 +262,20 @@ type OpenCmd struct {
 	runs
 	Label   string `arg:"" help:"The label the new session gets in the batch."`
 	Step    `embed:""`
-	Dir     string `type:"existingdir" default:"." help:"The directory the session starts in."`
-	Resume  string `placeholder:"ID" help:"Resume this Claude Code session id instead of starting fresh, such as a session relaunched on another account."`
-	Account string `placeholder:"NAME" help:"Run it on this Claude account instead of the launcher's choice."`
-	Model   string `placeholder:"MODEL" help:"Run it on this model, such as fable for a fresh judge."`
-	Hold    string `placeholder:"NAME" help:"Name what its first turn uses that only one session may use at a time, as send's --hold does."`
+	Dir     string  `type:"existingdir" default:"." help:"The directory the session starts in."`
+	Resume  string  `placeholder:"ID" help:"Resume this Claude Code session id instead of starting fresh, such as a session relaunched on another account."`
+	Account string  `placeholder:"NAME" help:"Run it on this Claude account instead of the launcher's choice."`
+	Model   string  `placeholder:"MODEL" help:"Run it on this model, such as fable for a fresh judge."`
+	Hold    string  `placeholder:"NAME" help:"Name what its first turn uses that only one session may use at a time, as send's --hold does."`
+	Goal    *string `placeholder:"TEXT" help:"What the session sets out to do, in plain terms for the owner: one short paragraph, at most 600 bytes."`
 }
 
 func (c *OpenCmd) Help() string {
 	return `
 The session opens in a new Rex block in the batch's Rex session and joins
-the batch under LABEL; the step, if given, is its first.`
+the batch under LABEL; the step, if given, is its first. Its goal stands
+once the block opens; an open without --goal keeps the goal LABEL already
+has, as a relaunch does.`
 }
 
 func (c *OpenCmd) HelpSections() []clikit.Section { return stepSections }
@@ -279,7 +283,7 @@ func (c *OpenCmd) HelpSections() []clikit.Section { return stepSections }
 func (c *OpenCmd) Validate() error { return c.atMostOne() }
 
 func (c *OpenCmd) act(ctx *kong.Context, d *drive.Driver) error {
-	o, err := d.Open(c.Label, c.step(), drive.OpenOptions{Dir: c.Dir, Resume: c.Resume, Account: c.Account, Model: c.Model, Hold: c.Hold})
+	o, err := d.Open(c.Label, c.step(), drive.OpenOptions{Dir: c.Dir, Resume: c.Resume, Account: c.Account, Model: c.Model, Hold: c.Hold, Goal: c.Goal})
 	if o != nil {
 		_, _ = io.WriteString(ctx.Stdout, o.Text())
 	}
@@ -428,6 +432,7 @@ type RecordCmd struct {
 	Ask    AskCmd    `cmd:"" help:"Record a question put to the owner, with its recommendation and what happens unanswered."`
 	Answer AnswerCmd `cmd:"" help:"Record the owner's answer to an ask."`
 	Note   NoteCmd   `cmd:"" help:"Record a note, such as the plan, for the run after a reset to read."`
+	Goal   GoalCmd   `cmd:"" help:"Record what a session sets out to do, in plain terms for the owner."`
 }
 
 func (RecordCmd) Help() string {
@@ -500,6 +505,27 @@ func (c *NoteCmd) act(ctx *kong.Context, d *drive.Driver) error {
 	return recorded(ctx.Stdout, "note", id, err)
 }
 
+type GoalCmd struct {
+	runs
+	Session string   `arg:"" help:"The session, by its label in the batch; a closed one too."`
+	Text    []string `arg:"" help:"What it sets out to do, in plain terms for the owner: one short paragraph, at most 600 bytes."`
+}
+
+func (c *GoalCmd) Help() string {
+	return `
+It replaces the session's goal, which open --goal set or no command did: for
+a session that joined the batch on a send, or once its purpose or scope
+changed. status --json and the page show the latest.`
+}
+
+func (c *GoalCmd) act(ctx *kong.Context, d *drive.Driver) error {
+	if err := d.Goal(c.Session, strings.Join(c.Text, " ")); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(ctx.Stdout, "recorded goal %s\n", c.Session)
+	return err
+}
+
 type LogCmd struct {
 	runs
 	Since string `placeholder:"TIME" help:"Print only what happened from this time on, a date or a date and time such as \"2026-10-22 16:00\", read in the zone drive prints times in."`
@@ -511,7 +537,7 @@ func (c *LogCmd) HelpSections() []clikit.Section {
 The batch's events, oldest first, as recorded: at, kind, and the fields its kind carries,
 among session, block, sid, account, dir, intent, mode, key, path, text, notice, outcome,
 reason, hold, view, action, call, id, ref, source, scope, question, recommendation,
-if_unanswered, took, explained, note, http, try.`}}
+if_unanswered, took, explained, note, goal, http, try.`}}
 }
 
 func (c *LogCmd) act(ctx *kong.Context, d *drive.Driver) error {

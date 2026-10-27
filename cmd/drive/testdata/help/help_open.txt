@@ -3,7 +3,9 @@ Usage: drive open <label> [<line> ...] [flags]
 Open a new Claude Code session in Rex, in the batch, with an optional first step.
 
 The session opens in a new Rex block in the batch's Rex session and joins
-the batch under LABEL; the step, if given, is its first.
+the batch under LABEL; the step, if given, is its first. Its goal stands
+once the block opens; an open without --goal keeps the goal LABEL already
+has, as a relaunch does.
 
 Arguments:
   <label>               The label the new session gets in the batch.
@@ -21,6 +23,8 @@ Flags:
       --model=MODEL     Run it on this model, such as fable for a fresh judge.
       --hold=NAME       Name what its first turn uses that only one session may use at a time, as
                         send's --hold does.
+      --goal=TEXT       What the session sets out to do, in plain terms for the owner: one short
+                        paragraph, at most 600 bytes.
 
 Inherited flags:
   -h, --help            Show context-sensitive help.

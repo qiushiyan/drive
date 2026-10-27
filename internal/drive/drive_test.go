@@ -1,6 +1,7 @@
 package drive_test
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -266,6 +267,75 @@ func TestOpenRefusesALabelAlreadyOpen(t *testing.T) {
 	blocks, _ := r.w.Blocks("")
 	if len(blocks) != 1 {
 		t.Fatalf("one session, not two: %d blocks", len(blocks))
+	}
+}
+
+// A goal is what the owner reads a session was for. It is checked whole
+// before anything opens, stands on the member and its status row once the
+// block opens, can be recorded later for a session drive did not open or
+// one since closed, and rides along on any open a next: gives.
+func TestAGoalIsRecordedWithTheOpen(t *testing.T) {
+	r := newRig(t, "none")
+	dir := filepath.Join(r.w.Root, "work")
+	for _, bad := range []string{"", "  \n ", "stop\x07here", strings.Repeat("long ", 121)} {
+		if _, err := r.d.Open("S1", drive.Step{Line: "onboard"}, drive.OpenOptions{Dir: dir, Goal: &bad}); !isRefused(err) {
+			t.Fatalf("goal %q is refused, got %v", bad, err)
+		}
+	}
+	if blocks, _ := r.w.Blocks(""); len(blocks) != 0 || len(r.events(batch.KindOpenIntent)) != 0 {
+		t.Fatalf("a refused goal opens nothing and records nothing: %d blocks", len(blocks))
+	}
+	goal := "Make Loopy's summary keep\n  settled facts."
+	if _, err := r.d.Open("S1", drive.Step{Line: "onboard"}, drive.OpenOptions{Dir: dir, Goal: &goal}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := r.d.Status(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Rows) != 1 || st.Rows[0].Goal != "Make Loopy's summary keep settled facts." {
+		t.Fatalf("the goal, one paragraph, is on the row: %+v", st.Rows)
+	}
+	if doc, _ := json.Marshal(st.JSON()); !strings.Contains(string(doc), `"goal":"Make Loopy's summary keep settled facts."`) {
+		t.Fatalf("status --json carries it: %s", doc)
+	}
+
+	// A session that joined on a send, and one since closed, take one later.
+	c := r.w.Add("P")
+	done(c, "x", "y")
+	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "go on"}, drive.SendOptions{Label: "P0"}); err != nil {
+		t.Fatal(err)
+	}
+	r.w.Session(c.Block).Done("ok")
+	if err := r.d.Close(r.view("P0")); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.d.Goal("P0", "Retire the old run-plan fields."); err != nil {
+		t.Fatalf("a closed session takes a goal: %v", err)
+	}
+	if err := r.d.Goal("S9", "Never here."); !isRefused(err) || !strings.Contains(err.Error(), "never been in batch") {
+		t.Fatalf("a label the batch never had is refused: %v", err)
+	}
+	evs, _ := r.b.Events()
+	if m := batch.Find(batch.Members(evs), "P0"); m == nil || m.Goal != "Retire the old run-plan fields." {
+		t.Fatalf("the recorded goal is the member's: %+v", m)
+	}
+
+	// An open refused on a hold gives the open to run once it is free, goal and all.
+	a := r.w.Add("A")
+	done(a, "x", "y")
+	if _, err := r.d.Send(r.view(a.Block[len(a.Block)-6:]), drive.Step{Line: "land it"}, drive.SendOptions{Label: "T3"}); err != nil {
+		t.Fatal(err)
+	}
+	a.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} }) // the release runs on
+	if _, err := r.d.Send(r.view("T3"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
+		t.Fatal(err)
+	}
+	waiting := "-Ship the release notes."
+	_, err = r.d.Open("S2", drive.Step{Line: "write them"}, drive.OpenOptions{Dir: dir, Hold: "release", Goal: &waiting})
+	var refused *drive.Refused
+	if !errors.As(err, &refused) || !strings.Contains(refused.Next, "--goal=-Ship the release notes.") {
+		t.Fatalf("the open in next: keeps its goal as one word: %v", err)
 	}
 }
 

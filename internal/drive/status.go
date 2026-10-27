@@ -165,6 +165,7 @@ type Row struct {
 	View     turn.View
 	Member   bool
 	Name     string          // the block's Rex label, for sessions outside the batch
+	Goal     string          // what a member sets out to do, as recorded
 	Error    string          // what kept the row from being read
 	Jobs     []session.Shell // background jobs it runs
 	Wake
@@ -261,7 +262,7 @@ func (d *Driver) rows(b *batch.Batch, members []*batch.Member, blocks []rex.Bloc
 	for i, m := range open {
 		wg.Go(func() {
 			r := d.row(b, members, m.Label, withProgress)
-			r.Window, r.Member = window[m.Block], true
+			r.Window, r.Member, r.Goal = window[m.Block], true, m.Goal
 			if m.LastSend != nil {
 				r.LastSent, r.SentAt = sentLabel(m.LastSend), m.LastSend.At
 			}

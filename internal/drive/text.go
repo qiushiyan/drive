@@ -272,7 +272,12 @@ func describe(e batch.Event) string {
 			s += " (holds " + e.Hold + ")"
 		}
 		return s
-	case batch.KindSendIntent, batch.KindOpenIntent:
+	case batch.KindSendIntent:
+		return clip(e.Text, 100)
+	case batch.KindOpenIntent:
+		if e.Goal != "" {
+			return clip(e.Text, 100) + " (goal: " + clip(e.Goal, 100) + ")"
+		}
 		return clip(e.Text, 100)
 	case batch.KindOpen, batch.KindAdopt:
 		return fmt.Sprintf("block %s, account %s, %s", rex.Short(e.Block), e.Account, e.Dir)
@@ -303,6 +308,8 @@ func describe(e batch.Event) string {
 		return e.Ref + " " + e.Took + ex + " — " + e.Source
 	case batch.KindNote:
 		return e.Note
+	case batch.KindGoal:
+		return e.Goal
 	case batch.KindRefused, batch.KindFailure, batch.KindPark:
 		return clip(e.Reason, 140)
 	}

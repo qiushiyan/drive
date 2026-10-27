@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/qiushiyan/drive/internal/batch"
 )
@@ -59,6 +60,48 @@ func (d *Driver) Note(session, text string) (string, error) {
 	return d.record(func(evs []batch.Event) batch.Event {
 		return batch.Event{Kind: batch.KindNote, ID: batch.NextID(evs, batch.KindNote, "N"), Session: session, Note: text}
 	})
+}
+
+// Goal records what a session sets out to do, in plain terms for the owner,
+// replacing the goal its label had: for a session drive did not open, or
+// once its purpose or scope changed. A closed session takes one too, so a
+// batch's record can be completed after the fact.
+func (d *Driver) Goal(session, text string) error {
+	goal, err := goalText(text)
+	if err != nil {
+		return err
+	}
+	b, err := d.Batch()
+	if err != nil {
+		return &Refused{Reason: err.Error()}
+	}
+	return b.Locked(func(evs []batch.Event) error {
+		m := batch.Find(batch.Members(evs), session)
+		if m == nil {
+			return &Refused{Reason: fmt.Sprintf("%s has never been in batch %s", session, b.Meta.Name),
+				Next: d.run("status") + " lists the batch's sessions by label"}
+		}
+		return b.Append(batch.Event{At: d.now(), Kind: batch.KindGoal, Session: m.Label, Goal: goal})
+	})
+}
+
+// maxGoal bounds a goal: a short paragraph the owner reads on a phone.
+const maxGoal = 600
+
+// goalText is a goal as it is recorded: one paragraph, its runs of white
+// space, line breaks included, made one space. An empty goal, one with a
+// control character, or one past maxGoal bytes is refused.
+func goalText(s string) (string, error) {
+	goal := strings.Join(strings.Fields(s), " ")
+	switch {
+	case goal == "":
+		return "", &Refused{Reason: "a goal needs words: what the session sets out to do, in plain terms"}
+	case strings.ContainsFunc(goal, unicode.IsControl):
+		return "", &Refused{Reason: "a goal is plain text: it has a control character"}
+	case len(goal) > maxGoal:
+		return "", &Refused{Reason: fmt.Sprintf("a goal is one short paragraph, at most %d bytes; this one is %d", maxGoal, len(goal))}
+	}
+	return goal, nil
 }
 
 func (d *Driver) record(make func([]batch.Event) batch.Event) (string, error) {

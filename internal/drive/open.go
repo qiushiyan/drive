@@ -22,6 +22,7 @@ type OpenOptions struct {
 	Account string // run on this account (x-<account>); "" lets the launcher choose
 	Model   string // such as "fable", for a fresh judge
 	Hold    string
+	Goal    *string // what the session sets out to do, for the owner; nil leaves the label's goal as it was
 }
 
 // Opened reports a new session.
@@ -45,6 +46,13 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	}
 	if label == "" || strings.ContainsAny(label, " @/") {
 		return nil, &Refused{Reason: fmt.Sprintf("label %q: use a short name without spaces, '@' or '/', such as T1", label)}
+	}
+	var goal string
+	if opt.Goal != nil {
+		if goal, err = goalText(*opt.Goal); err != nil {
+			return nil, err
+		}
+		opt.Goal = &goal // as recorded, which a next: carries
 	}
 	if opt.Account == "primary" && d.Cfg.PrimaryName == "" {
 		return nil, &Refused{Reason: "the primary account's launcher is not known: its name is the owner's shell's",
@@ -97,7 +105,8 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 					Next: d.holdNext(b, h, label, "", whole, true)}, opt.Hold, step, whole}
 			}
 		}
-		return b.Append(batch.Event{At: d.now(), Kind: batch.KindOpenIntent, Session: label, Intent: intent, Dir: opt.Dir, Text: clip(stepSummary(step), 200)})
+		// The goal rides on the intent, and stands once the block opens.
+		return b.Append(batch.Event{At: d.now(), Kind: batch.KindOpenIntent, Session: label, Intent: intent, Dir: opt.Dir, Text: clip(stepSummary(step), 200), Goal: goal})
 	})
 	if err != nil {
 		return nil, unsent(err, whole)
