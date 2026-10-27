@@ -89,12 +89,13 @@ func (d *Driver) Goal(session, text string) error {
 const maxGoal = 600
 
 // goalText is a goal as it is recorded: one paragraph, its runs of white
-// space, line breaks included, made one space. An empty goal, one with a
-// control character, or one past maxGoal bytes is refused.
+// space, line breaks included, made one space. A goal with no words, such
+// as a placeholder copied as it was printed, one with a control character,
+// or one past maxGoal bytes is refused.
 func goalText(s string) (string, error) {
 	goal := strings.Join(strings.Fields(s), " ")
 	switch {
-	case goal == "":
+	case !strings.ContainsFunc(goal, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }):
 		return "", &Refused{Reason: "a goal needs words: what the session sets out to do, in plain terms"}
 	case strings.ContainsFunc(goal, unicode.IsControl):
 		return "", &Refused{Reason: "a goal is plain text: it has a control character"}

@@ -88,7 +88,7 @@ func pageBatch(t *testing.T) (*rig, *pageProgress) {
 	t.Helper()
 	r := newRig(t, "none")
 	prog := &pageProgress{steps: map[string]progress.Steps{}, prs: map[int]progress.PR{
-		1: {Number: 1, State: "MERGED"},
+		1: {Number: 1, State: "MERGED", MergedAt: r.w.Clock.Now().Add(time.Minute)},
 		2: {Number: 2, State: "OPEN", Failed: 1, Passed: 3},
 	}}
 	r.d.Progress = prog
@@ -429,4 +429,39 @@ func TestABatchStartedMeanwhileShowsAtOnce(t *testing.T) {
 	if _, _, body := get(t, srv.URL); !strings.Contains(body, "Batch b2") || !strings.Contains(body, "No session has joined the batch yet.") {
 		t.Fatalf("b2's page at once, though b1's read is fresh:\n%s", body)
 	}
+}
+
+// drive status shows each open session's newest pull request as read, and
+// drive metrics counts a session whose pull request could not be read as
+// unread rather than unmerged: both now read through the page's one reader.
+func TestStatusAndMetricsReadPullRequestsThroughOneReader(t *testing.T) {
+	r, prog := pageBatch(t)
+	st, err := r.d.Status(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range st.Rows {
+		if row.Label == "W" && (row.PR == nil || row.PR.State != "MERGED") {
+			t.Fatalf("W's newest pull request, #1, as read: %+v %q", row.PR, row.PRErr)
+		}
+	}
+	if n := prog.prReads.Load(); n != 1 {
+		t.Fatalf("#1, the newest of two open sessions, is read once: %d", n)
+	}
+	unreadable := progress.PRRef{Repo: "acme/app", Number: 3}
+	d := prog.steps[sidOf(r, "D")]
+	d.PRs = []progress.PRRef{unreadable}
+	prog.steps[sidOf(r, "D")] = d
+	m, err := r.d.Metrics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Unread != 2 || len(m.Merged) != 1 || strings.Join(m.Merged[0].Sessions, ",") != "W,P,C" {
+		t.Fatalf("E's steps and D's pull request could not be read; #1 merged, named by W, P and C: unread %d, %+v", m.Unread, m.Merged)
+	}
+}
+
+func sidOf(r *rig, label string) string {
+	evs, _ := r.b.Events()
+	return batch.Find(batch.Members(evs), label).SID
 }

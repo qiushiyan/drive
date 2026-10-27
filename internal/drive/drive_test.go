@@ -277,7 +277,7 @@ func TestOpenRefusesALabelAlreadyOpen(t *testing.T) {
 func TestAGoalIsRecordedWithTheOpen(t *testing.T) {
 	r := newRig(t, "none")
 	dir := filepath.Join(r.w.Root, "work")
-	for _, bad := range []string{"", "  \n ", "stop\x07here", strings.Repeat("long ", 121)} {
+	for _, bad := range []string{"", "  \n ", "…", "stop\x07here", strings.Repeat("long ", 121)} {
 		if _, err := r.d.Open("S1", drive.Step{Line: "onboard"}, drive.OpenOptions{Dir: dir, Goal: &bad}); !isRefused(err) {
 			t.Fatalf("goal %q is refused, got %v", bad, err)
 		}
