@@ -86,6 +86,9 @@ func (d *Driver) Watch(ref string) (*Watched, error) {
 		return nil, err
 	}
 	defer release()
+	if err := d.ownedHere(b, label, block); err != nil {
+		return nil, err
+	}
 	o, err := d.observe(b, members, ref)
 	if err != nil {
 		return nil, err

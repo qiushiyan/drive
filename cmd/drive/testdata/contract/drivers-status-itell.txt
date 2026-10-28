@@ -1,9 +1,9 @@
 $ drive --driver itell status --quick
 exit 0
 --- stdout
-batch itell-2026-10-28 · wakes: webhook · Rex session - · times Europe/London (BST, UTC+01:00)
+batch itell-2026-10-28 · driver itell · wakes: webhook · Rex session - · times Europe/London (BST, UTC+01:00)
 no sessions in this batch yet
 
 other Claude sessions in Rex:
-  1  a00001  done  <1m  ON
+  1  a00001  done  <1m  ON  another driver's: ON in batch 2026-10-27, driver session-driver
 --- stderr

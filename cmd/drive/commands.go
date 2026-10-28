@@ -53,7 +53,8 @@ Each session in the batch is read live, from Claude Code's own registry,
 its transcript and Rex, then the batch's holds, open asks, grants and
 unfinished actions are listed under the table. Other Claude sessions
 running in Rex are listed too, by window and block, so one the owner named
-can be brought into the batch by its block id.`
+can be brought into the batch by its block id; one another driver's batch
+drives says so, and only that driver acts on it.`
 }
 
 func (c *StatusCmd) HelpSections() []clikit.Section {
@@ -68,10 +69,12 @@ WAKE   armed | stuck | posting | woken HH:MM (nothing done since: act on it or p
        | none, or ended without a wake: no wake comes until drive watch --due | parked: why
 Hold lines name who holds each hold, and who waits for it with the step it was refused.`},
 		{Title: "JSON", Body: `
-batch       name, started, wake, webhook, rex_session, tz; null with no current batch
+batch       name, driver (left out for a driver of no name), started, wake, webhook,
+            rex_session, tz; null with no current batch
 sessions    a row per session in the batch; others, a row per Claude session outside it:
             label, sid (Claude Code's session id), block, window, name (Rex's label, outside
-            the batch), goal (what it sets out to do, as recorded; left out when none is),
+            the batch), driven_by (outside the batch, the live batch of another driver's that
+            drives it: its label there, the batch and the driver), goal (what it sets out to do, as recorded; left out when none is),
             state, for_seconds (in that state), account, input, input_text (a typed or
             suggested line), stage, pr (number, state, draft, merge, review, passed, failed,
             pending), last_sent, watch (the WAKE column's words), unhandled_wake (a wake was
@@ -111,7 +114,8 @@ type ReadCmd struct {
 func (c *ReadCmd) Help() string {
 	return `
 Every mode prints what it read, then where the session stands, its goal as
-recorded, its view and next:. A closed or gone session is read from its
+recorded, its view and next:; a session another driver drives says so, with
+no next:. A closed or gone session is read from its
 transcript as it ended, with no view, since there is nothing left to act on.`
 }
 
@@ -119,7 +123,8 @@ func (c *ReadCmd) HelpSections() []clikit.Section {
 	return []clikit.Section{{Title: "JSON", Body: `
 session, sid, goal (what it sets out to do, as recorded; left out when none is), state, account,
 input, input_text (a typed or suggested line), text (what was read), at (when it was written),
-view (left out for a closed or gone session), next, jobs (started, command)`}}
+view (left out for a closed or gone session), next, driven_by (for a session another driver's
+batch drives, its label there, the batch and the driver; it has no next), jobs (started, command)`}}
 }
 
 func (c *ReadCmd) Validate() error {

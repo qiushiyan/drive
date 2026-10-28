@@ -98,6 +98,9 @@ func (r *Reading) Text() string {
 	if r.Goal != "" {
 		fmt.Fprintf(&b, "goal: %s\n", r.Goal)
 	}
+	if r.DrivenBy != "" {
+		fmt.Fprintf(&b, "another driver drives it, and only that driver acts on it: %s\n", r.DrivenBy)
+	}
 	if r.View.Session != "" { // a closed or gone session has nothing to act on
 		fmt.Fprintf(&b, "view: %s\n", r.View)
 	}
@@ -122,7 +125,11 @@ func (st *Status) Text(now time.Time) string {
 	if st.Batch == nil {
 		b.WriteString("no current batch (`drive batch new NAME` starts one); Claude sessions in Rex:\n")
 	} else {
-		fmt.Fprintf(&b, "batch %s · wakes: %s · Rex session %s · times %s (%s)\n", st.Batch.Name, st.Batch.Wake,
+		driver := ""
+		if name := batch.DriverOf(*st.Batch); name != "" {
+			driver = " · driver " + name
+		}
+		fmt.Fprintf(&b, "batch %s%s · wakes: %s · Rex session %s · times %s (%s)\n", st.Batch.Name, driver, st.Batch.Wake,
 			orDash(st.Batch.RexSession), st.Zone, now.In(st.Zone).Format("MST, UTC-07:00"))
 	}
 	if len(st.Rows) > 0 {
@@ -161,7 +168,11 @@ func (st *Status) Text(now time.Time) string {
 		b.WriteString("\nother Claude sessions in Rex:\n")
 		w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 		for _, r := range st.Others {
-			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\n", orDash(r.Window), r.Label, r.State, ago(r.For), r.Name)
+			driven := ""
+			if r.DrivenBy != "" {
+				driven = "\tanother driver's: " + r.DrivenBy
+			}
+			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s%s\n", orDash(r.Window), r.Label, r.State, ago(r.For), r.Name, driven)
 		}
 		w.Flush()
 	}

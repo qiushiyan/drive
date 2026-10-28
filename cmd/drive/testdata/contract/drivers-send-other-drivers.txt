@@ -1,0 +1,5 @@
+$ drive --driver itell send a00001@4bfdfefb --as I1 go on
+exit 1
+--- stdout
+--- stderr
+drive: error: a00001 is ON in batch 2026-10-27, driver session-driver: another driver drives it, and only that driver acts on it

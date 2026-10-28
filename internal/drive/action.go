@@ -24,10 +24,16 @@ type action struct {
 	touched bool          // the action typed or pressed into the session
 }
 
-// take owns block, which b calls label, for an action described by what.
+// take owns block, which b calls label, for an action described by what,
+// unless another live batch drives it.
 func (d *Driver) take(b *batch.Batch, label, block, what string) (*action, error) {
 	release, err := d.own(b, label, block, what)
 	if err != nil {
+		return nil, d.refuse(b, label, err)
+	}
+	// Under the session's lock, so a driver bringing it into its batch meanwhile is seen.
+	if err := d.ownedHere(b, label, block); err != nil {
+		release()
 		return nil, d.refuse(b, label, err)
 	}
 	return &action{d: d, b: b, label: label, block: block, release: release}, nil

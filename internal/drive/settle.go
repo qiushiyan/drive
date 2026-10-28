@@ -93,11 +93,16 @@ func (d *Driver) settleOpen(b *batch.Batch, evs []batch.Event, label string) err
 			Reason: "settled: its driver ended before Rex opened a block"}
 		if blocks, err := d.Term.Blocks(b.Meta.RexSession); err == nil {
 			for _, bl := range blocks {
-				if bl.Label == label && batch.Find(members, bl.ID) == nil {
-					ev = batch.Event{At: d.now(), Kind: batch.KindOpen, Session: label, Intent: e.Intent, Block: bl.ID, Dir: e.Dir,
-						Outcome: "settled", Note: "its driver ended before Claude Code started"}
-					break
+				if bl.Label != label || batch.Find(members, bl.ID) != nil {
+					continue
 				}
+				// Another driver's batch may have opened a block under the same label.
+				if other, err := d.drivenElsewhere(b, bl.ID); err != nil || other != nil {
+					continue
+				}
+				ev = batch.Event{At: d.now(), Kind: batch.KindOpen, Session: label, Intent: e.Intent, Block: bl.ID, Dir: e.Dir,
+					Outcome: "settled", Note: "its driver ended before Claude Code started"}
+				break
 			}
 		}
 		if err := b.Append(ev); err != nil {

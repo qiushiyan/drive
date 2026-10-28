@@ -3,7 +3,8 @@ Usage: drive read <session> [flags]
 Print a session's newest reply, where it stands, its view, and next: where its state decides it.
 
 Every mode prints what it read, then where the session stands, its goal as
-recorded, its view and next:. A closed or gone session is read from its
+recorded, its view and next:; a session another driver drives says so, with
+no next:. A closed or gone session is read from its
 transcript as it ended, with no view, since there is nothing left to act on.
 
 Arguments:
@@ -33,7 +34,8 @@ Constraints:
 JSON:
   session, sid, goal (what it sets out to do, as recorded; left out when none is), state, account,
   input, input_text (a typed or suggested line), text (what was read), at (when it was written),
-  view (left out for a closed or gone session), next, jobs (started, command)
+  view (left out for a closed or gone session), next, driven_by (for a session another driver's
+  batch drives, its label there, the batch and the driver; it has no next), jobs (started, command)
 
 Exit codes:
   0    success

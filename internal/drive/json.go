@@ -27,6 +27,7 @@ type statusDoc struct {
 
 type batchDoc struct {
 	Name       string    `json:"name"`
+	Driver     string    `json:"driver,omitempty"`
 	Started    time.Time `json:"started"`
 	Wake       string    `json:"wake"`
 	Webhook    string    `json:"webhook,omitempty"`
@@ -40,6 +41,7 @@ type rowDoc struct {
 	Block         string          `json:"block"`
 	Window        string          `json:"window"`
 	Name          string          `json:"name,omitempty"`
+	DrivenBy      string          `json:"driven_by,omitempty"`
 	Goal          string          `json:"goal,omitempty"`
 	State         string          `json:"state"`
 	ForSeconds    int             `json:"for_seconds"`
@@ -97,7 +99,7 @@ func (st *Status) JSON() any {
 	rows := func(rs []Row) []rowDoc {
 		out := []rowDoc{}
 		for _, r := range rs {
-			d := rowDoc{Label: r.Label, SID: r.SID, Block: rex.Short(r.Block), Window: r.Window, Name: r.Name, Goal: r.Goal, State: string(r.State),
+			d := rowDoc{Label: r.Label, SID: r.SID, Block: rex.Short(r.Block), Window: r.Window, Name: r.Name, DrivenBy: r.DrivenBy, Goal: r.Goal, State: string(r.State),
 				ForSeconds: int(r.For.Seconds()), Account: r.Account, Input: string(r.Input), Stage: r.Stage, LastSent: r.LastSent,
 				Watch: r.Watch, UnhandledWake: r.Unhandled, WakeDue: r.Due, View: viewOrEmpty(r.View), Error: r.Error, Jobs: jobs(r.Jobs)}
 			if r.Input == "typed" || r.Input == "suggestion" {
@@ -113,7 +115,7 @@ func (st *Status) JSON() any {
 	doc := statusDoc{Sessions: rows(st.Rows), Closed: st.Closed, Others: rows(st.Others), Holds: list(st.Holds),
 		OpenAsks: []askDoc{}, Grants: []grantDoc{}, InFlight: []inFlightDoc{}}
 	if m := st.Batch; m != nil {
-		doc.Batch = &batchDoc{Name: m.Name, Started: m.Started, Wake: m.Wake, Webhook: m.Webhook, RexSession: m.RexSession, TZ: m.TZ}
+		doc.Batch = &batchDoc{Name: m.Name, Driver: batch.DriverOf(*m), Started: m.Started, Wake: m.Wake, Webhook: m.Webhook, RexSession: m.RexSession, TZ: m.TZ}
 	}
 	for _, q := range st.Asks {
 		doc.OpenAsks = append(doc.OpenAsks, askDoc{ID: q.ID, Session: q.Session, At: q.At, Question: q.Question, Recommendation: q.Recommendation, IfUnanswered: q.IfUnanswered})
@@ -143,13 +145,14 @@ type readDoc struct {
 	At        *time.Time      `json:"at,omitempty"`
 	View      string          `json:"view,omitempty"`
 	Next      string          `json:"next,omitempty"`
+	DrivenBy  string          `json:"driven_by,omitempty"`
 	Jobs      []session.Shell `json:"jobs"`
 }
 
 // JSON is what read --json prints.
 func (r *Reading) JSON() any {
 	d := readDoc{Session: r.Label, SID: r.SID, Goal: r.Goal, State: string(r.State), Account: r.Account, Input: string(r.Input), Text: r.Body,
-		View: viewOrEmpty(r.View), Next: r.Next, Jobs: jobs(r.Jobs)}
+		View: viewOrEmpty(r.View), Next: r.Next, DrivenBy: r.DrivenBy, Jobs: jobs(r.Jobs)}
 	if r.Input == "typed" || r.Input == "suggestion" {
 		d.InputText = r.Typed
 	}

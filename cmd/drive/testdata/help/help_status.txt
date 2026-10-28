@@ -6,7 +6,8 @@ Each session in the batch is read live, from Claude Code's own registry,
 its transcript and Rex, then the batch's holds, open asks, grants and
 unfinished actions are listed under the table. Other Claude sessions
 running in Rex are listed too, by window and block, so one the owner named
-can be brought into the batch by its block id.
+can be brought into the batch by its block id; one another driver's batch
+drives says so, and only that driver acts on it.
 
 Flags:
       --json           Print one JSON document instead of the table.
@@ -33,10 +34,12 @@ Columns:
   Hold lines name who holds each hold, and who waits for it with the step it was refused.
 
 JSON:
-  batch       name, started, wake, webhook, rex_session, tz; null with no current batch
+  batch       name, driver (left out for a driver of no name), started, wake, webhook,
+              rex_session, tz; null with no current batch
   sessions    a row per session in the batch; others, a row per Claude session outside it:
               label, sid (Claude Code's session id), block, window, name (Rex's label, outside
-              the batch), goal (what it sets out to do, as recorded; left out when none is),
+              the batch), driven_by (outside the batch, the live batch of another driver's that
+              drives it: its label there, the batch and the driver), goal (what it sets out to do, as recorded; left out when none is),
               state, for_seconds (in that state), account, input, input_text (a typed or
               suggested line), stage, pr (number, state, draft, merge, review, passed, failed,
               pending), last_sent, watch (the WAKE column's words), unhandled_wake (a wake was

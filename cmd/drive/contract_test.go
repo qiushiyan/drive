@@ -267,6 +267,8 @@ func TestContractDrivers(t *testing.T) {
 	c.run("drivers-batch-new-webhook-pending", "batch", "new", "itell-2026-10-28", "--webhook", "itell", "--tz", "Europe/London")
 	c.run("drivers-status-no-driver", "status", "--quick")
 	c.run("drivers-status-itell", "--driver", "itell", "status", "--quick")
+	v = view(t, c.run("drivers-read-other-drivers", "--driver", "itell", "read", on.Block[len(on.Block)-6:]))
+	c.run("drivers-send-other-drivers", "--driver", "itell", "send", v, "--as", "I1", "go on")
 	c.run("drivers-batch-other-driver", "--driver", "itell", "--batch", "2026-10-27", "log")
 	c.run("drivers-batch-list", "batch", "list")
 	c.run("drivers-batch-end", "batch", "end", "--driver", "itell")

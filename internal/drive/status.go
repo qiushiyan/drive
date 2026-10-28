@@ -40,6 +40,9 @@ type Reading struct {
 	At      time.Time       // when the text was written
 	Next    string          // what to run, where the state decides it
 	Jobs    []session.Shell // background jobs it runs
+	// DrivenBy is, for a session outside the batch, the live batch of
+	// another driver's that drives it, which alone acts on it.
+	DrivenBy string
 }
 
 // Read reads a session and returns the view to act on.
@@ -66,7 +69,14 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 		r.Goal = o.Member.Goal
 	}
 	r.Jobs = d.Host.Shells(o.Session.Status.PID)
-	r.Next = d.nextFor(o, r.State, r.Jobs)
+	if o.Member == nil {
+		if e, err := d.drivenElsewhere(b, o.Session.Block); err == nil && e != nil {
+			r.DrivenBy = e.String()
+		}
+	}
+	if r.DrivenBy == "" {
+		r.Next = d.nextFor(o, r.State, r.Jobs)
+	}
 	if mode == ReadScreen {
 		screen, err := d.Term.Capture(o.Session.Block, false)
 		if err != nil {
@@ -172,6 +182,7 @@ type Row struct {
 	View     turn.View
 	Member   bool
 	Name     string          // the block's Rex label, for sessions outside the batch
+	DrivenBy string          // for a session outside the batch, the live batch that drives it: its label there, the batch and its driver
 	Goal     string          // what a member sets out to do, as recorded
 	Error    string          // what kept the row from being read
 	Jobs     []session.Shell // background jobs it runs
@@ -283,6 +294,9 @@ func (d *Driver) rows(b *batch.Batch, members []*batch.Member, blocks []rex.Bloc
 				return
 			}
 			r.Label, r.Window, r.Name = rex.Short(bl.ID), bl.Window, bl.Label
+			if e, err := d.drivenElsewhere(b, bl.ID); err == nil && e != nil {
+				r.DrivenBy = e.String()
+			}
 			outside[i] = &r
 		})
 	}

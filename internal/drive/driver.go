@@ -270,6 +270,73 @@ func (d *Driver) own(b *batch.Batch, label, key, what string) (release func(), e
 	return release, err
 }
 
+// elsewhere is a session another live batch drives: the batch, and the
+// label the session has there.
+type elsewhere struct {
+	in    *batch.Batch
+	label string
+}
+
+func (e *elsewhere) String() string {
+	return fmt.Sprintf("%s in batch %s, %s", e.label, e.in.Meta.Name, strings.TrimSuffix(driverWords(batch.DriverOf(e.in.Meta)), "'s"))
+}
+
+// drivenElsewhere names the live batch other than b that drives block, nil
+// when none does. A session belongs to the live batch that brought it in
+// last, so a driver that carries a session over into its next batch keeps
+// it; the per-block lock only keeps two drivers from acting on it at once.
+func (d *Driver) drivenElsewhere(b *batch.Batch, block string) (*elsewhere, error) {
+	live, err := d.Store.Live()
+	if err != nil {
+		return nil, err
+	}
+	var since time.Time // when b brought it in
+	if b != nil {
+		evs, err := b.Events()
+		if err != nil {
+			return nil, err
+		}
+		if m := memberOf(batch.Members(evs), block); m != nil && !m.Closed {
+			since = m.Joined
+		}
+	}
+	for _, o := range live {
+		if b != nil && o.Meta.Name == b.Meta.Name {
+			continue
+		}
+		evs, err := o.Events()
+		if err != nil {
+			return nil, err
+		}
+		if m := memberOf(batch.Members(evs), block); m != nil && !m.Closed && !m.Joined.Before(since) {
+			return &elsewhere{in: o, label: m.Label}, nil
+		}
+	}
+	return nil, nil
+}
+
+// memberOf is the member whose block is block exactly.
+func memberOf(members []*batch.Member, block string) *batch.Member {
+	for _, m := range members {
+		if m.Block == block {
+			return m
+		}
+	}
+	return nil
+}
+
+// ownedHere refuses an action of b's on a session another live batch drives.
+func (d *Driver) ownedHere(b *batch.Batch, label, block string) error {
+	if b == nil {
+		return nil
+	}
+	e, err := d.drivenElsewhere(b, block)
+	if err != nil || e == nil {
+		return err
+	}
+	return &Refused{Reason: fmt.Sprintf("%s is %s: another driver drives it, and only that driver acts on it", label, e)}
+}
+
 // observe reads one session in batch b, whose sessions are members. ref is
 // a label in the batch or a block id.
 func (d *Driver) observe(b *batch.Batch, members []*batch.Member, ref string) (*Observation, error) {

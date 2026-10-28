@@ -1,0 +1,9 @@
+$ drive --driver itell read a00001
+exit 0
+--- stdout
+ok
+
+a00001 is done on account acct@example.com (session sid-1)
+another driver drives it, and only that driver acts on it: ON in batch 2026-10-27, driver session-driver
+view: a00001@4bfdfefb
+--- stderr
