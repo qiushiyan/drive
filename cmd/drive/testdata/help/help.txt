@@ -17,11 +17,15 @@ A SESSION is a label in the batch (T1), or a session's Rex block id, whose
 last six characters are enough, before it joins the batch; its view starts
 the same way (7c1e2a@3fa91c07). Copy a view as drive printed it.
 
-A DRIVER drives a batch of its own; a chat driver is named by its webhook
-(drive batch new NAME --webhook DRIVER). Where drivers each drive a batch,
-every command names the one it runs for, --driver DRIVER, since nothing else
-tells them apart; a command that names none is refused, never run in
-another driver's batch.
+A DRIVER drives a batch of its own. A chat bot is named by its webhook and
+names itself on every command, since nothing in its shell tells two bots
+apart:
+
+  drive --driver itell status          # the batch driver itell drives now
+  drive --batch 2026-10-27 read T1     # one batch by name, as next: prints it
+
+A command that names neither acts in the batch of the driver with no name,
+and is refused while any named driver drives one.
 
 A refusal or failure that leaves something to do ends with a next: line: a
 command that runs as written on the session as it stands, naming the batch
@@ -31,9 +35,8 @@ Flags:
   -h, --help           Show context-sensitive help.
       --batch=NAME     Act in this batch, as drive prints its name, instead of the driver's current
                        one. It may stand anywhere on the line.
-      --driver=NAME    Act as this driver, in its current batch: a chat driver is named by its
-                       webhook. Where drivers each drive a batch, every command names one. It may
-                       stand anywhere on the line.
+      --driver=NAME    Act in the batch this driver drives now; a chat driver's name is its
+                       webhook's. It may stand anywhere on the line.
 
 Commands:
   status                              Print every session in the batch, live: its state, stage, pull
@@ -74,8 +77,8 @@ Commands:
                                       sessions and directory (default).
   batch new <name>                    Start a batch and make it its driver's current one.
   batch use <name>                    Make a batch its driver's current one again.
-  batch end                           End the batch once its drive is over: its wakes stop, and it
-                                      is no longer its driver's.
+  batch end                           End a batch whose drive is over and whose record the owner has
+                                      read: its wakes stop and it leaves the owner's page.
   batch list                          List every batch, with its driver, each driver's current one
                                       starred.
   snippet <key> [<dir>] [<text> ...]

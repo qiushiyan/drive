@@ -674,7 +674,7 @@ type BatchCmd struct {
 	Show BatchShowCmd `cmd:"" default:"1" help:"Print the batch: its driver, start, wakes, Rex session, zone, sessions and directory."`
 	New  BatchNewCmd  `cmd:"" help:"Start a batch and make it its driver's current one."`
 	Use  BatchUseCmd  `cmd:"" help:"Make a batch its driver's current one again."`
-	End  BatchEndCmd  `cmd:"" help:"End the batch once its drive is over: its wakes stop, and it is no longer its driver's."`
+	End  BatchEndCmd  `cmd:"" help:"End a batch whose drive is over and whose record the owner has read: its wakes stop and it leaves the owner's page."`
 	List BatchListCmd `cmd:"" help:"List every batch, with its driver, each driver's current one starred."`
 }
 
@@ -696,7 +696,7 @@ func (c *BatchShowCmd) act(ctx *kong.Context, d *drive.Driver) error {
 type BatchNewCmd struct {
 	runs
 	Name       string `arg:"" help:"The batch's name, such as the date."`
-	Webhook    string `placeholder:"DRIVER" help:"Wake this chat driver by its webhook, the file ~/.config/drive/webhooks/DRIVER that the owner writes; DRIVER is the driver's name. Without it, the driver waits itself, named by --driver if at all."`
+	Webhook    string `placeholder:"DRIVER" help:"Wake this chat driver by its webhook, the file ~/.config/drive/webhooks/DRIVER that the owner writes; DRIVER is also the driver's name. Without it, the driver waits itself."`
 	RexSession string `placeholder:"SESSION" help:"The Rex session new sessions open in, started if it is not running; defaults to the configuration's, then $REX_SESSION."`
 	TZ         string `name:"tz" placeholder:"ZONE" help:"The zone drive prints the batch's times in, such as Europe/London; defaults to the configuration's, then the machine's."`
 	AfterWake  string `placeholder:"COMMAND" help:"A shell command to run after each wake is posted, such as archiving the chat it went to."`
@@ -705,10 +705,9 @@ type BatchNewCmd struct {
 func (c *BatchNewCmd) Help() string {
 	return `
 A new batch starts with no grants, however recently one was given, and
-stops the wakes of its driver's last batch; another driver's batch is never
-touched. Start one per drive, never after a reset: ` + "`drive --driver DRIVER batch`" + `
-names a driver's current one. A webhook the owner has not written yet does
-not stop the start: no wake starts until it is written.`
+stops the wakes of its driver's last batch, no other driver's. Start one per
+drive, never after a reset: ` + "`drive --driver DRIVER batch`" + ` names yours. It starts
+before the owner writes its webhook; no wake starts until then.`
 }
 
 func (c *BatchNewCmd) Validate() error {
@@ -759,8 +758,8 @@ type BatchEndCmd struct{ runs }
 
 func (c *BatchEndCmd) Help() string {
 	return `
-Ends the batch the command acts in: the driver's current one, or the one
---batch names. Its record stays, read with --batch NAME.`
+Its record stays, read with --batch NAME. A batch left running stays on the
+page until its driver's next one replaces it.`
 }
 
 func (c *BatchEndCmd) act(ctx *kong.Context, d *drive.Driver) error {

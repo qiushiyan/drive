@@ -403,14 +403,14 @@ func (st *Started) Text() string {
 		s += fmt.Sprintf("watches of batch %s still run: %v\n", st.Prev.Meta.Name, st.StopErr)
 	}
 	if nw := st.NoWebhook; nw != nil {
-		s += "no wake can start until " + nw.next(st.ThenArm) + "\n"
+		s += fmt.Sprintf("no wake can start until %s holds a URL\nnext: %s\n", nw.path, nw.next(st.ThenArm))
 	}
 	return s
 }
 
 // Text is what batch end prints.
 func (e *Ended) Text() string {
-	return fmt.Sprintf("batch %s ended; stopped %d of its watches and timers\n", e.Batch.Meta.Name, e.Stopped)
+	return fmt.Sprintf("batch %s ended; stopped %d watches and timers\n", e.Batch.Meta.Name, e.Stopped)
 }
 
 // BatchText is what batch prints of the batch it acts in.

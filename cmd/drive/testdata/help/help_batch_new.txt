@@ -3,19 +3,17 @@ Usage: drive batch new <name> [flags]
 Start a batch and make it its driver's current one.
 
 A new batch starts with no grants, however recently one was given, and
-stops the wakes of its driver's last batch; another driver's batch is never
-touched. Start one per drive, never after a reset: `drive --driver DRIVER batch`
-names a driver's current one. A webhook the owner has not written yet does
-not stop the start: no wake starts until it is written.
+stops the wakes of its driver's last batch, no other driver's. Start one per
+drive, never after a reset: `drive --driver DRIVER batch` names yours. It starts
+before the owner writes its webhook; no wake starts until then.
 
 Arguments:
   <name>                       The batch's name, such as the date.
 
 Flags:
       --webhook=DRIVER         Wake this chat driver by its webhook, the file
-                               ~/.config/drive/webhooks/DRIVER that the owner writes; DRIVER is the
-                               driver's name. Without it, the driver waits itself, named by --driver
-                               if at all.
+                               ~/.config/drive/webhooks/DRIVER that the owner writes; DRIVER is also
+                               the driver's name. Without it, the driver waits itself.
       --rex-session=SESSION    The Rex session new sessions open in, started if it is not running;
                                defaults to the configuration's, then $REX_SESSION.
       --tz=ZONE                The zone drive prints the batch's times in, such as Europe/London;
@@ -27,9 +25,8 @@ Inherited flags:
   -h, --help                   Show context-sensitive help.
       --batch=NAME             Act in this batch, as drive prints its name, instead of the driver's
                                current one. It may stand anywhere on the line.
-      --driver=NAME            Act as this driver, in its current batch: a chat driver is named by
-                               its webhook. Where drivers each drive a batch, every command names
-                               one. It may stand anywhere on the line.
+      --driver=NAME            Act in the batch this driver drives now; a chat driver's name is its
+                               webhook's. It may stand anywhere on the line.
 
 Exit codes:
   0    success

@@ -164,8 +164,7 @@ func (d *Driver) resolve() (*batch.Batch, error) {
 	if d.DriverName != "" {
 		b, err := d.Store.Current(d.DriverName)
 		if errors.Is(err, batch.ErrNoBatch) {
-			return nil, &Refused{Reason: fmt.Sprintf("driver %s drives no batch now", d.DriverName), cause: err,
-				Next: fmt.Sprintf("see every batch and its driver: %s; or start one: `drive batch new NAME --webhook %s`", d.runIn("", "batch", "list"), d.DriverName)}
+			return nil, d.noBatchOf(d.DriverName, err)
 		}
 		if err != nil {
 			return nil, &Refused{Reason: err.Error(), cause: err}
@@ -194,6 +193,25 @@ func (d *Driver) resolve() (*batch.Batch, error) {
 	return unnamed, nil
 }
 
+// noBatchOf refuses a command for a driver that drives no batch now: one
+// whose last batch ended starts its next, and a name no batch ever had is
+// most likely mistyped, so it is not offered as a new driver.
+func (d *Driver) noBatchOf(driver string, cause error) *Refused {
+	metas, _ := d.Store.List()
+	last := ""
+	for _, m := range metas {
+		if batch.DriverOf(m) == driver {
+			last = m.Name
+		}
+	}
+	if last == "" {
+		return &Refused{Reason: fmt.Sprintf("no batch has ever had driver %s", driver), cause: cause,
+			Next: "the drivers and their batches: " + d.runIn("", "batch", "list")}
+	}
+	return &Refused{Reason: fmt.Sprintf("driver %s drives no batch now; its last, %s, ended", driver, last), cause: cause,
+		Next: fmt.Sprintf("read it: %s; or start its next: `drive batch new NAME --webhook %s`", d.runIn(last, "status"), driver)}
+}
+
 // nameYourself refuses a command that named no driver on a machine where
 // named drivers drive batches, with the command again for each.
 func (d *Driver) nameYourself(named []*batch.Batch, unnamed *batch.Batch) *Refused {
@@ -207,7 +225,7 @@ func (d *Driver) nameYourself(named []*batch.Batch, unnamed *batch.Batch) *Refus
 		drives = append(drives, fmt.Sprintf("a driver of no name drives %s", unnamed.Meta.Name))
 		runs = append(runs, d.runIn(unnamed.Meta.Name, lineWords(d.Line)...))
 	}
-	return &Refused{Reason: "this command names no driver, and drivers here each drive a batch of their own: " + strings.Join(drives, ", "),
+	return &Refused{Reason: "this command names no driver, and named drivers drive batches here: " + strings.Join(drives, ", "),
 		Next: "run it as the driver you are: " + strings.Join(runs, "; ")}
 }
 
@@ -334,7 +352,7 @@ func (d *Driver) ownedHere(b *batch.Batch, label, block string) error {
 	if err != nil || e == nil {
 		return err
 	}
-	return &Refused{Reason: fmt.Sprintf("%s is %s: another driver drives it, and only that driver acts on it", label, e)}
+	return &Refused{Reason: fmt.Sprintf("%s is %s; only that driver acts on it", label, e)}
 }
 
 // observe reads one session in batch b, whose sessions are members. ref is

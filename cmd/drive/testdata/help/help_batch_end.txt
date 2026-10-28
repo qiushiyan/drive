@@ -1,17 +1,16 @@
 Usage: drive batch end [flags]
 
-End the batch once its drive is over: its wakes stop, and it is no longer its driver's.
+End a batch whose drive is over and whose record the owner has read: its wakes stop and it leaves the owner's page.
 
-Ends the batch the command acts in: the driver's current one, or the one
---batch names. Its record stays, read with --batch NAME.
+Its record stays, read with --batch NAME. A batch left running stays on the
+page until its driver's next one replaces it.
 
 Inherited flags:
   -h, --help           Show context-sensitive help.
       --batch=NAME     Act in this batch, as drive prints its name, instead of the driver's current
                        one. It may stand anywhere on the line.
-      --driver=NAME    Act as this driver, in its current batch: a chat driver is named by its
-                       webhook. Where drivers each drive a batch, every command names one. It may
-                       stand anywhere on the line.
+      --driver=NAME    Act in the batch this driver drives now; a chat driver's name is its
+                       webhook's. It may stand anywhere on the line.
 
 Exit codes:
   0    success

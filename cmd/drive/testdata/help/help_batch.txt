@@ -1,22 +1,21 @@
 Usage: drive batch [<command>] [flags]
 
-Print the current batch, or start, switch or list batches.
+Print a driver's batch, or start, switch, end or list batches.
 
 Inherited flags:
   -h, --help           Show context-sensitive help.
       --batch=NAME     Act in this batch, as drive prints its name, instead of the driver's current
                        one. It may stand anywhere on the line.
-      --driver=NAME    Act as this driver, in its current batch: a chat driver is named by its
-                       webhook. Where drivers each drive a batch, every command names one. It may
-                       stand anywhere on the line.
+      --driver=NAME    Act in the batch this driver drives now; a chat driver's name is its
+                       webhook's. It may stand anywhere on the line.
 
 Commands:
   show          Print the batch: its driver, start, wakes, Rex session, zone, sessions and directory
                 (default).
   new <name>    Start a batch and make it its driver's current one.
   use <name>    Make a batch its driver's current one again.
-  end           End the batch once its drive is over: its wakes stop, and it is no longer its
-                driver's.
+  end           End a batch whose drive is over and whose record the owner has read: its wakes stop
+                and it leaves the owner's page.
   list          List every batch, with its driver, each driver's current one starred.
 
 Exit codes:

@@ -2,5 +2,6 @@ $ drive batch new itell-2026-10-28 --webhook itell --tz Europe/London
 exit 0
 --- stdout
 batch itell-2026-10-28 started, driver itell's current batch ($HOME/state/batches/itell-2026-10-28)
-no wake can start until the owner writes its URL= and AUTH= lines, mode 0600, to $HOME/config/webhooks/itell; then: drive --batch itell-2026-10-28 watch --due
+no wake can start until $HOME/config/webhooks/itell holds a URL
+next: the owner writes its URL= and AUTH= lines, mode 0600, to $HOME/config/webhooks/itell; then: drive --batch itell-2026-10-28 watch --due
 --- stderr

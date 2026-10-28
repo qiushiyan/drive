@@ -66,6 +66,20 @@ func (d *Driver) batchCommand(opt BatchOptions) string {
 // once it starts.
 func (d *Driver) StartBatch(opt BatchOptions) (*Started, error) {
 	again := d.batchCommand(opt)
+	if taken, err := d.Store.Get(opt.Name); err == nil {
+		if owner, mine := batch.DriverOf(taken.Meta), cmp.Or(opt.Webhook, opt.Driver); owner != mine {
+			// Batch names are shared by every driver here, so one that names
+			// itself keeps clear of the others' names.
+			r := &Refused{Reason: fmt.Sprintf("batch %s is %s; every driver here shares one set of batch names", opt.Name, driverWords(owner)),
+				Next: "choose another name in: " + again}
+			if mine != "" {
+				named := opt
+				named.Name = mine + "-" + opt.Name
+				r.Next = "name yours for you: " + d.batchCommand(named)
+			}
+			return nil, r
+		}
+	}
 	if err := d.Store.Free(opt.Name); err != nil {
 		return nil, &Refused{Reason: err.Error()}
 	}
@@ -136,7 +150,7 @@ func (d *Driver) watchNamesFree(name string) error {
 	}
 	for _, m := range metas {
 		if m.Name != name && safeName(m.Name) == safeName(name) {
-			return &Refused{Reason: fmt.Sprintf("batch name %q reads as batch %s's in the names of its watches; choose a name that differs in a letter or digit", name, m.Name)}
+			return &Refused{Reason: fmt.Sprintf("batch name %q is too like batch %s's: their watches would share names, and ending one would stop the other's; choose a name that differs in a letter or digit", name, m.Name)}
 		}
 	}
 	return nil

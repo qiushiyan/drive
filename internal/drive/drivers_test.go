@@ -53,7 +53,7 @@ func TestASessionAnotherDriverDrivesIsTheirs(t *testing.T) {
 		"close":   func() error { return r.d.Close(v) },
 		"watch":   func() error { _, err := r.d.Watch(block); return err },
 	} {
-		if err := act(); !isRefused(err) || !strings.Contains(err.Error(), "another driver drives it") {
+		if err := act(); !isRefused(err) || !strings.Contains(err.Error(), "only that driver acts on it") {
 			t.Errorf("%s on another driver's session is refused: %v", what, err)
 		}
 	}
@@ -109,7 +109,7 @@ func TestABatchNameSharingAnothersWatchNamesIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := r.d.StartBatch(drive.BatchOptions{Name: "itell.2026-10-28", Wake: "none", Driver: "other"}); !isRefused(err) ||
-		!strings.Contains(err.Error(), "batch itell-2026-10-28's in the names of its watches") {
+		!strings.Contains(err.Error(), "too like batch itell-2026-10-28's") {
 		t.Fatalf("a name whose watches read as another batch's is refused: %v", err)
 	}
 }

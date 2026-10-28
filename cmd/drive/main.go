@@ -22,7 +22,7 @@ import (
 
 type CLI struct {
 	Batch  string `placeholder:"NAME" help:"Act in this batch, as drive prints its name, instead of the driver's current one. It may stand anywhere on the line."`
-	Driver string `placeholder:"NAME" help:"Act as this driver, in its current batch: a chat driver is named by its webhook. Where drivers each drive a batch, every command names one. It may stand anywhere on the line."`
+	Driver string `placeholder:"NAME" help:"Act in the batch this driver drives now; a chat driver's name is its webhook's. It may stand anywhere on the line."`
 
 	Status  StatusCmd  `cmd:"" help:"Print every session in the batch, live: its state, stage, pull request, wake and view."`
 	Read    ReadCmd    `cmd:"" help:"Print a session's newest reply, where it stands, its view, and next: where its state decides it."`
@@ -38,7 +38,7 @@ type CLI struct {
 	Log     LogCmd     `cmd:"" help:"Print the batch's timeline: what was sent, answered, opened, parked and closed, and every wake."`
 	Metrics MetricsCmd `cmd:"" help:"Print the batch's measures: asks and the owner's wait, merges, sends, wakes, refusals."`
 	Page    PageCmd    `cmd:"" help:"Serve the live batches as a web page their owner opens: each session's goal, where it stands, its pull requests, and what waits on them."`
-	Batches BatchCmd   `cmd:"" name:"batch" help:"Print the current batch, or start, switch or list batches."`
+	Batches BatchCmd   `cmd:"" name:"batch" help:"Print a driver's batch, or start, switch, end or list batches."`
 	Snippet SnippetCmd `cmd:"" help:"Print the owner's snippet KEY as a session in DIR would receive it."`
 	Snips   SnipsCmd   `cmd:"" name:"snippets" help:"List the snippet keys that resolve in DIR, each with its file."`
 
@@ -63,11 +63,15 @@ A SESSION is a label in the batch (T1), or a session's Rex block id, whose
 last six characters are enough, before it joins the batch; its view starts
 the same way (7c1e2a@3fa91c07). Copy a view as drive printed it.
 
-A DRIVER drives a batch of its own; a chat driver is named by its webhook
-(drive batch new NAME --webhook DRIVER). Where drivers each drive a batch,
-every command names the one it runs for, --driver DRIVER, since nothing else
-tells them apart; a command that names none is refused, never run in
-another driver's batch.
+A DRIVER drives a batch of its own. A chat bot is named by its webhook and
+names itself on every command, since nothing in its shell tells two bots
+apart:
+
+  drive --driver itell status          # the batch driver itell drives now
+  drive --batch 2026-10-27 read T1     # one batch by name, as next: prints it
+
+A command that names neither acts in the batch of the driver with no name,
+and is refused while any named driver drives one.
 
 A refusal or failure that leaves something to do ends with a next: line: a
 command that runs as written on the session as it stands, naming the batch

@@ -2,5 +2,5 @@ $ drive --driver itell status --quick
 exit 1
 --- stdout
 --- stderr
-drive: error: driver itell drives no batch now
-next: see every batch and its driver: drive batch list; or start one: `drive batch new NAME --webhook itell`
+drive: error: driver itell drives no batch now; its last, itell-2026-10-28, ended
+next: read it: drive --batch itell-2026-10-28 status; or start its next: `drive batch new NAME --webhook itell`
