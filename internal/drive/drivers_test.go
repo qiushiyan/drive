@@ -13,8 +13,12 @@ import (
 // and has r act as that driver.
 func newDriverBatch(t *testing.T, r *rig, name, driver string) *batch.Batch {
 	t.Helper()
-	// A batch with no webhook named wakes through the configuration's, which the rig sets.
-	b, _, err := r.d.Store.New(batch.Meta{Name: name, Started: r.w.Clock.Now(), Wake: "webhook", Driver: driver})
+	// A batch with no webhook named wakes through the configuration's, which a webhook rig sets.
+	wake := "none"
+	if r.d.Cfg.Webhook.URL != "" {
+		wake = "webhook"
+	}
+	b, _, err := r.d.Store.New(batch.Meta{Name: name, Started: r.w.Clock.Now(), Wake: wake, Driver: driver})
 	if err != nil {
 		t.Fatal(err)
 	}

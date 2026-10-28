@@ -41,8 +41,8 @@ type pageRead struct {
 	ended time.Time // on the driver's clock, which reuse counts from
 }
 
-// NewPage is the page of d's batch: the current one at each visit, or the
-// one --batch pins.
+// NewPage is the page of d's batches: every live one at each visit, or the
+// one --batch or --driver names.
 func NewPage(d *Driver) *Page {
 	return &Page{ReuseFor: 30 * time.Second, Deadline: 20 * time.Second, GiveUpAfter: 2 * time.Minute, d: d, reads: map[string]*pageReads{}}
 }
@@ -57,27 +57,61 @@ func (p *Page) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	ov, err := p.overview()
+	ovs, err := p.overviews()
 	if err != nil {
 		http.Error(w, "the batch could not be read: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store") // a reload asks again, and is answered within ReuseFor
-	_, _ = w.Write(ov.HTML(p.d.now()))
+	_, _ = w.Write(PageHTML(ovs, p.d.now()))
 }
 
-// overview is the batch's last read if it is fresh, else what a read
-// gives within its deadline, else what the record holds. The batch is
-// resolved once per visit, and each read reads only that batch.
-func (p *Page) overview() (*Overview, error) {
-	b, err := p.d.resolve()
-	if errors.Is(err, batch.ErrNoBatch) {
-		return p.d.Overview(false)
+// overviews reads the batches the page shows: the one --batch or --driver
+// names, else every live batch, since the owner reads every driver's on
+// one page. The batches are resolved once per visit and read at once, each
+// on its own deadline, so one slow or unreadable batch keeps none of the
+// others off the page.
+func (p *Page) overviews() ([]*Overview, error) {
+	var bs []*batch.Batch
+	if p.d.BatchName != "" || p.d.DriverName != "" {
+		b, err := p.d.resolve()
+		if errors.Is(err, batch.ErrNoBatch) {
+			ov, err := p.d.Overview(false)
+			return []*Overview{ov}, err
+		}
+		if err != nil {
+			return nil, err
+		}
+		bs = append(bs, b)
+	} else {
+		live, err := p.d.Store.Live()
+		if err != nil {
+			return nil, err
+		}
+		bs = live
 	}
-	if err != nil {
-		return nil, err
+	if len(bs) == 0 {
+		return []*Overview{{Zone: time.Local, At: p.d.now()}}, nil
 	}
+	ovs := make([]*Overview, len(bs))
+	var wg sync.WaitGroup
+	for i, b := range bs {
+		wg.Go(func() {
+			ov, err := p.overview(b)
+			if err != nil {
+				ov = &Overview{Batch: &b.Meta, Zone: zoneOf(b), At: p.d.now(), Live: "its record could not be read: " + firstLine(err.Error())}
+			}
+			ovs[i] = ov
+		})
+	}
+	wg.Wait()
+	return ovs, nil
+}
+
+// overview is b's last read if it is fresh, else what a read gives within
+// its deadline, else what the record holds.
+func (p *Page) overview(b *batch.Batch) (*Overview, error) {
 	p.mu.Lock()
 	rs := p.reads[b.Meta.Name]
 	if rs == nil {

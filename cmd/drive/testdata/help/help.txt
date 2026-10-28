@@ -67,9 +67,9 @@ Commands:
                                       parked and closed, and every wake.
   metrics                             Print the batch's measures: asks and the owner's wait, merges,
                                       sends, wakes, refusals.
-  page                                Serve the batch as a web page its owner opens: each session's
-                                      goal, where it stands, its pull requests, and what waits on
-                                      them.
+  page                                Serve the live batches as a web page their owner opens: each
+                                      session's goal, where it stands, its pull requests, and what
+                                      waits on them.
   batch show                          Print the batch: its driver, start, wakes, Rex session, zone,
                                       sessions and directory (default).
   batch new <name>                    Start a batch and make it its driver's current one.

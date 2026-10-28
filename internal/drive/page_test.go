@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -226,7 +228,7 @@ func TestTheOverviewGroupsSessionsByWhereTheyStand(t *testing.T) {
 		"Parked by the driver " + clockOf(t, r, batch.KindPark, "P") + ": waits on the S3 baseline",
 		"Closed " + clockOf(t, r, batch.KindClose, "C"), "Closed " + clockOf(t, r, batch.KindClose, "D"),
 		// A question links to its session's card, and the card back to the question.
-		`<article class="card ask" id="ask-A1">`, `A1 · <a href="#P">P</a>`, `id="P"`, `Waits on you: <a href="#ask-A1">A1</a>`,
+		`<article class="card ask" id="b1/ask-A1">`, `A1 · <a href="#b1/P">P</a>`, `id="b1/P"`, `Waits on you: <a href="#b1/ask-A1">A1</a>`,
 		"A2 · the whole batch",
 		"Merge before the baseline?", "Recommended: wait for it", "If unanswered: P stays parked", "If unanswered: nothing releases",
 		"Pull requests it opened:", "Pull requests it named:", "1 check failing",
@@ -466,4 +468,53 @@ func TestStatusAndMetricsReadPullRequestsThroughOneReader(t *testing.T) {
 func sidOf(r *rig, label string) string {
 	evs, _ := r.b.Events()
 	return batch.Find(batch.Members(evs), label).SID
+}
+
+// The owner reads every driver's batch on one page: each under its own
+// heading, every batch's questions first, each anchored by its batch, since
+// every batch numbers its asks from A1 and its labels are its own. A batch
+// whose record cannot be read says so beside the others, and --driver
+// shows one driver's alone.
+func TestThePageShowsEveryDriversBatch(t *testing.T) {
+	r, _ := pageBatch(t)
+	it := newDriverBatch(t, r, "itell-2026-10-28", "itell")
+	adopted(t, r, "P")
+	if _, err := r.d.Ask("P", "Take the payment milestone first?", "yes", "it waits"); err != nil {
+		t.Fatal(err)
+	}
+	r.d.DriverName = ""
+	srv := httptest.NewServer(drive.NewPage(r.d))
+	defer srv.Close()
+	_, _, body := get(t, srv.URL)
+	for _, want := range []string{
+		"Batches b1, itell-2026-10-28", "Batch itell-2026-10-28, driven by itell, started",
+		`id="b1/ask-A1"`, `id="itell-2026-10-28/ask-A1"`, `A1 · itell-2026-10-28 · <a href="#itell-2026-10-28/P">P</a>`,
+		`id="b1/P"`, `id="itell-2026-10-28/P"`, "Take the payment milestone first?", "Build the importer.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page says %q", want)
+		}
+	}
+	if strings.Index(body, "Take the payment milestone first?") > strings.Index(body, `<section class="batch"`) {
+		t.Error("every batch's questions come before any batch's sessions")
+	}
+
+	r.w.Clock.Sleep(31 * time.Second)
+	log := filepath.Join(it.Dir, "events.jsonl")
+	if err := os.Chmod(log, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(log, 0o644)
+	if code, _, body := get(t, srv.URL); code != 200 || !strings.Contains(body, "Batch itell-2026-10-28 not read live: its record could not be read") ||
+		!strings.Contains(body, "Build the importer.") {
+		t.Fatalf("an unreadable batch keeps none of the others off the page: %d\n%s", code, body)
+	}
+	os.Chmod(log, 0o644)
+
+	r.d.DriverName = "itell"
+	one := httptest.NewServer(drive.NewPage(r.d))
+	defer one.Close()
+	if _, _, body := get(t, one.URL); !strings.Contains(body, "Batch itell-2026-10-28, driven by itell") || strings.Contains(body, "Build the importer.") {
+		t.Fatalf("--driver shows that driver's batch alone:\n%s", body)
+	}
 }

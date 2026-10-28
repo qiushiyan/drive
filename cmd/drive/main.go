@@ -37,7 +37,7 @@ type CLI struct {
 	Record  RecordCmd  `cmd:"" help:"Record what drive cannot see: the owner's grants, asks and answers, notes, and each session's goal."`
 	Log     LogCmd     `cmd:"" help:"Print the batch's timeline: what was sent, answered, opened, parked and closed, and every wake."`
 	Metrics MetricsCmd `cmd:"" help:"Print the batch's measures: asks and the owner's wait, merges, sends, wakes, refusals."`
-	Page    PageCmd    `cmd:"" help:"Serve the batch as a web page its owner opens: each session's goal, where it stands, its pull requests, and what waits on them."`
+	Page    PageCmd    `cmd:"" help:"Serve the live batches as a web page their owner opens: each session's goal, where it stands, its pull requests, and what waits on them."`
 	Batches BatchCmd   `cmd:"" name:"batch" help:"Print the current batch, or start, switch or list batches."`
 	Snippet SnippetCmd `cmd:"" help:"Print the owner's snippet KEY as a session in DIR would receive it."`
 	Snips   SnipsCmd   `cmd:"" name:"snippets" help:"List the snippet keys that resolve in DIR, each with its file."`

@@ -590,10 +590,13 @@ type PageCmd struct {
 
 func (c *PageCmd) Help() string {
 	return `
-Each request reads the batch live, the current one or the one --batch pins,
-closed sessions included, and changes nothing. A read is reused for 30
-seconds; one that takes longer than 20 seconds is answered from the batch's
-record while it finishes.
+Each request reads every live batch, each driver's current one, on one
+page: the questions waiting on the owner first, then each batch's sessions,
+closed ones included. --batch or --driver shows one batch instead. It
+changes nothing. A card's anchor is the batch's name and the session's
+label, such as #2026-10-27/T1, so a link opens one session's card. A read
+is reused for 30 seconds; one that takes longer than 20 seconds is answered
+from the batch's record while it finishes.
 
 It runs until stopped, and exits once the drive binary it runs is
 replaced, so a supervisor such as launchd restarts it on the new one. It

@@ -6,6 +6,8 @@ import (
 	"html/template"
 	"strings"
 	"time"
+
+	"github.com/qiushiyan/drive/internal/batch"
 )
 
 // What the page prints, for the owner on a phone: the words are theirs, not
@@ -13,19 +15,31 @@ import (
 // template only lays it out.
 
 type pageView struct {
-	Title  string
-	Batch  string // what the header says of the batch
-	Read   string // when the page was read, and how long that took
-	Live   string // why the sessions were not read live
-	Asks   []askView
+	Title   string
+	Batch   string   // what the header says of the batch, or the batches
+	Read    string   // when the page was read, and how long that took
+	Live    []string // why sessions were not read live, a line per batch
+	Asks    []askView
+	Batches []batchView
+	Several bool   // the page shows several drivers' batches, each under its own heading
+	Empty   string // what to say when there is nothing to show
+}
+
+// batchView is one batch's sessions on the page.
+type batchView struct {
+	Name   string // also its anchor
+	Title  string // its heading, when the page shows several
 	Groups []groupView
 	Holds  []string
-	Empty  string // what to say when there is nothing to show
+	Empty  string
 }
 
 type askView struct {
 	ID             string
-	Session        string // the session it holds, whose card it links to; "" for the whole batch
+	Anchor         string       // the batch's name and the ask's, since every batch numbers its asks from A1
+	Batch          string       // the batch it was asked in, named when the page shows several
+	Session        string       // the session it holds, whose card it links to; "" for the whole batch
+	Card           template.URL // the link to that card
 	Asked          string
 	Goal           string
 	Question       string
@@ -39,13 +53,23 @@ type groupView struct {
 }
 
 type cardView struct {
-	Label  string // also its anchor, so a link can name one session's card
+	Label  string
+	Anchor string // the batch's name and the label, so a link names one session's card on a page of several drivers' batches
 	State  string
-	Asks   []string // the open asks that name it, each linking to its question
+	Asks   []askLink // the open asks that name it, each linking to its question
 	Goal   string
 	Facts  []fact
 	Closed bool
 }
+
+type askLink struct {
+	ID   string
+	Href template.URL
+}
+
+// href links to an anchor on the page. The anchor's slash stays a slash:
+// a batch's name and a label hold none, and a driver writes the link.
+func href(anchor string) template.URL { return template.URL("#" + anchor) }
 
 type fact struct {
 	Text  string
@@ -58,44 +82,107 @@ type link struct {
 	Text, URL, State string
 }
 
-// HTML is the page, as of now.
-func (ov *Overview) HTML(now time.Time) []byte {
+// Anchor is where a session's card is on the page: the batch's name, a
+// slash and the session's label, such as 2026-10-27/ON.
+func Anchor(batchName, label string) string { return batchName + "/" + label }
+
+// HTML is the page of one batch, as of now.
+func (ov *Overview) HTML(now time.Time) []byte { return PageHTML([]*Overview{ov}, now) }
+
+// PageHTML is the page of the batches ovs read, as of now: the questions
+// waiting on the owner from every batch first, then each batch's sessions.
+// An Overview with no batch is a page with nothing to show.
+func PageHTML(ovs []*Overview, now time.Time) []byte {
 	v := pageView{Title: "drive"}
-	at := func(t time.Time) string { return when(t, now, ov.Zone) }
-	if ov.Batch == nil {
-		v.Empty = "There is no current batch."
-	} else {
+	var shown []*Overview
+	for _, ov := range ovs {
+		if ov.Batch != nil {
+			shown = append(shown, ov)
+		}
+	}
+	v.Several = len(shown) > 1
+	switch {
+	case len(shown) == 0:
+		v.Empty = "No batch is live."
+	case len(shown) == 1:
+		ov := shown[0]
 		v.Title = "drive · " + ov.Batch.Name
-		v.Batch = fmt.Sprintf("Batch %s, started %s", ov.Batch.Name, at(ov.Batch.Started))
-	}
-	v.Read = fmt.Sprintf("Read at %s, in %s.", ov.At.In(ov.Zone).Format("15:04:05"), ov.Took.Round(100*time.Millisecond))
-	v.Live = ov.Live
-	goals := map[string]string{}
-	for _, g := range ov.Groups {
-		for _, c := range g.Cards {
-			goals[c.Member.Label] = c.Member.Goal
+		v.Batch = fmt.Sprintf("Batch %s%s, started %s", ov.Batch.Name, driverClause(ov.Batch), when(ov.Batch.Started, now, ov.Zone))
+	default:
+		var names []string
+		for _, ov := range shown {
+			names = append(names, ov.Batch.Name)
 		}
+		v.Batch = "Batches " + strings.Join(names, ", ")
 	}
-	for _, a := range ov.Asks {
-		v.Asks = append(v.Asks, askView{ID: a.ID, Session: a.Session, Asked: "asked " + at(a.At), Goal: goals[a.Session], Question: a.Question,
-			Recommendation: a.Recommendation, IfUnanswered: a.IfUnanswered})
-	}
-	for _, g := range ov.Groups {
-		gv := groupView{Title: g.Title}
-		for _, c := range g.Cards {
-			gv.Cards = append(gv.Cards, cardOf(c, ov.Wakes, now, ov.Zone))
+	if len(ovs) > 0 {
+		first, took := ovs[0], time.Duration(0)
+		for _, ov := range ovs {
+			took = max(took, ov.Took)
 		}
-		v.Groups = append(v.Groups, gv)
+		v.Read = fmt.Sprintf("Read at %s, in %s.", first.At.In(first.Zone).Format("15:04:05"), took.Round(100*time.Millisecond))
 	}
-	v.Holds = ov.Holds
-	if ov.Batch != nil && len(ov.Groups) == 0 {
-		v.Empty = "No session has joined the batch yet."
+	for _, ov := range shown {
+		at := func(t time.Time) string { return when(t, now, ov.Zone) }
+		name := ov.Batch.Name
+		if ov.Live != "" {
+			if v.Several {
+				v.Live = append(v.Live, fmt.Sprintf("Batch %s not read live: %s. What follows of it is what its record holds.", name, ov.Live))
+			} else {
+				v.Live = append(v.Live, fmt.Sprintf("Not read live: %s. What follows is what the batch's record holds.", ov.Live))
+			}
+		}
+		goals := map[string]string{}
+		for _, g := range ov.Groups {
+			for _, c := range g.Cards {
+				goals[c.Member.Label] = c.Member.Goal
+			}
+		}
+		for _, a := range ov.Asks {
+			av := askView{ID: a.ID, Anchor: name + "/ask-" + a.ID, Session: a.Session, Asked: "asked " + at(a.At), Goal: goals[a.Session],
+				Question: a.Question, Recommendation: a.Recommendation, IfUnanswered: a.IfUnanswered}
+			if a.Session != "" {
+				av.Card = href(Anchor(name, a.Session))
+			}
+			if v.Several {
+				av.Batch = name
+			}
+			v.Asks = append(v.Asks, av)
+		}
+		bv := batchView{Name: name, Holds: ov.Holds}
+		if v.Several {
+			bv.Title = fmt.Sprintf("Batch %s%s, started %s", name, driverClause(ov.Batch), at(ov.Batch.Started))
+		}
+		for _, g := range ov.Groups {
+			gv := groupView{Title: g.Title}
+			for _, c := range g.Cards {
+				cv := cardOf(c, ov.Wakes, now, ov.Zone)
+				cv.Anchor = Anchor(name, c.Member.Label)
+				for _, id := range c.Asks {
+					cv.Asks = append(cv.Asks, askLink{ID: id, Href: href(name + "/ask-" + id)})
+				}
+				gv.Cards = append(gv.Cards, cv)
+			}
+			bv.Groups = append(bv.Groups, gv)
+		}
+		if len(ov.Groups) == 0 {
+			bv.Empty = "No session has joined the batch yet."
+		}
+		v.Batches = append(v.Batches, bv)
 	}
 	var out bytes.Buffer
 	if err := pageTemplate.Execute(&out, v); err != nil {
 		return []byte("the page did not render: " + template.HTMLEscapeString(err.Error()))
 	}
 	return out.Bytes()
+}
+
+// driverClause names a batch's driver in its heading, where it names one.
+func driverClause(m *batch.Meta) string {
+	if driver := batch.DriverOf(*m); driver != "" {
+		return ", driven by " + driver
+	}
+	return ""
 }
 
 func cardOf(c Card, wakes bool, now time.Time, zone *time.Location) cardView {
@@ -107,9 +194,6 @@ func cardOf(c Card, wakes bool, now time.Time, zone *time.Location) cardView {
 		v.State = "Closed " + at(m.ClosedAt)
 	case r != nil && r.Error == "":
 		v.State = stateWords(r.State) + " for " + ago(r.For)
-	}
-	if len(c.Asks) > 0 {
-		v.Asks = c.Asks
 	}
 	if m.Parked != "" && !m.Closed {
 		v.Facts = append(v.Facts, fact{Text: "Parked by the driver " + at(m.ParkedAt) + ": " + m.Parked})
@@ -259,7 +343,8 @@ main { max-width: 760px; margin: 0 auto; padding: 16px 16px 48px; }
 header.page h1 { font-size: 1.25rem; margin: 0 0 2px; }
 header.page p { margin: 0; color: var(--muted); font-size: 0.9rem; }
 .banner { margin: 12px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--accent-bg); color: var(--accent); }
-h2 { font-size: 1rem; margin: 28px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+h2, h3 { font-size: 1rem; margin: 28px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+h2.batch { font-size: 1.1rem; margin: 40px 0 0; padding-top: 12px; border-top: 1px solid var(--line); color: var(--ink); text-transform: none; letter-spacing: 0; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 0 0 10px; }
 .card.closed { opacity: 0.85; }
 .card:target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
@@ -288,13 +373,13 @@ footer { margin-top: 32px; color: var(--muted); font-size: 0.85rem; }
 <header class="page">
 <h1>{{if .Batch}}{{.Batch}}{{else}}drive{{end}}</h1>
 <p>{{.Read}}</p>
-{{with .Live}}<p class="banner">Not read live: {{.}}. What follows is what the batch's record holds.</p>{{end}}
-</header>
+{{range .Live}}<p class="banner">{{.}}</p>
+{{end}}</header>
 {{if .Empty}}<p class="empty">{{.Empty}}</p>{{end}}
-{{if or .Asks .Groups}}
+{{if .Batches}}
 <h2>Needs you</h2>
-{{range .Asks}}<article class="card ask" id="ask-{{.ID}}">
-<p class="head">{{.ID}} · {{if .Session}}<a href="#{{.Session}}">{{.Session}}</a>{{else}}the whole batch{{end}} · {{.Asked}}</p>
+{{range .Asks}}<article class="card ask" id="{{.Anchor}}">
+<p class="head">{{.ID}}{{with .Batch}} · {{.}}{{end}} · {{if .Session}}<a href="{{.Card}}">{{.Session}}</a>{{else}}the whole batch{{end}} · {{.Asked}}</p>
 {{with .Goal}}<p class="goal">{{.}}</p>{{end}}
 <p class="question">{{.Question}}</p>
 {{with .Recommendation}}<p>Recommended: {{.}}</p>{{end}}
@@ -303,17 +388,20 @@ footer { margin-top: 32px; color: var(--muted); font-size: 0.85rem; }
 {{else}}<p class="empty">Nothing waits on you.</p>
 {{end}}
 {{end}}
-{{range .Groups}}<h2>{{.Title}}</h2>
-{{range .Cards}}<article class="card{{if .Closed}} closed{{end}}" id="{{.Label}}">
-<div class="top"><span class="label">{{.Label}}</span>{{with .State}}<span class="state">{{.}}</span>{{end}}{{with .Asks}}<span class="badge">Waits on you:{{range $i, $a := .}}{{if $i}},{{end}} <a href="#ask-{{$a}}">{{$a}}</a>{{end}}</span>{{end}}</div>
+{{range .Batches}}<section class="batch" id="{{.Name}}">
+{{with .Title}}<h2 class="batch">{{.}}</h2>
+{{end}}{{with .Empty}}<p class="empty">{{.}}</p>
+{{end}}{{range .Groups}}<h3>{{.Title}}</h3>
+{{range .Cards}}<article class="card{{if .Closed}} closed{{end}}" id="{{.Anchor}}">
+<div class="top"><span class="label">{{.Label}}</span>{{with .State}}<span class="state">{{.}}</span>{{end}}{{with .Asks}}<span class="badge">Waits on you:{{range $i, $a := .}}{{if $i}},{{end}} <a href="{{$a.Href}}">{{$a.ID}}</a>{{end}}</span>{{end}}</div>
 {{if .Goal}}<p class="goal">{{.Goal}}</p>{{else}}<p class="goal none">No goal recorded.</p>{{end}}
 {{if .Facts}}<ul class="facts">
 {{range .Facts}}<li{{if .Minor}} class="minor"{{else if .Error}} class="error"{{end}}>{{.Text}}{{range $i, $l := .Links}}{{if $i}};{{end}} <span class="pr">{{if .URL}}<a href="{{.URL}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}{{with .State}} {{.}}{{end}}</span>{{end}}</li>
 {{end}}</ul>{{end}}
 </article>
-{{end}}{{end}}
-{{if .Holds}}<h2>Holds</h2>
+{{end}}{{end}}{{if .Holds}}<h3>Holds</h3>
 <ul class="facts">{{range .Holds}}<li>{{.}}</li>{{end}}</ul>
+{{end}}</section>
 {{end}}
 <footer>Reload to read it again; a read is reused for 30 seconds.</footer>
 </main>
