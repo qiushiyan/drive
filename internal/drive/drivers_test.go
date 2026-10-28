@@ -99,3 +99,42 @@ func TestASettledOpenTakesNoOtherDriversBlock(t *testing.T) {
 		}
 	}
 }
+
+// A batch's watches are named for it with its punctuation read as dashes,
+// so a name that reads as another batch's there is refused: ending one
+// batch would stop the other's watches.
+func TestABatchNameSharingAnothersWatchNamesIsRefused(t *testing.T) {
+	r := newRig(t, "none")
+	if _, err := r.d.StartBatch(drive.BatchOptions{Name: "itell-2026-10-28", Wake: "none", Driver: "itell"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.StartBatch(drive.BatchOptions{Name: "itell.2026-10-28", Wake: "none", Driver: "other"}); !isRefused(err) ||
+		!strings.Contains(err.Error(), "batch itell-2026-10-28's in the names of its watches") {
+		t.Fatalf("a name whose watches read as another batch's is refused: %v", err)
+	}
+}
+
+// A driver's new batch replaces its own last one and stops that one's
+// watches; another driver's batch and watches stay as they were.
+func TestANewBatchStopsOnlyItsOwnDriversWatches(t *testing.T) {
+	r := newRig(t, "webhook")
+	newDriverBatch(t, r, "2026-10-27", "session-driver")
+	on := adopted(t, r, "ON")
+	newDriverBatch(t, r, "itell-2026-10-28", "itell")
+	nb := adopted(t, r, "NB")
+	theirs, mine := "drive-2026-10-27-"+on.Block[len(on.Block)-6:], "drive-itell-2026-10-28-"+nb.Block[len(nb.Block)-6:]
+	if !r.watches.Alive(theirs) || !r.watches.Alive(mine) {
+		t.Fatal("each driver's send armed its session's wake")
+	}
+	r.d.Cfg.ConfigDir = filepath.Join(r.w.Root, "config")
+	st, err := r.d.StartBatch(drive.BatchOptions{Name: "itell-2026-10-29", Wake: "none", Driver: "itell"})
+	if err != nil || st.Prev == nil || st.Prev.Meta.Name != "itell-2026-10-28" || st.Stopped != 1 {
+		t.Fatalf("itell's new batch replaces its own last one, stopping its watch: %+v %v", st, err)
+	}
+	if !r.watches.Alive(theirs) || r.watches.Alive(mine) {
+		t.Fatal("session-driver's wake runs on; itell's last batch's stopped")
+	}
+	if cur, err := r.d.Store.Current("session-driver"); err != nil || cur.Meta.Name != "2026-10-27" {
+		t.Fatalf("session-driver still drives its batch: %+v %v", cur, err)
+	}
+}
