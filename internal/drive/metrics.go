@@ -82,7 +82,7 @@ type MergedPR struct {
 func (d *Driver) Metrics() (*Metrics, error) {
 	b, err := d.Batch()
 	if err != nil {
-		return nil, &Refused{Reason: err.Error()}
+		return nil, err
 	}
 	evs, err := b.Events()
 	if err != nil {

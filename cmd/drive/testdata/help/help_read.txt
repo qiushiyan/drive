@@ -7,22 +7,25 @@ recorded, its view and next:. A closed or gone session is read from its
 transcript as it ended, with no view, since there is nothing left to act on.
 
 Arguments:
-  <session>           The session: a label in the batch, or a block id for one outside it.
+  <session>            The session: a label in the batch, or a block id for one outside it.
 
 Flags:
-      --prompts=N     Print the last N prompts it was told instead of its reply: what it is working
-                      on and how it got there.
-      --pending       Print the tool call its permission prompt waits on.
-      --user          Print its newest prompt as it arrived, to see whether a step sent to it landed
-                      whole.
-      --screen        Print the end of its screen: a prompt's options, or whatever covers its input
-                      box.
-      --json          Print one JSON document instead of text.
+      --prompts=N      Print the last N prompts it was told instead of its reply: what it is working
+                       on and how it got there.
+      --pending        Print the tool call its permission prompt waits on.
+      --user           Print its newest prompt as it arrived, to see whether a step sent to it
+                       landed whole.
+      --screen         Print the end of its screen: a prompt's options, or whatever covers its input
+                       box.
+      --json           Print one JSON document instead of text.
 
 Inherited flags:
-  -h, --help          Show context-sensitive help.
-      --batch=NAME    Act in this batch instead of the current one, which stays current. It may
-                      stand anywhere on the line.
+  -h, --help           Show context-sensitive help.
+      --batch=NAME     Act in this batch, as drive prints its name, instead of the driver's current
+                       one. It may stand anywhere on the line.
+      --driver=NAME    Act as this driver, in its current batch: a chat driver is named by its
+                       webhook. Where drivers each drive a batch, every command names one. It may
+                       stand anywhere on the line.
 
 Constraints:
   At most one of --prompts, --pending, --user, --screen.

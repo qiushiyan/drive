@@ -42,7 +42,7 @@ type Opened struct {
 func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, err error) {
 	b, err := d.Batch()
 	if err != nil {
-		return nil, &Refused{Reason: err.Error()}
+		return nil, err
 	}
 	if label == "" || strings.ContainsAny(label, " @/") {
 		return nil, &Refused{Reason: fmt.Sprintf("label %q: use a short name without spaces, '@' or '/', such as T1", label)}

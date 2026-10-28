@@ -64,7 +64,7 @@ func TestEveryActionThatTouchesASessionLeavesItWatched(t *testing.T) {
 		{"a send whose Enter Rex refused", func(r *rig, c *testkit.Claude) error {
 			r.w.KeyFails = 1 // the line is typed; the press after it fails
 			_, err := r.d.Send(r.view("T1"), drive.Step{Line: "go on"}, drive.SendOptions{})
-			if f := (*drive.Failed)(nil); !errors.As(err, &f) || !strings.Contains(f.Next, "drive respond T1@") {
+			if f := (*drive.Failed)(nil); !errors.As(err, &f) || !strings.Contains(f.Next, "drive --batch b1 respond T1@") {
 				t.Fatalf("a line typed with no Enter is a failure that says how to clear it: %v", err)
 			}
 			return nil
@@ -277,7 +277,7 @@ func TestARefusedOpenWaitsForItsHold(t *testing.T) {
 	if err := r.d.Wake("T5", e, ""); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(body, "drive open sr-1") || !strings.Contains(body, "--hold release") {
+	if !strings.Contains(body, "drive --batch b1 open sr-1") || !strings.Contains(body, "--hold release") {
 		t.Fatalf("the holder's wake names the open to run: %s", body)
 	}
 }
@@ -305,8 +305,9 @@ func TestALoginWakeRelaunchesWithTheLastStep(t *testing.T) {
 	}
 }
 
-// A batch that wakes a chat driver is bound to that driver's webhook: it
-// does not start without one that can post, and its wakes go there only.
+// A batch that wakes a chat driver is bound to that driver's webhook, whose
+// name is the driver's: it starts before the owner has written the file,
+// says so, and no wake starts until it is; then its wakes go there only.
 func TestABatchWakesItsOwnDriver(t *testing.T) {
 	r := newRig(t, "none")
 	r.d.Cfg.ConfigDir = filepath.Join(r.w.Root, "config")
@@ -315,9 +316,21 @@ func TestABatchWakesItsOwnDriver(t *testing.T) {
 		t.Fatalf("a webhook batch names its webhook: %v", err)
 	}
 	opt.Webhook = "drive-test"
-	if _, err := r.d.StartBatch(opt); !isRefused(err) ||
-		!strings.Contains(err.Error(), filepath.Join("webhooks", "drive-test")) {
-		t.Fatalf("a webhook with no URL starts no batch, and says where it goes: %v", err)
+	st, err := r.d.StartBatch(opt)
+	if err != nil || !st.RexStarted || st.NoWebhook == nil || !strings.Contains(st.Text(), filepath.Join("webhooks", "drive-test")) ||
+		!strings.Contains(st.Text(), "drive --batch b2 watch --due") {
+		t.Fatalf("a webhook with no URL yet starts the batch, and says where it goes and what to run then: %+v %v\n%s", st, err, st.Text())
+	}
+	if st.Prev != nil {
+		t.Fatalf("the driver's first batch replaces no other driver's: %+v", st.Prev)
+	}
+	r.d.DriverName = "drive-test"
+	c := r.w.Add("T1")
+	done(c, "onboard", "analysis")
+	var f *drive.Failed
+	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "go"}, drive.SendOptions{Label: "T1"}); !errors.As(err, &f) ||
+		!strings.Contains(f.What, "wake did not start") || !strings.Contains(f.Next, filepath.Join("webhooks", "drive-test")) {
+		t.Fatalf("the step goes, and its wake fails saying where the URL goes: %v", err)
 	}
 	var got string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -331,14 +344,8 @@ func TestABatchWakesItsOwnDriver(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.d.Cfg.Webhook = config.Webhook{URL: "http://127.0.0.1:9/another-driver"}
-	st, err := r.d.StartBatch(opt)
-	if err != nil || !st.RexStarted {
-		t.Fatalf("started, its Rex session with it: %+v %v", st, err)
-	}
-	c := r.w.Add("T1")
-	done(c, "onboard", "analysis")
-	if sent, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "go"}, drive.SendOptions{Label: "T1"}); err != nil || !sent.Watched {
-		t.Fatalf("a send arms the wake: %+v %v", sent, err)
+	if armed, _, err := r.d.Due(); err != nil || len(armed) != 1 || armed[0].Label != "T1" {
+		t.Fatalf("once the owner writes it, --due arms the session that went unwatched: %+v %v", armed, err)
 	}
 	e, _ := r.d.Wait("T1", time.Minute, 10*time.Minute)
 	if err := r.d.Wake("T1", e, ""); err != nil || got != "Bearer mine" {
@@ -348,13 +355,13 @@ func TestABatchWakesItsOwnDriver(t *testing.T) {
 	_ = os.WriteFile(hook, nil, 0o600)
 	r.watches.Retire("drive-b2-" + c.Block[len(c.Block)-6:])
 	_, err = r.d.Send(r.view("T1"), drive.Step{Line: "next"}, drive.SendOptions{})
-	var f *drive.Failed
-	if !errors.As(err, &f) || !strings.Contains(f.Next, "drive watch T1") || r.watches.Alive("drive-b2-"+c.Block[len(c.Block)-6:]) {
+	f = nil
+	if !errors.As(err, &f) || !strings.Contains(f.Next, "drive --batch b2 watch T1") || r.watches.Alive("drive-b2-"+c.Block[len(c.Block)-6:]) {
 		t.Fatalf("no wake is armed that cannot post: %v", err)
 	}
 	var rf *drive.Refused
 	if err := r.d.Timer(5*time.Minute, "veto"); !errors.As(err, &rf) ||
-		!strings.Contains(rf.Next, "drive timer 300 veto") || r.watches.Alive("drive-b2-timer-veto") {
+		!strings.Contains(rf.Next, "drive --batch b2 timer 300 veto") || r.watches.Alive("drive-b2-timer-veto") {
 		t.Fatalf("nor a timer: %v", err)
 	}
 	// A batch that wakes no one arms no timer: its driver sleeps itself.
@@ -408,7 +415,7 @@ func TestAWakeNobodyActedOnSaysWhenItComesAgain(t *testing.T) {
 	r.w.Clock.Sleep(5 * time.Minute)
 	st, _ := r.d.Status(false)
 	armed, later, _ := r.d.Due()
-	if !strings.Contains(st.Rows[0].Watch, "drive watch --due posts it again from") || len(armed) != 0 || len(later) != 1 || later[0].Label != "T1" {
+	if !strings.Contains(st.Rows[0].Watch, "drive --batch b1 watch --due posts it again from") || len(armed) != 0 || len(later) != 1 || later[0].Label != "T1" {
 		t.Fatalf("not due yet, and when it will be: %q %+v %+v", st.Rows[0].Watch, armed, later)
 	}
 	r.w.Clock.Sleep(6 * time.Minute)
@@ -457,7 +464,7 @@ func TestABatchStartRefusesBeforeItsFirstEffect(t *testing.T) {
 	if started, _ := r.w.EnsureSession("fresh"); !started {
 		t.Fatal("the refused start started its Rex session")
 	}
-	if _, err := r.d.Store.New(batch.Meta{Name: "b2", Started: r.w.Clock.Now(), Wake: "none"}); err != nil {
+	if _, _, err := r.d.Store.New(batch.Meta{Name: "b2", Started: r.w.Clock.Now(), Wake: "none"}); err != nil {
 		t.Fatal(err)
 	}
 	r.d.BatchName = "b1"

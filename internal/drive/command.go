@@ -13,19 +13,24 @@ import (
 type text string
 
 // run is a drive command line a message gives the driver to run as written.
-// Each word is one shell word; the batch is named when the action ran in
-// one that is not current, since a wake or a --batch refusal is read where
-// the current batch may be another; and free text goes after every flag,
+// Each word is one shell word; the batch the action ran in is named, since
+// the line may run after its driver has started another, or for a driver
+// that must otherwise name itself; and free text goes after every flag,
 // behind -- when it starts with a dash, which drive would read as a flag.
 // words are strings (commands, flags and their values) and texts.
 func (d *Driver) run(words ...any) string {
-	line := "drive "
-	if d.BatchName != "" {
-		if cur, err := d.Store.Current(); err != nil || cur.Meta.Name != d.BatchName {
-			line += "--batch " + shell.Quote(d.BatchName) + " "
-		}
+	if b, err := d.Batch(); err == nil {
+		return d.runIn(b.Meta.Name, words...)
 	}
-	return line + join(words...)
+	return "drive " + join(words...)
+}
+
+// runIn is run for batch name, or for no batch when name is "".
+func (d *Driver) runIn(name string, words ...any) string {
+	if name == "" {
+		return "drive " + join(words...)
+	}
+	return "drive " + join(append([]any{"--batch", name}, words...)...)
 }
 
 // join is the words of a command line, as run orders and quotes them.

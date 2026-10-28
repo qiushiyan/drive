@@ -1,0 +1,9 @@
+$ drive --driver itell status --quick
+exit 0
+--- stdout
+batch itell-2026-10-28 · wakes: webhook · Rex session - · times Europe/London (BST, UTC+01:00)
+no sessions in this batch yet
+
+other Claude sessions in Rex:
+  1  a00001  done  <1m  ON
+--- stderr

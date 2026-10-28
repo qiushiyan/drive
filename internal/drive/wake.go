@@ -61,7 +61,7 @@ type Watched struct {
 func (d *Driver) Watch(ref string) (*Watched, error) {
 	b, err := d.Batch()
 	if err != nil {
-		return nil, &Refused{Reason: err.Error()}
+		return nil, err
 	}
 	if b.Meta.Wake != "webhook" {
 		return nil, &Refused{Reason: fmt.Sprintf("batch %s wakes no one (wake: %s)", b.Meta.Name, b.Meta.Wake),
@@ -147,7 +147,7 @@ type Rearmed struct {
 func (d *Driver) Due() (armed, later []Rearmed, err error) {
 	b, err := d.Batch()
 	if err != nil {
-		return nil, nil, &Refused{Reason: err.Error()}
+		return nil, nil, err
 	}
 	if b.Meta.Wake != "webhook" {
 		return nil, nil, &Refused{Reason: fmt.Sprintf("batch %s wakes no one (wake: %s)", b.Meta.Name, b.Meta.Wake)}
@@ -226,7 +226,7 @@ func (d *Driver) StopWatches(b *batch.Batch) (int, error) {
 func (d *Driver) Timer(after time.Duration, note string) error {
 	b, err := d.Batch()
 	if err != nil {
-		return &Refused{Reason: err.Error()}
+		return err
 	}
 	secs := fmt.Sprint(int(after.Seconds()))
 	if b.Meta.Wake != "webhook" {

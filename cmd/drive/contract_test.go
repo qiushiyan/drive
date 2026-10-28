@@ -130,7 +130,6 @@ func TestContracts(t *testing.T) {
 	t2.Ask("pnpm install")
 	block := func(cl *testkit.Claude) string { return cl.Block[len(cl.Block)-6:] }
 
-	c.run("batch-new-webhook-unknown", "batch", "new", "b0", "--webhook", "nobody")
 	c.run("batch-new", "batch", "new", "b1", "--tz", "Europe/London")
 	c.run("batch", "batch")
 	c.run("read-block-prompts", "read", block(t1), "--prompts", "10")
@@ -249,6 +248,31 @@ func keys(doc any) []string {
 		}
 	}
 	return out
+}
+
+// Drivers that share a machine each drive a batch of their own: one's start
+// touches no other's, a command that names no driver is refused with the
+// command again for each, and a chat driver's batch starts before the owner
+// has written its webhook.
+func TestContractDrivers(t *testing.T) {
+	c := newContract(t)
+	write(t, filepath.Join(c.home, "config", "webhooks", "session-driver"), "URL=http://127.0.0.1:9/unused\nAUTH=Bearer x\n")
+	on := c.w.Add("ON")
+	on.Busy("onboard")
+	on.Done("eight decisions for you")
+
+	c.run("drivers-batch-new", "batch", "new", "2026-10-27", "--webhook", "session-driver", "--tz", "Europe/London")
+	v := view(t, c.run("drivers-read-block", "--driver", "session-driver", "read", on.Block[len(on.Block)-6:]))
+	c.run("drivers-send", "--driver", "session-driver", "send", v, "--as", "ON", "go on")
+	c.run("drivers-batch-new-webhook-pending", "batch", "new", "itell-2026-10-28", "--webhook", "itell", "--tz", "Europe/London")
+	c.run("drivers-status-no-driver", "status", "--quick")
+	c.run("drivers-status-itell", "--driver", "itell", "status", "--quick")
+	c.run("drivers-batch-other-driver", "--driver", "itell", "--batch", "2026-10-27", "log")
+	c.run("drivers-batch-list", "batch", "list")
+	c.run("drivers-batch-end", "batch", "end", "--driver", "itell")
+	c.run("drivers-status-ended", "--driver", "itell", "status", "--quick")
+	c.run("drivers-batch-session-driver", "--driver", "session-driver", "batch")
+	c.run("drivers-batch-list-after-end", "batch", "list")
 }
 
 // A step a rejected login answers exits 4 and prints the relaunch.

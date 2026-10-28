@@ -3,4 +3,4 @@ exit 1
 --- stdout
 --- stderr
 drive: error: T9 has never been in batch b1
-next: drive status lists the batch's sessions by label
+next: drive --batch b1 status lists the batch's sessions by label

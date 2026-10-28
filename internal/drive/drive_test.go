@@ -56,7 +56,7 @@ func newRig(t *testing.T, wake string) *rig {
 		t.Fatal(err)
 	}
 	store := batch.Store{Dir: filepath.Join(w.Root, "state")}
-	b, err := store.New(batch.Meta{Name: "b1", Started: w.Clock.Now(), Wake: wake})
+	b, _, err := store.New(batch.Meta{Name: "b1", Started: w.Clock.Now(), Wake: wake})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +411,7 @@ func TestAGarbledTurnThatEndedIsNotTakenBack(t *testing.T) {
 		c.Reply = func(c *testkit.Claude, _ string) { c.Done("ok"); c.RexOnly("working", "", "") }
 	})
 	sent, err := r.d.Send(r.view("T1"), drive.Step{Line: "/pl-loopy-handoff-distill merged and deployed"}, drive.SendOptions{})
-	if err == nil || sent == nil || sent.Outcome != "garbled" || !strings.Contains(err.Error(), "drive read T1") {
+	if err == nil || sent == nil || sent.Outcome != "garbled" || !strings.Contains(err.Error(), "drive --batch b1 read T1") {
 		t.Fatalf("a garbled turn that already ended is reported, not retyped: %+v %v", sent, err)
 	}
 	if _, keys := c.Seen(); contains(keys, "ctrl+c") {
@@ -454,7 +454,7 @@ func TestTypedOnlySkillInAFileIsRefused(t *testing.T) {
 	}
 	// On an open, the line to type goes on the open.
 	_, err = r.d.Open("sr", drive.Step{File: f}, drive.OpenOptions{Dir: r.w.Root})
-	if !isRefused(err) || !strings.Contains(err.Error(), "drive open sr --dir "+r.w.Root+" '/strategic-review 9531") {
+	if !isRefused(err) || !strings.Contains(err.Error(), "drive --batch b1 open sr --dir "+r.w.Root+" '/strategic-review 9531") {
 		t.Fatalf("an open refused for a typed-only skill prints the open to run: %v", err)
 	}
 }
@@ -474,7 +474,7 @@ func TestTypedInputIsLeftAlone(t *testing.T) {
 	// A screen with no input box on it takes no typing: it would land in whatever is there.
 	c.Edit(func(c *testkit.Claude) { c.Input, c.Screen = "", "Transcript view · ctrl+o to return" })
 	_, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "consult-design"}, drive.SendOptions{})
-	if !isRefused(err) || !strings.Contains(err.Error(), "drive read "+c.Block[len(c.Block)-6:]+" --screen") {
+	if !isRefused(err) || !strings.Contains(err.Error(), "drive --batch b1 read "+c.Block[len(c.Block)-6:]+" --screen") {
 		t.Fatalf("a screen with no input box stops the send, saying how to see it: %v", err)
 	}
 	if rd, _ := r.d.Read(c.Block[len(c.Block)-6:], drive.ReadScreen, 0); !strings.Contains(rd.Body, "Transcript view") {
@@ -930,7 +930,7 @@ func TestHoldWaitersAreListedAndTheRefusalSaysHowBack(t *testing.T) {
 	a.Done("released")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		body, _ := io.ReadAll(req.Body)
-		if !strings.Contains(string(body), "which T5s held: T3s") || !strings.Contains(string(body), "drive send T3s@") ||
+		if !strings.Contains(string(body), "which T5s held: T3s") || !strings.Contains(string(body), "drive --batch b1 send T3s@") ||
 			!strings.Contains(string(body), "--hold release release") {
 			t.Errorf("the holder's wake names who waits for what it held: %s", body)
 		}

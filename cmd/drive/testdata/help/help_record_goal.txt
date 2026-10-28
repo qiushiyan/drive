@@ -8,14 +8,17 @@ session's purpose or scope changes. read and the owner's page show the
 latest.
 
 Arguments:
-  <session>           The session, by its label in the batch; a closed one too.
-  <text> ...          What it sets out to do, in plain terms for the owner: one short paragraph, at
-                      most 600 bytes.
+  <session>            The session, by its label in the batch; a closed one too.
+  <text> ...           What it sets out to do, in plain terms for the owner: one short paragraph, at
+                       most 600 bytes.
 
 Inherited flags:
-  -h, --help          Show context-sensitive help.
-      --batch=NAME    Act in this batch instead of the current one, which stays current. It may
-                      stand anywhere on the line.
+  -h, --help           Show context-sensitive help.
+      --batch=NAME     Act in this batch, as drive prints its name, instead of the driver's current
+                       one. It may stand anywhere on the line.
+      --driver=NAME    Act as this driver, in its current batch: a chat driver is named by its
+                       webhook. Where drivers each drive a batch, every command names one. It may
+                       stand anywhere on the line.
 
 Exit codes:
   0    success

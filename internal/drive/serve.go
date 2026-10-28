@@ -71,7 +71,7 @@ func (p *Page) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // gives within its deadline, else what the record holds. The batch is
 // resolved once per visit, and each read reads only that batch.
 func (p *Page) overview() (*Overview, error) {
-	b, err := p.d.Batch()
+	b, err := p.d.resolve()
 	if errors.Is(err, batch.ErrNoBatch) {
 		return p.d.Overview(false)
 	}

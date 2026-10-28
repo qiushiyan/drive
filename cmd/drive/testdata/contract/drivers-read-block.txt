@@ -1,0 +1,8 @@
+$ drive --driver session-driver read a00001
+exit 0
+--- stdout
+eight decisions for you
+
+a00001 is done on account acct@example.com (session sid-1)
+view: a00001@e274d317
+--- stderr

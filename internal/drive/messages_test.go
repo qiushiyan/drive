@@ -44,13 +44,13 @@ func TestEveryNextRunsAsWritten(t *testing.T) {
 			c.Ask("rm -rf build")
 			_, err := r.d.Send(r.view("T1"), drive.Step{Line: "go on"}, drive.SendOptions{})
 			return nextOf(err)
-		}, []string{" approve", " deny", "drive read T1 --pending"}},
+		}, []string{" approve", " deny", "drive --batch b1 read T1 --pending"}},
 		{"a step into a question", "none", func(r *rig, c *testkit.Claude) string {
 			c.Busy("plan it")
 			c.Set("blocked", "question", "Which database?")
 			_, err := r.d.Send(r.view("T1"), drive.Step{Line: "go on"}, drive.SendOptions{})
 			return nextOf(err)
-		}, []string{" approve", " deny", "drive read T1 --screen"}},
+		}, []string{" approve", " deny", "drive --batch b1 read T1 --screen"}},
 		{"a wait that ends on a prompt", "none", func(r *rig, c *testkit.Claude) string {
 			c.Busy("clean up")
 			c.Ask("rm -rf build")
@@ -75,22 +75,22 @@ func TestEveryNextRunsAsWritten(t *testing.T) {
 			}
 			_, err := r.d.Send(r.view("T1"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"})
 			return nextOf(err)
-		}, []string{"drive park T1@", "drive watch --due"}},
+		}, []string{"drive --batch b1 park T1@", "drive --batch b1 watch --due"}},
 		{"a close while it works, its wake spent", "webhook", func(r *rig, c *testkit.Claude) string {
 			woken(r, c)
 			c.Busy("build")
 			return nextOf(r.d.Close(r.view("T1")))
-		}, []string{"drive watch T1"}},
+		}, []string{"drive --batch b1 watch T1"}},
 		{"a close over an unsent line", "none", func(r *rig, c *testkit.Claude) string {
 			c.Edit(func(c *testkit.Claude) { c.Input = "hold off on the merge" })
 			return nextOf(r.d.Close(r.view("T1")))
-		}, []string{"drive park T1@"}},
+		}, []string{"drive --batch b1 park T1@"}},
 		{"a close over a background job", "webhook", func(r *rig, c *testkit.Claude) string {
 			c.Edit(func(c *testkit.Claude) {
 				c.Shells = []session.Shell{{Started: r.w.Clock.Now(), Command: "pnpm test --watch"}}
 			})
 			return nextOf(r.d.Close(r.view("T1")))
-		}, []string{"drive park T1@"}},
+		}, []string{"drive --batch b1 park T1@"}},
 		{"a send whose Enter was lost", "none", func(r *rig, c *testkit.Claude) string {
 			c.Edit(func(c *testkit.Claude) { c.LoseEnter = true })
 			_, err := r.d.Send(r.view("T1"), drive.Step{Line: "go on"}, drive.SendOptions{})
@@ -105,7 +105,7 @@ func TestEveryNextRunsAsWritten(t *testing.T) {
 			})
 			_, err := r.d.Send(r.view("T1"), drive.Step{Line: "update the changelog"}, drive.SendOptions{})
 			return nextOf(err)
-		}, []string{" interrupt", "drive read T1"}},
+		}, []string{" interrupt", "drive --batch b1 read T1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newRig(t, tc.wake)
@@ -124,7 +124,7 @@ func TestEveryNextRunsAsWritten(t *testing.T) {
 					t.Errorf("%q does not run as written: %s", bad, next)
 				}
 			}
-			if tc.wake == "webhook" && strings.Contains(next, "drive wait") {
+			if tc.wake == "webhook" && strings.Contains(next, "drive --batch b1 wait") {
 				t.Errorf("a chat driver cannot hold a wait open: %s", next)
 			}
 			for _, m := range printedView.FindAllStringSubmatch(next, -1) {
@@ -167,11 +167,11 @@ func TestAReadThatFailsBeforeAnyEffectIsARefusal(t *testing.T) {
 	}
 	defer os.Chmod(c.Transcript(), 0o644)
 	_, err := r.d.Send(v, drive.Step{Line: "go on"}, drive.SendOptions{})
-	if !isRefused(err) || !strings.Contains(nextOf(err), "drive send "+v+" 'go on'") {
+	if !isRefused(err) || !strings.Contains(nextOf(err), "drive --batch b1 send "+v+" 'go on'") {
 		t.Fatalf("a send refused, with itself to run again: %v", err)
 	}
 	_, err = r.d.Respond(v, "interrupt")
-	if !isRefused(err) || !strings.Contains(nextOf(err), "drive respond "+v+" interrupt") {
+	if !isRefused(err) || !strings.Contains(nextOf(err), "drive --batch b1 respond "+v+" interrupt") {
 		t.Fatalf("a respond refused, with itself to run again: %v", err)
 	}
 	if typed, keys := c.Seen(); len(without(typed, "Read ")) != 1 || len(keys) != 2 {
@@ -204,18 +204,18 @@ func TestAStaleViewNamesTheStepAnotherRunSent(t *testing.T) {
 
 // A command a message gives runs as written wherever the driver reads it:
 // free text, which may start with a dash, goes after every flag and behind
-// --, and an action in a batch that is not the current one names it, since
-// the driver's next command acts in the current batch.
+// --, and the batch the action ran in is named, current or not, since the
+// line may run after its driver has started another.
 func TestANextCommandCarriesItsTextAndBatch(t *testing.T) {
 	r := newRig(t, "webhook")
 	c := adopted(t, r, "T1")
 	c.Busy("build")
 	_, err := r.d.Send(r.view("T1"), drive.Step{Line: "-v is broken"}, drive.SendOptions{Hold: "release"})
-	if next := nextOf(err); !strings.Contains(next, "--queue --hold release -- '-v is broken'") || strings.Contains(next, "--batch") {
-		t.Fatalf("the line goes behind -- after the flags, with no --batch in the current batch: %s", next)
+	if next := nextOf(err); !strings.Contains(next, "drive --batch b1 send T1@") || !strings.Contains(next, "--queue --hold release -- '-v is broken'") {
+		t.Fatalf("the line goes behind -- after the flags, its batch named: %s", next)
 	}
 
-	if _, err := r.d.Store.New(batch.Meta{Name: "b2", Started: r.w.Clock.Now(), Wake: "none"}); err != nil {
+	if _, _, err := r.d.Store.New(batch.Meta{Name: "b2", Started: r.w.Clock.Now(), Wake: "none"}); err != nil {
 		t.Fatal(err)
 	}
 	r.d.BatchName = "b1"

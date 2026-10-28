@@ -425,7 +425,7 @@ func TestABatchStartedMeanwhileShowsAtOnce(t *testing.T) {
 	if _, _, body := get(t, srv.URL); !strings.Contains(body, "Batch b1") {
 		t.Fatalf("b1's page:\n%s", body)
 	}
-	if _, err := r.d.Store.New(batch.Meta{Name: "b2", Started: r.w.Clock.Now()}); err != nil {
+	if _, _, err := r.d.Store.New(batch.Meta{Name: "b2", Started: r.w.Clock.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, body := get(t, srv.URL); !strings.Contains(body, "Batch b2") || !strings.Contains(body, "No session has joined the batch yet.") {

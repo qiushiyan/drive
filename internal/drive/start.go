@@ -16,8 +16,11 @@ import (
 type Started struct {
 	Batch      *batch.Batch
 	RexStarted bool         // the Rex session its sessions open in was started for it
-	Prev       *batch.Batch // the batch that was current
+	Prev       *batch.Batch // the batch of the same driver's it replaced
 	Stopped    int          // that batch's watches stopped
+	StopErr    error        // why the rest of them were not
+	NoWebhook  *noWebhook   // its driver's webhook, which holds no URL yet
+	ThenArm    string       // what arms its wakes once the webhook is written
 }
 
 var webhookName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -28,13 +31,14 @@ type BatchOptions struct {
 	Name       string
 	Wake       string // webhook or none
 	Webhook    string // the chat driver's webhook file, for a batch that wakes one
+	Driver     string // the driver that starts it, as --driver named it
 	RexSession string
 	TZ         string
 	AfterWake  []string
 }
 
 // batchCommand is the command that starts the batch opt names, for a
-// refusal to repeat.
+// refusal to repeat. It acts in no batch, so it names none.
 func (d *Driver) batchCommand(opt BatchOptions) string {
 	words := []any{"batch", "new", opt.Name}
 	for _, f := range [][2]string{{"--webhook", opt.Webhook}, {"--rex-session", opt.RexSession}, {"--tz", opt.TZ}} {
@@ -45,22 +49,32 @@ func (d *Driver) batchCommand(opt BatchOptions) string {
 	for _, c := range opt.AfterWake {
 		words = append(words, "--after-wake", c)
 	}
-	return d.run(words...)
+	if opt.Driver != "" && opt.Driver != opt.Webhook {
+		words = append([]any{"--driver", opt.Driver}, words...)
+	}
+	return d.runIn("", words...)
 }
 
-// StartBatch starts a batch and makes it current. A batch that wakes a chat
-// driver names that driver's webhook, which must hold a URL before the batch
-// starts, since every wake of it would otherwise fail unseen; the Rex
-// session its sessions open in runs once it starts; the batch before it
-// stops its watches, which would wake the driver about sessions it now drives
-// in this one.
+// StartBatch starts a batch and makes it its driver's current one. A batch
+// belongs to one driver for good: the one its webhook wakes, or the one
+// --driver names for a driver that waits itself. It replaces only that
+// driver's batch, whose watches it stops, since they would wake the driver
+// about sessions it now drives in this one; another driver's batch is never
+// touched. A webhook that holds no URL yet does not stop the start, since
+// the driver is known by its name: the owner writes it, and each wake that
+// cannot start until then says so. The Rex session its sessions open in runs
+// once it starts.
 func (d *Driver) StartBatch(opt BatchOptions) (*Started, error) {
 	again := d.batchCommand(opt)
 	if err := d.Store.Free(opt.Name); err != nil {
 		return nil, &Refused{Reason: err.Error()}
 	}
-	m := batch.Meta{Name: opt.Name, Started: d.now(), Wake: opt.Wake, Webhook: opt.Webhook,
+	if err := d.watchNamesFree(opt.Name); err != nil {
+		return nil, err
+	}
+	m := batch.Meta{Name: opt.Name, Started: d.now(), Wake: opt.Wake, Webhook: opt.Webhook, Driver: opt.Driver,
 		RexSession: cmp.Or(opt.RexSession, d.Cfg.RexSession), TZ: cmp.Or(opt.TZ, d.Cfg.TZ), AfterWake: opt.AfterWake}
+	out := &Started{}
 	if m.Wake == "webhook" {
 		dir := filepath.Join(d.Cfg.ConfigDir, "webhooks")
 		switch base := filepath.Base(m.Webhook); {
@@ -75,13 +89,15 @@ func (d *Driver) StartBatch(opt BatchOptions) (*Started, error) {
 			return nil, &Refused{Reason: fmt.Sprintf("--webhook %q is not the name of a file in %s", m.Webhook, dir),
 				Next: fmt.Sprintf("name your own wake routine's file there instead, which the owner writes, in: %s", again)}
 		}
+		if m.Driver != "" && m.Driver != m.Webhook {
+			return nil, &Refused{Reason: fmt.Sprintf("a chat driver is named by its webhook: --driver %s and --webhook %s name two", m.Driver, m.Webhook),
+				Next: "name one driver: " + d.batchCommand(BatchOptions{Name: opt.Name, Wake: opt.Wake, Webhook: opt.Webhook, RexSession: opt.RexSession, TZ: opt.TZ, AfterWake: opt.AfterWake})}
+		}
+		m.Driver = m.Webhook
 		if err := d.canPost(&batch.Batch{Meta: m}); err != nil {
-			var nw *noWebhook
-			errors.As(err, &nw)
-			return nil, &Refused{Reason: err.Error(), Next: nw.next(again)}
+			out.NoWebhook, _ = errors.AsType[*noWebhook](err)
 		}
 	}
-	out := &Started{}
 	if m.RexSession != "" {
 		started, err := d.Term.EnsureSession(m.RexSession)
 		if err != nil {
@@ -90,10 +106,7 @@ func (d *Driver) StartBatch(opt BatchOptions) (*Started, error) {
 		}
 		out.RexStarted = started
 	}
-	// The batch that stops is the current one, whichever batch this run
-	// was pointed at.
-	out.Prev, _ = d.Store.Current()
-	b, err := d.Store.New(m)
+	b, prev, err := d.Store.New(m)
 	if err != nil {
 		// Free found the name unused, so this is the store failing midway.
 		what := fmt.Sprintf("batch %s did not start: %v", m.Name, err)
@@ -102,28 +115,82 @@ func (d *Driver) StartBatch(opt BatchOptions) (*Started, error) {
 		}
 		return nil, &Failed{What: what, Next: "look at " + filepath.Join(d.Store.Dir, "batches", m.Name) + ", then try it again: " + again}
 	}
-	out.Batch = b
-	if out.Prev != nil {
-		out.Stopped, _ = d.StopWatches(out.Prev)
+	d.rebind()
+	out.Batch, out.Prev = b, prev
+	if out.NoWebhook != nil {
+		out.ThenArm = d.runIn(b.Meta.Name, "watch", "--due")
+	}
+	if prev != nil {
+		out.Stopped, out.StopErr = d.StopWatches(prev)
 	}
 	return out, nil
 }
 
-// UseBatch makes a batch current.
-func (d *Driver) UseBatch(name string) error {
-	if err := d.Store.Use(name); err != nil {
-		return &Refused{Reason: err.Error()}
+// watchNamesFree refuses a batch name whose watches would be named as an
+// existing batch's are, such as a.b beside a-b: stopping one batch's
+// watches would stop the other's.
+func (d *Driver) watchNamesFree(name string) error {
+	metas, err := d.Store.List()
+	if err != nil {
+		return err
+	}
+	for _, m := range metas {
+		if m.Name != name && safeName(m.Name) == safeName(name) {
+			return &Refused{Reason: fmt.Sprintf("batch name %q reads as batch %s's in the names of its watches; choose a name that differs in a letter or digit", name, m.Name)}
+		}
 	}
 	return nil
 }
 
-// Batches lists every batch, and names the current one.
-func (d *Driver) Batches() (metas []batch.Meta, current string, err error) {
-	if metas, err = d.Store.List(); err != nil {
-		return nil, "", err
+// UseBatch makes a batch its driver's current one again. Another driver's
+// name on the command refuses it, as it would any action in that batch.
+func (d *Driver) UseBatch(name string) (*batch.Batch, error) {
+	b, err := d.Store.Get(name)
+	if err != nil {
+		return nil, &Refused{Reason: err.Error()}
 	}
-	if cur, _ := d.Store.Current(); cur != nil {
-		current = cur.Meta.Name
+	if driver := batch.DriverOf(b.Meta); d.DriverName != "" && driver != d.DriverName {
+		return nil, &Refused{Reason: fmt.Sprintf("batch %s is %s, not driver %s's", name, driverWords(driver), d.DriverName)}
 	}
-	return metas, current, nil
+	if _, err := d.Store.Use(name, d.now()); err != nil {
+		return nil, err
+	}
+	d.rebind()
+	return b, nil
+}
+
+// Ended reports a batch that ended.
+type Ended struct {
+	Batch   *batch.Batch
+	Stopped int
+}
+
+// EndBatch ends the batch the command acts in, once its driver's drive is
+// over: its watches and timers stop, and it is no longer its driver's, so
+// a command that names no driver no longer needs to name one for it.
+func (d *Driver) EndBatch() (*Ended, error) {
+	b, err := d.Batch()
+	if err != nil {
+		return nil, err
+	}
+	if err := d.Store.End(b.Meta.Name, d.now()); err != nil {
+		return nil, &Refused{Reason: err.Error()}
+	}
+	d.rebind()
+	out := &Ended{Batch: b}
+	if out.Stopped, err = d.StopWatches(b); err != nil {
+		return out, &Failed{What: fmt.Sprintf("batch %s ended, and stopped %d of its watches, then: %v", b.Meta.Name, out.Stopped, err),
+			Next: "look at the watches still running: ls " + filepath.Join(d.Store.Dir, "watches")}
+	}
+	return out, nil
+}
+
+// Batches lists every batch, with which batch each driver drives now.
+func (d *Driver) Batches() ([]batch.Meta, batch.Drivers, error) {
+	metas, err := d.Store.List()
+	if err != nil {
+		return nil, batch.Drivers{}, err
+	}
+	drivers, err := d.Store.Drivers()
+	return metas, drivers, err
 }

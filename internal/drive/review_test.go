@@ -293,7 +293,7 @@ func TestALineReceivedOtherwiseReachedTheSession(t *testing.T) {
 	if !errors.As(err, &f) || sent == nil || sent.Outcome != "other" {
 		t.Fatalf("a line received as something else is a send that reached the session: %+v %v", sent, err)
 	}
-	if !strings.Contains(f.Next, "drive read T5") || !strings.Contains(f.Next, "drive respond T5@") {
+	if !strings.Contains(f.Next, "drive --batch b1 read T5") || !strings.Contains(f.Next, "drive --batch b1 respond T5@") {
 		t.Fatalf("it says to read before interrupting, with the view to interrupt on: %q", f.Next)
 	}
 	if _, err := r.d.Send(vb, drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); !isRefused(err) || !strings.Contains(err.Error(), "held by T5") {
@@ -584,7 +584,7 @@ func TestAnOpenChecksItsHoldFirst(t *testing.T) {
 	}
 	dir := filepath.Join(r.w.Root, "work")
 	_, err := r.d.Open("T9", drive.Step{Line: "release"}, drive.OpenOptions{Dir: dir, Hold: "release"})
-	if !isRefused(err) || !strings.Contains(err.Error(), "held by T5") || !strings.Contains(err.Error(), "drive open T9 --dir "+dir+" --hold release release") {
+	if !isRefused(err) || !strings.Contains(err.Error(), "held by T5") || !strings.Contains(err.Error(), "drive --batch b1 open T9 --dir "+dir+" --hold release release") {
 		t.Fatalf("refused, with the open to run once the hold is free: %v", err)
 	}
 	if blocks, _ := r.w.Blocks(""); len(blocks) != 1 {
@@ -641,7 +641,7 @@ func TestASendWhoseWakeFailsSaysSo(t *testing.T) {
 	done(c, "onboard", "analysis")
 	r.watches.Fail = errors.New("fork/exec: no such file")
 	sent, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "go"}, drive.SendOptions{Label: "T1"})
-	if err == nil || !strings.Contains(err.Error(), "wake did not start") || !strings.Contains(err.Error(), "drive watch T1") {
+	if err == nil || !strings.Contains(err.Error(), "wake did not start") || !strings.Contains(err.Error(), "drive --batch b1 watch T1") {
 		t.Fatalf("a send whose wake failed says so: %v", err)
 	}
 	if sent == nil || sent.Outcome != "arrived" || sent.Watched {
@@ -763,16 +763,19 @@ func shellWords(t *testing.T, s string) []string {
 }
 
 // relaunch runs a relaunch as a message prints it: each drive command of
-// "drive close … && drive open …" in turn, as a driver would.
+// "drive --batch b1 close … && drive --batch b1 open …" in turn, as a driver would.
 func relaunch(t *testing.T, r *rig, next string) *drive.Opened {
 	t.Helper()
-	i := strings.Index(next, "drive close ")
+	i := strings.Index(next, "drive --batch b1 close ")
 	if i < 0 {
 		t.Fatalf("no relaunch in %q", next)
 	}
 	var opened *drive.Opened
 	for cmd := range strings.SplitSeq(next[i:], " && ") {
 		w := shellWords(t, cmd)
+		if w[1] == "--batch" {
+			w = append(w[:1], w[3:]...)
+		}
 		switch w[1] {
 		case "close":
 			if err := r.d.Close(w[2]); err != nil {

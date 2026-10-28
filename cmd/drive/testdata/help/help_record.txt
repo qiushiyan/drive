@@ -7,9 +7,12 @@ log has every record, and metrics measures the asks. A grant, ask, answer
 or note prints the id it recorded, such as A3, which record answer takes.
 
 Inherited flags:
-  -h, --help          Show context-sensitive help.
-      --batch=NAME    Act in this batch instead of the current one, which stays current. It may
-                      stand anywhere on the line.
+  -h, --help           Show context-sensitive help.
+      --batch=NAME     Act in this batch, as drive prints its name, instead of the driver's current
+                       one. It may stand anywhere on the line.
+      --driver=NAME    Act as this driver, in its current batch: a chat driver is named by its
+                       webhook. Where drivers each drive a batch, every command names one. It may
+                       stand anywhere on the line.
 
 Commands:
   grant --source=SOURCE --scope=SCOPE

@@ -170,10 +170,10 @@ func TestABackgroundJobIsShownAndStoppedBySession(t *testing.T) {
 		t.Fatalf("done, its job named: %+v", rd)
 	}
 	_, err := r.d.Send(r.view("T2"), drive.Step{Line: "close it out"}, drive.SendOptions{Hold: "main"})
-	if !isRefused(err) || !strings.Contains(err.Error(), "find ~ -name twin.toml") || !strings.Contains(err.Error(), "drive send "+r.view("T1")) {
+	if !isRefused(err) || !strings.Contains(err.Error(), "find ~ -name twin.toml") || !strings.Contains(err.Error(), "drive --batch b1 send "+r.view("T1")) {
 		t.Fatalf("the hold names the job that keeps it, and the step that stops it: %v", err)
 	}
-	if _, err := r.d.Respond(r.view("T1"), "interrupt"); !isRefused(err) || !strings.Contains(err.Error(), "drive send "+r.view("T1")) {
+	if _, err := r.d.Respond(r.view("T1"), "interrupt"); !isRefused(err) || !strings.Contains(err.Error(), "drive --batch b1 send "+r.view("T1")) {
 		t.Fatalf("an interrupt stops no job, and says what does: %v", err)
 	}
 	_ = b
@@ -225,7 +225,7 @@ func TestAClosedSessionIsReadFromItsTranscript(t *testing.T) {
 	if rd, err := r.d.Read("T1", drive.ReadUser, 1); err != nil || rd.Body != "recap" {
 		t.Fatalf("its last prompt: %+v %v", rd, err)
 	}
-	if _, err := r.d.Read("T1", drive.ReadScreen, 1); !isRefused(err) || !strings.Contains(err.Error(), "drive read T1") {
+	if _, err := r.d.Read("T1", drive.ReadScreen, 1); !isRefused(err) || !strings.Contains(err.Error(), "drive --batch b1 read T1") {
 		t.Fatalf("no screen, and what to read instead: %v", err)
 	}
 	// One whose process ended without a close reads the same way, as gone.

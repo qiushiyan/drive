@@ -3,6 +3,7 @@ package batch
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -10,37 +11,111 @@ import (
 
 func TestNewUseCurrent(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
-	if _, err := s.Current(); err != ErrNoBatch {
+	if _, err := s.Current(""); err != ErrNoBatch {
 		t.Fatalf("no batch yet: %v", err)
 	}
-	b, err := s.New(Meta{Name: "2026-10-22", Started: time.Now(), Wake: "webhook"})
+	b, _, err := s.New(Meta{Name: "2026-10-22", Started: time.Now(), Wake: "webhook"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.New(Meta{Name: "2026-10-22"}); err == nil || !strings.Contains(err.Error(), "batch use") {
+	if _, _, err := s.New(Meta{Name: "2026-10-22"}); err == nil || !strings.Contains(err.Error(), "batch use") {
 		t.Fatalf("a used name is refused: %v", err)
 	}
-	if _, err := s.New(Meta{Name: "../x"}); err == nil {
+	if _, _, err := s.New(Meta{Name: "../x"}); err == nil {
 		t.Fatal("a name that leaves the store is refused")
 	}
-	cur, err := s.Current()
+	cur, err := s.Current("")
 	if err != nil || cur.Meta.Name != b.Meta.Name || cur.Meta.Wake != "webhook" {
 		t.Fatalf("current: %+v %v", cur, err)
 	}
-	if _, err := s.New(Meta{Name: "next", Started: time.Now()}); err != nil {
+	if _, replaced, err := s.New(Meta{Name: "next", Started: time.Now()}); err != nil || replaced == nil || replaced.Meta.Name != "2026-10-22" {
+		t.Fatalf("next replaces 2026-10-22: %+v %v", replaced, err)
+	}
+	if _, err := s.Use("2026-10-22", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Use("2026-10-22"); err != nil {
-		t.Fatal(err)
-	}
-	if cur, _ := s.Current(); cur.Meta.Name != "2026-10-22" {
+	if cur, _ := s.Current(""); cur.Meta.Name != "2026-10-22" {
 		t.Fatal("use switches the current batch")
+	}
+}
+
+// Each driver drives a batch of its own: one driver starting, using or
+// ending a batch leaves every other driver's current one as it was.
+func TestEachDriverHasItsOwnCurrentBatch(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	at := time.Date(2026, 10, 28, 13, 0, 0, 0, time.UTC)
+	mustNew := func(m Meta) *Batch {
+		t.Helper()
+		b, _, err := s.New(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	mustNew(Meta{Name: "2026-10-27", Started: at, Wake: "webhook", Webhook: "session-driver"})
+	mustNew(Meta{Name: "verify", Started: at.Add(time.Minute), Wake: "none"})
+	_, replaced, err := s.New(Meta{Name: "itell-2026-10-28", Started: at.Add(2 * time.Minute), Wake: "webhook", Webhook: "itell", Driver: "itell"})
+	if err != nil || replaced != nil {
+		t.Fatalf("itell's first batch replaces none of another driver's: %+v %v", replaced, err)
+	}
+	for driver, want := range map[string]string{"session-driver": "2026-10-27", "": "verify", "itell": "itell-2026-10-28"} {
+		if cur, err := s.Current(driver); err != nil || cur.Meta.Name != want {
+			t.Fatalf("driver %q drives %s: %+v %v", driver, want, cur, err)
+		}
+	}
+	live, err := s.Live()
+	if err != nil || len(live) != 3 || live[0].Meta.Name != "2026-10-27" || live[2].Meta.Name != "itell-2026-10-28" {
+		t.Fatalf("three live batches, oldest first: %+v %v", live, err)
+	}
+	if err := s.End("2026-10-27", at.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Current("session-driver"); err != ErrNoBatch {
+		t.Fatalf("an ended batch is nobody's current: %v", err)
+	}
+	if err := s.End("2026-10-27", at.Add(time.Hour)); err == nil || !strings.Contains(err.Error(), "not live") {
+		t.Fatalf("a batch ends once: %v", err)
+	}
+	d, _ := s.Drivers()
+	if _, ok := d.Ended["2026-10-27"]; !ok || d.Current["itell"] != "itell-2026-10-28" {
+		t.Fatalf("2026-10-27 ended, itell's untouched: %+v", d)
+	}
+	if _, err := s.Use("2026-10-27", at.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := s.Drivers(); d.Current["session-driver"] != "2026-10-27" || !d.Ended["2026-10-27"].IsZero() {
+		t.Fatalf("a used batch is live again: %+v", d)
+	}
+}
+
+// A store an older drive kept has one current batch for every driver: it
+// becomes the current batch of the driver that batch names, once.
+func TestAnOlderStoresCurrentBatchCarriesOver(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	if _, _, err := s.New(Meta{Name: "2026-10-27", Started: time.Now(), Wake: "webhook", Webhook: "session-driver"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(s.changesPath()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("batches", "2026-10-27"), filepath.Join(s.Dir, "current")); err != nil {
+		t.Fatal(err)
+	}
+	cur, err := s.Current("session-driver")
+	if err != nil || cur.Meta.Name != "2026-10-27" {
+		t.Fatalf("the older current batch is its driver's: %+v %v", cur, err)
+	}
+	if _, err := s.Current(""); err != ErrNoBatch {
+		t.Fatalf("and no other driver's: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(s.Dir, "current")); !os.IsNotExist(err) {
+		t.Fatalf("the older link is gone, so no older drive reads it: %v", err)
 	}
 }
 
 func TestSendsAreNeverOverwritten(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
-	b, _ := s.New(Meta{Name: "b", Started: time.Now()})
+	b, _, _ := s.New(Meta{Name: "b", Started: time.Now()})
 	p1, _ := b.SaveSend("T1", []byte("one"))
 	p2, _ := b.SaveSend("T1", []byte("two"))
 	if p1 == p2 {

@@ -17,14 +17,23 @@ A SESSION is a label in the batch (T1), or a session's Rex block id, whose
 last six characters are enough, before it joins the batch; its view starts
 the same way (7c1e2a@3fa91c07). Copy a view as drive printed it.
 
+A DRIVER drives a batch of its own; a chat driver is named by its webhook
+(drive batch new NAME --webhook DRIVER). Where drivers each drive a batch,
+every command names the one it runs for, --driver DRIVER, since nothing else
+tells them apart; a command that names none is refused, never run in
+another driver's batch.
+
 A refusal or failure that leaves something to do ends with a next: line: a
-command that runs as written on the session as it stands. Whether the step
-still makes sense is the driver's judgment.
+command that runs as written on the session as it stands, naming the batch
+it acts in. Whether the step still makes sense is the driver's judgment.
 
 Flags:
-  -h, --help          Show context-sensitive help.
-      --batch=NAME    Act in this batch instead of the current one, which stays current. It may
-                      stand anywhere on the line.
+  -h, --help           Show context-sensitive help.
+      --batch=NAME     Act in this batch, as drive prints its name, instead of the driver's current
+                       one. It may stand anywhere on the line.
+      --driver=NAME    Act as this driver, in its current batch: a chat driver is named by its
+                       webhook. Where drivers each drive a batch, every command names one. It may
+                       stand anywhere on the line.
 
 Commands:
   status                              Print every session in the batch, live: its state, stage, pull
@@ -61,11 +70,14 @@ Commands:
   page                                Serve the batch as a web page its owner opens: each session's
                                       goal, where it stands, its pull requests, and what waits on
                                       them.
-  batch show                          Print the batch: its start, wakes, Rex session, zone, sessions
-                                      and directory (default).
-  batch new <name>                    Start a batch and make it current.
-  batch use <name>                    Make a batch current.
-  batch list                          List every batch, the current one starred.
+  batch show                          Print the batch: its driver, start, wakes, Rex session, zone,
+                                      sessions and directory (default).
+  batch new <name>                    Start a batch and make it its driver's current one.
+  batch use <name>                    Make a batch its driver's current one again.
+  batch end                           End the batch once its drive is over: its wakes stop, and it
+                                      is no longer its driver's.
+  batch list                          List every batch, with its driver, each driver's current one
+                                      starred.
   snippet <key> [<dir>] [<text> ...]
                                       Print the owner's snippet KEY as a session in DIR would
                                       receive it.

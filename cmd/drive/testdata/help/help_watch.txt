@@ -10,16 +10,19 @@ stops on a prompt, and ends with next: where the ending decides what to do.
 A refused action armed nothing. Watch arms one by hand.
 
 Arguments:
-  <session>           The session whose wake to arm (optional).
+  <session>            The session whose wake to arm (optional).
 
 Flags:
-      --due           Arm every session whose wakes stopped coming, and post once more a wake nobody
-                      acted on: a chat driver's watchdog in one command.
+      --due            Arm every session whose wakes stopped coming, and post once more a wake
+                       nobody acted on: a chat driver's watchdog in one command.
 
 Inherited flags:
-  -h, --help          Show context-sensitive help.
-      --batch=NAME    Act in this batch instead of the current one, which stays current. It may
-                      stand anywhere on the line.
+  -h, --help           Show context-sensitive help.
+      --batch=NAME     Act in this batch, as drive prints its name, instead of the driver's current
+                       one. It may stand anywhere on the line.
+      --driver=NAME    Act as this driver, in its current batch: a chat driver is named by its
+                       webhook. Where drivers each drive a batch, every command names one. It may
+                       stand anywhere on the line.
 
 Exit codes:
   0    success

@@ -44,11 +44,16 @@ func TestEveryCommandAMessageNamesExists(t *testing.T) {
 		ast.Inspect(f, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.CallExpr:
-				// d.run with its words written out; one spreading a slice
-				// (sendCommand and the like) builds it from words read here too.
-				if sel, ok := n.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "run" && isIdent(sel.X, "d") && n.Ellipsis == token.NoPos {
+				// d.run, or d.runIn after its batch, with its words written out;
+				// one spreading a slice (sendCommand and the like) builds it
+				// from words read here too.
+				if sel, ok := n.Fun.(*ast.SelectorExpr); ok && (sel.Sel.Name == "run" || sel.Sel.Name == "runIn") && isIdent(sel.X, "d") && n.Ellipsis == token.NoPos {
+					args := n.Args
+					if sel.Sel.Name == "runIn" {
+						args = args[1:]
+					}
 					var words []string
-					for _, a := range n.Args {
+					for _, a := range args {
 						words = append(words, literal(a)) // "" for a value only known at run time
 					}
 					if err := fault(k, words); err != "" {
@@ -94,7 +99,7 @@ func literal(e ast.Expr) string {
 // a command that does not run, or a flag it does not take.
 func fault(k *kong.Kong, words []string) string {
 	node := k.Model.Node
-	if len(words) >= 2 && words[0] == "--batch" {
+	for len(words) >= 2 && (words[0] == "--batch" || words[0] == "--driver") {
 		words = words[2:]
 	}
 	i := 0

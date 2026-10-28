@@ -17,6 +17,7 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/qiushiyan/clikit"
 
+	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/drive"
 )
 
@@ -662,10 +663,11 @@ func (c *MetricsCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type BatchCmd struct {
-	Show BatchShowCmd `cmd:"" default:"1" help:"Print the batch: its start, wakes, Rex session, zone, sessions and directory."`
-	New  BatchNewCmd  `cmd:"" help:"Start a batch and make it current."`
-	Use  BatchUseCmd  `cmd:"" help:"Make a batch current."`
-	List BatchListCmd `cmd:"" help:"List every batch, the current one starred."`
+	Show BatchShowCmd `cmd:"" default:"1" help:"Print the batch: its driver, start, wakes, Rex session, zone, sessions and directory."`
+	New  BatchNewCmd  `cmd:"" help:"Start a batch and make it its driver's current one."`
+	Use  BatchUseCmd  `cmd:"" help:"Make a batch its driver's current one again."`
+	End  BatchEndCmd  `cmd:"" help:"End the batch once its drive is over: its wakes stop, and it is no longer its driver's."`
+	List BatchListCmd `cmd:"" help:"List every batch, with its driver, each driver's current one starred."`
 }
 
 type BatchShowCmd struct{ runs }
@@ -675,14 +677,18 @@ func (c *BatchShowCmd) act(ctx *kong.Context, d *drive.Driver) error {
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(ctx.Stdout, drive.BatchText(b))
+	_, drivers, err := d.Batches()
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(ctx.Stdout, drive.BatchText(b, drivers.Ended[b.Meta.Name]))
 	return err
 }
 
 type BatchNewCmd struct {
 	runs
 	Name       string `arg:"" help:"The batch's name, such as the date."`
-	Webhook    string `placeholder:"DRIVER" help:"Wake this chat driver by its webhook, the file ~/.config/drive/webhooks/DRIVER that the owner writes. Without it, the driver waits itself."`
+	Webhook    string `placeholder:"DRIVER" help:"Wake this chat driver by its webhook, the file ~/.config/drive/webhooks/DRIVER that the owner writes; DRIVER is the driver's name. Without it, the driver waits itself, named by --driver if at all."`
 	RexSession string `placeholder:"SESSION" help:"The Rex session new sessions open in, started if it is not running; defaults to the configuration's, then $REX_SESSION."`
 	TZ         string `name:"tz" placeholder:"ZONE" help:"The zone drive prints the batch's times in, such as Europe/London; defaults to the configuration's, then the machine's."`
 	AfterWake  string `placeholder:"COMMAND" help:"A shell command to run after each wake is posted, such as archiving the chat it went to."`
@@ -691,8 +697,10 @@ type BatchNewCmd struct {
 func (c *BatchNewCmd) Help() string {
 	return `
 A new batch starts with no grants, however recently one was given, and
-stops the last batch's wakes. Start one per drive, never after a reset:
-` + "`drive batch`" + ` names the current one.`
+stops the wakes of its driver's last batch; another driver's batch is never
+touched. Start one per drive, never after a reset: ` + "`drive --driver DRIVER batch`" + `
+names a driver's current one. A webhook the owner has not written yet does
+not stop the start: no wake starts until it is written.`
 }
 
 func (c *BatchNewCmd) Validate() error {
@@ -713,7 +721,7 @@ func (c *BatchNewCmd) act(ctx *kong.Context, d *drive.Driver) error {
 	if c.AfterWake != "" {
 		after = []string{c.AfterWake}
 	}
-	st, err := d.StartBatch(drive.BatchOptions{Name: c.Name, Wake: wake, Webhook: c.Webhook, RexSession: c.RexSession, TZ: c.TZ, AfterWake: after})
+	st, err := d.StartBatch(drive.BatchOptions{Name: c.Name, Wake: wake, Webhook: c.Webhook, Driver: d.DriverName, RexSession: c.RexSession, TZ: c.TZ, AfterWake: after})
 	if err != nil {
 		return err
 	}
@@ -723,25 +731,46 @@ func (c *BatchNewCmd) act(ctx *kong.Context, d *drive.Driver) error {
 
 type BatchUseCmd struct {
 	runs
-	Name string `arg:"" help:"The batch to make current."`
+	Name string `arg:"" help:"The batch to make its driver's current one."`
 }
 
 func (c *BatchUseCmd) act(ctx *kong.Context, d *drive.Driver) error {
-	if err := d.UseBatch(c.Name); err != nil {
+	b, err := d.UseBatch(c.Name)
+	if err != nil {
 		return err
+	}
+	if driver := batch.DriverOf(b.Meta); driver != "" {
+		fmt.Fprintf(ctx.Stdout, "batch %s is driver %s's current batch\n", c.Name, driver)
+		return nil
 	}
 	fmt.Fprintf(ctx.Stdout, "batch %s is current\n", c.Name)
 	return nil
 }
 
+type BatchEndCmd struct{ runs }
+
+func (c *BatchEndCmd) Help() string {
+	return `
+Ends the batch the command acts in: the driver's current one, or the one
+--batch names. Its record stays, read with --batch NAME.`
+}
+
+func (c *BatchEndCmd) act(ctx *kong.Context, d *drive.Driver) error {
+	e, err := d.EndBatch()
+	if e != nil {
+		_, _ = io.WriteString(ctx.Stdout, e.Text())
+	}
+	return err
+}
+
 type BatchListCmd struct{ runs }
 
 func (c *BatchListCmd) act(ctx *kong.Context, d *drive.Driver) error {
-	metas, cur, err := d.Batches()
+	metas, drivers, err := d.Batches()
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(ctx.Stdout, drive.BatchesText(metas, cur))
+	_, err = io.WriteString(ctx.Stdout, drive.BatchesText(metas, drivers))
 	return err
 }
 

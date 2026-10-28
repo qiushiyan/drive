@@ -6,13 +6,16 @@ A parked session sends no wakes until a step is sent to it, so a session
 waiting on the owner, or on another session's hold, stops waking the driver.
 
 Arguments:
-  <view>              The view the park was decided on.
-  <reason> ...        Why it waits, such as what only the owner can give; the record keeps it.
+  <view>               The view the park was decided on.
+  <reason> ...         Why it waits, such as what only the owner can give; the record keeps it.
 
 Inherited flags:
-  -h, --help          Show context-sensitive help.
-      --batch=NAME    Act in this batch instead of the current one, which stays current. It may
-                      stand anywhere on the line.
+  -h, --help           Show context-sensitive help.
+      --batch=NAME     Act in this batch, as drive prints its name, instead of the driver's current
+                       one. It may stand anywhere on the line.
+      --driver=NAME    Act as this driver, in its current batch: a chat driver is named by its
+                       webhook. Where drivers each drive a batch, every command names one. It may
+                       stand anywhere on the line.
 
 Exit codes:
   0    success

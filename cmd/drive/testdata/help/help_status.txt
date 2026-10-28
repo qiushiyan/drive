@@ -9,14 +9,17 @@ running in Rex are listed too, by window and block, so one the owner named
 can be brought into the batch by its block id.
 
 Flags:
-      --json          Print one JSON document instead of the table.
-      --quick         Skip reading each session's pull request and merge state, which costs a gh
-                      call per session.
+      --json           Print one JSON document instead of the table.
+      --quick          Skip reading each session's pull request and merge state, which costs a gh
+                       call per session.
 
 Inherited flags:
-  -h, --help          Show context-sensitive help.
-      --batch=NAME    Act in this batch instead of the current one, which stays current. It may
-                      stand anywhere on the line.
+  -h, --help           Show context-sensitive help.
+      --batch=NAME     Act in this batch, as drive prints its name, instead of the driver's current
+                       one. It may stand anywhere on the line.
+      --driver=NAME    Act as this driver, in its current batch: a chat driver is named by its
+                       webhook. Where drivers each drive a batch, every command names one. It may
+                       stand anywhere on the line.
 
 Columns:
   STATE  working | done | idle (no prompt yet) | interrupted (an interrupt or a deny)

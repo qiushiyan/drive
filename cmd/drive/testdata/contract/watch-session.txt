@@ -3,4 +3,4 @@ exit 1
 --- stdout
 --- stderr
 drive: error: batch b1 wakes no one (wake: none)
-next: wait for it yourself, in the background: drive wait T1
+next: wait for it yourself, in the background: drive --batch b1 wait T1

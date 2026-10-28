@@ -3,4 +3,4 @@ exit 1
 --- stdout
 --- stderr
 drive: error: J1 is already open as block a00003 (since 02:02)
-next: send to it instead: drive read J1
+next: send to it instead: drive --batch b1 read J1

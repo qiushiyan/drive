@@ -379,32 +379,66 @@ func (m *Metrics) Text() string {
 // Text is what batch new prints.
 func (st *Started) Text() string {
 	s := fmt.Sprintf("batch %s started and current (%s)\n", st.Batch.Meta.Name, st.Batch.Dir)
+	if driver := batch.DriverOf(st.Batch.Meta); driver != "" {
+		s = fmt.Sprintf("batch %s started, driver %s's current batch (%s)\n", st.Batch.Meta.Name, driver, st.Batch.Dir)
+	}
 	if st.RexStarted {
 		s += fmt.Sprintf("started Rex session %s for its sessions\n", st.Batch.Meta.RexSession)
 	}
 	if st.Stopped > 0 {
 		s += fmt.Sprintf("stopped %d watches of batch %s\n", st.Stopped, st.Prev.Meta.Name)
 	}
+	if st.StopErr != nil {
+		s += fmt.Sprintf("watches of batch %s still run: %v\n", st.Prev.Meta.Name, st.StopErr)
+	}
+	if nw := st.NoWebhook; nw != nil {
+		s += "no wake can start until " + nw.next(st.ThenArm) + "\n"
+	}
 	return s
 }
 
+// Text is what batch end prints.
+func (e *Ended) Text() string {
+	return fmt.Sprintf("batch %s ended; stopped %d of its watches and timers\n", e.Batch.Meta.Name, e.Stopped)
+}
+
 // BatchText is what batch prints of the batch it acts in.
-func BatchText(b *batch.Batch) string {
+func BatchText(b *batch.Batch, ended time.Time) string {
 	evs, _ := b.Events()
-	return fmt.Sprintf("batch %s, started %s · wakes: %s · Rex session %s · zone %s · %d sessions · %s\n", b.Meta.Name,
-		b.Meta.Started.In(b.Zone()).Format("2006-01-02 15:04 MST"), b.Meta.Wake, orDash(b.Meta.RexSession),
+	driver := ""
+	if name := batch.DriverOf(b.Meta); name != "" {
+		driver = " · driver " + name
+	}
+	if !ended.IsZero() {
+		driver += " · ended " + ended.In(b.Zone()).Format("2006-01-02 15:04 MST")
+	}
+	return fmt.Sprintf("batch %s, started %s%s · wakes: %s · Rex session %s · zone %s · %d sessions · %s\n", b.Meta.Name,
+		b.Meta.Started.In(b.Zone()).Format("2006-01-02 15:04 MST"), driver, b.Meta.Wake, orDash(b.Meta.RexSession),
 		orDash(b.Meta.TZ), len(batch.Members(evs)), b.Dir)
 }
 
-// BatchesText is what batch list prints, the current one starred.
-func BatchesText(metas []batch.Meta, current string) string {
+// BatchesText is what batch list prints: each driver's current batch
+// starred, and each batch's driver where it names one.
+func BatchesText(metas []batch.Meta, drivers batch.Drivers) string {
+	current := map[string]bool{}
+	for _, name := range drivers.Current {
+		current[name] = true
+	}
 	var b strings.Builder
 	for _, m := range metas {
 		mark := " "
-		if m.Name == current {
+		if current[m.Name] {
 			mark = "*"
 		}
-		fmt.Fprintf(&b, "%s %s  started %s  wakes: %s\n", mark, m.Name, m.Started.Local().Format("2006-01-02 15:04"), m.Wake)
+		fmt.Fprintf(&b, "%s %s  ", mark, m.Name)
+		if driver := batch.DriverOf(m); driver != "" {
+			fmt.Fprintf(&b, "driver %s  ", driver)
+		}
+		fmt.Fprintf(&b, "started %s  wakes: %s", m.Started.Local().Format("2006-01-02 15:04"), m.Wake)
+		if at, ok := drivers.Ended[m.Name]; ok {
+			fmt.Fprintf(&b, "  ended %s", at.Local().Format("2006-01-02 15:04"))
+		}
+		b.WriteString("\n")
 	}
 	return b.String()
 }

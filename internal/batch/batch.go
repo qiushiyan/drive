@@ -22,11 +22,15 @@ import (
 
 // Meta is a batch's settings, fixed when it starts.
 type Meta struct {
-	Name       string    `json:"name"`
-	Started    time.Time `json:"started"`
-	Wake       string    `json:"wake"`        // "webhook": drive wakes a chat driver; "none": the driver waits itself
-	RexSession string    `json:"rex_session"` // where its sessions open
-	TZ         string    `json:"tz"`
+	Name    string    `json:"name"`
+	Started time.Time `json:"started"`
+	// Driver is who drives the batch, the name commands select it by
+	// (--driver): the webhook's name for a chat driver, or the name a
+	// driver that waits itself gave; DriverOf reads it.
+	Driver     string `json:"driver,omitempty"`
+	Wake       string `json:"wake"`        // "webhook": drive wakes a chat driver; "none": the driver waits itself
+	RexSession string `json:"rex_session"` // where its sessions open
+	TZ         string `json:"tz"`
 	// Webhook names the file that wakes this batch's driver, so two
 	// drivers on one machine never wake each other.
 	Webhook string `json:"webhook,omitempty"`
@@ -40,7 +44,8 @@ type Batch struct {
 	Dir  string
 }
 
-// Store is the directory holding every batch and the pointer to the current one.
+// Store is the directory holding every batch and the lifecycle log naming
+// each driver's current one.
 type Store struct {
 	Dir string
 }
@@ -62,49 +67,36 @@ func (s Store) Free(name string) error {
 	return nil
 }
 
-// New starts a batch and makes it current. A name already used is refused.
-func (s Store) New(m Meta) (*Batch, error) {
+// New starts a batch and makes it its driver's current one, returning the
+// batch of that driver's it replaces. A name already used is refused.
+func (s Store) New(m Meta) (b, replaced *Batch, err error) {
 	if err := s.Free(m.Name); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	dir := filepath.Join(s.Dir, "batches", m.Name)
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		if os.IsExist(err) {
-			return nil, fmt.Errorf("batch %q exists; `drive batch use %s` makes it current", m.Name, m.Name)
+			return nil, nil, fmt.Errorf("batch %q exists; `drive batch use %s` makes it current", m.Name, m.Name)
 		}
-		return nil, err
+		return nil, nil, err
 	}
 	for _, sub := range []string{"sends"} {
 		if err := os.Mkdir(filepath.Join(dir, sub), 0o755); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	b, _ := json.MarshalIndent(m, "", "  ")
-	if err := os.WriteFile(filepath.Join(dir, "batch.json"), append(b, '\n'), 0o644); err != nil {
-		return nil, err
+	data, _ := json.MarshalIndent(m, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "batch.json"), append(data, '\n'), 0o644); err != nil {
+		return nil, nil, err
 	}
-	if err := s.Use(m.Name); err != nil {
-		return nil, err
+	if replaced, err = s.Use(m.Name, m.Started); err != nil {
+		return nil, nil, err
 	}
-	bt := &Batch{Meta: m, Dir: dir}
-	return bt, bt.Append(Event{Kind: KindBatch, At: m.Started, Note: "started"})
-}
-
-// Use makes a batch current.
-func (s Store) Use(name string) error {
-	if _, err := s.Get(name); err != nil {
-		return err
-	}
-	link := filepath.Join(s.Dir, "current")
-	tmp := link + ".tmp"
-	_ = os.Remove(tmp)
-	if err := os.Symlink(filepath.Join("batches", name), tmp); err != nil {
-		return err
-	}
-	return os.Rename(tmp, link)
+	b = &Batch{Meta: m, Dir: dir}
+	return b, replaced, b.Append(Event{Kind: KindBatch, At: m.Started, Note: "started"})
 }
 
 // Get opens a batch by name.
@@ -122,18 +114,6 @@ func (s Store) Get(name string) (*Batch, error) {
 		return nil, fmt.Errorf("%s: %w", filepath.Join(dir, "batch.json"), err)
 	}
 	return &Batch{Meta: m, Dir: dir}, nil
-}
-
-// Current opens the current batch.
-func (s Store) Current() (*Batch, error) {
-	target, err := os.Readlink(filepath.Join(s.Dir, "current"))
-	if os.IsNotExist(err) {
-		return nil, ErrNoBatch
-	}
-	if err != nil {
-		return nil, err
-	}
-	return s.Get(filepath.Base(target))
 }
 
 // List names every batch, oldest first.

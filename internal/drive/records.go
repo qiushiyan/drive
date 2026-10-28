@@ -42,7 +42,7 @@ func (d *Driver) Answer(ask, source, took string, explained bool) (string, error
 	}
 	b, err := d.Batch()
 	if err != nil {
-		return "", &Refused{Reason: err.Error()}
+		return "", err
 	}
 	err = b.Locked(func(evs []batch.Event) error {
 		for _, e := range evs {
@@ -73,7 +73,7 @@ func (d *Driver) Goal(session, text string) error {
 	}
 	b, err := d.Batch()
 	if err != nil {
-		return &Refused{Reason: err.Error()}
+		return err
 	}
 	return b.Locked(func(evs []batch.Event) error {
 		m := batch.Find(batch.Members(evs), session)
@@ -108,7 +108,7 @@ func goalText(s string) (string, error) {
 func (d *Driver) record(make func([]batch.Event) batch.Event) (string, error) {
 	b, err := d.Batch()
 	if err != nil {
-		return "", &Refused{Reason: err.Error()}
+		return "", err
 	}
 	var id string
 	err = b.Locked(func(evs []batch.Event) error {
@@ -124,7 +124,7 @@ func (d *Driver) record(make func([]batch.Event) batch.Event) (string, error) {
 func (d *Driver) Log(since time.Time) (*batch.Batch, []batch.Event, error) {
 	b, err := d.Batch()
 	if err != nil {
-		return nil, nil, &Refused{Reason: err.Error()}
+		return nil, nil, err
 	}
 	evs, err := b.Events()
 	if err != nil {

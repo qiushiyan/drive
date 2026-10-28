@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/alecthomas/kong"
 	"github.com/qiushiyan/clikit"
@@ -20,7 +21,8 @@ import (
 )
 
 type CLI struct {
-	Batch string `placeholder:"NAME" help:"Act in this batch instead of the current one, which stays current. It may stand anywhere on the line."`
+	Batch  string `placeholder:"NAME" help:"Act in this batch, as drive prints its name, instead of the driver's current one. It may stand anywhere on the line."`
+	Driver string `placeholder:"NAME" help:"Act as this driver, in its current batch: a chat driver is named by its webhook. Where drivers each drive a batch, every command names one. It may stand anywhere on the line."`
 
 	Status  StatusCmd  `cmd:"" help:"Print every session in the batch, live: its state, stage, pull request, wake and view."`
 	Read    ReadCmd    `cmd:"" help:"Print a session's newest reply, where it stands, its view, and next: where its state decides it."`
@@ -61,9 +63,15 @@ A SESSION is a label in the batch (T1), or a session's Rex block id, whose
 last six characters are enough, before it joins the batch; its view starts
 the same way (7c1e2a@3fa91c07). Copy a view as drive printed it.
 
+A DRIVER drives a batch of its own; a chat driver is named by its webhook
+(drive batch new NAME --webhook DRIVER). Where drivers each drive a batch,
+every command names the one it runs for, --driver DRIVER, since nothing else
+tells them apart; a command that names none is refused, never run in
+another driver's batch.
+
 A refusal or failure that leaves something to do ends with a next: line: a
-command that runs as written on the session as it stands. Whether the step
-still makes sense is the driver's judgment.`
+command that runs as written on the session as it stands, naming the batch
+it acts in. Whether the step still makes sense is the driver's judgment.`
 }
 
 // wiring builds the driver an invocation acts through: this machine's in
@@ -86,13 +94,13 @@ var app = clikit.App{
 		kong.Bind(wiring(machine)),
 		// The configuration loads only once a command acts, so help and
 		// usage errors work whatever state it is in.
-		kong.BindToProvider(func(cli *CLI, wire wiring) (*drive.Driver, error) {
+		kong.BindToProvider(func(cli *CLI, wire wiring, ctx *kong.Context) (*drive.Driver, error) {
 			cfg, err := config.Load()
 			if err != nil {
 				return nil, err
 			}
 			d := wire(cfg)
-			d.BatchName = cli.Batch
+			d.BatchName, d.DriverName, d.Line = cli.Batch, cli.Driver, unselected(ctx.Args)
 			return d, nil
 		}),
 	},
@@ -150,6 +158,25 @@ func upgrade(args []string) []string {
 		return append(append(batchArgs, "timer", rest[2], "--"), rest[3:]...)
 	}
 	return args
+}
+
+// unselected is a command line without the flags that select its batch,
+// which stand anywhere before a -- that ends the flags.
+func unselected(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			return append(out, args[i:]...)
+		case a == "--batch" || a == "--driver":
+			i++
+		case strings.HasPrefix(a, "--batch=") || strings.HasPrefix(a, "--driver="):
+		default:
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // splitBatch takes a leading --batch NAME off a command line.

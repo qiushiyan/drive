@@ -1,0 +1,5 @@
+$ drive batch end --driver itell
+exit 0
+--- stdout
+batch itell-2026-10-28 ended; stopped 0 of its watches and timers
+--- stderr

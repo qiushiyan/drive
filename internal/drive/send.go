@@ -60,7 +60,7 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 	}
 	b, err := d.Batch()
 	if err != nil {
-		return nil, &Refused{Reason: err.Error()}
+		return nil, err
 	}
 	what := func(label string) string { return fmt.Sprintf("sending %s %q", label, clip(stepSummary(step), 60)) }
 	a, err := d.onView(b, v, what, opt.Queue, d.sendCommand(view, step, opt))

@@ -1,0 +1,6 @@
+$ drive status --quick
+exit 1
+--- stdout
+--- stderr
+drive: error: this command names no driver, and drivers here each drive a batch of their own: session-driver drives 2026-10-27, itell drives itell-2026-10-28
+next: run it as the driver you are: drive --driver session-driver status --quick; drive --driver itell status --quick

@@ -35,9 +35,18 @@ type Driver struct {
 	Sleep    func(time.Duration)
 	Poll     time.Duration // how often a wait looks; 2 s when zero
 
-	// BatchName pins the batch an action works in; "" is the current one.
-	// A watch carries it, so a wake from an old batch never acts in a new one.
+	// BatchName pins the batch an action works in. A watch carries it, so a
+	// wake from an old batch never acts in a new one.
 	BatchName string
+	// DriverName is the driver the command runs for: its current batch is
+	// the one actions work in, when no batch is pinned.
+	DriverName string
+	// Line is the command as the driver ran it, without --batch or
+	// --driver, for a refusal that has it run again for one driver.
+	Line []string
+
+	bound    *batch.Batch // the batch Batch resolved, for the selection in boundFor
+	boundFor string
 }
 
 // Refused is an action drive would not take in the state the session is in.
@@ -47,7 +56,10 @@ type Refused struct {
 	Next   string
 
 	account string // an account whose login the refusal found rejected
+	cause   error  // what the refusal stands for, such as batch.ErrNoBatch
 }
+
+func (r *Refused) Unwrap() error { return r.cause }
 
 func (r *Refused) Error() string {
 	if r.Next == "" {
@@ -115,12 +127,104 @@ func zoneOf(b *batch.Batch) *time.Location {
 	return time.Local
 }
 
-// Batch is the batch actions work in.
+// Batch is the batch actions work in, resolved once for a command: the one
+// --batch pins, else the current batch of the driver --driver names, else
+// the current batch of the driver that names none, while no named driver
+// drives one. A command a named driver did not name itself on is refused,
+// never run in another driver's batch: nothing in a chat driver's shell
+// says which driver runs it.
 func (d *Driver) Batch() (*batch.Batch, error) {
-	if d.BatchName != "" {
-		return d.Store.Get(d.BatchName)
+	sel := d.BatchName + "\x00" + d.DriverName
+	if d.bound != nil && d.boundFor == sel {
+		return d.bound, nil
 	}
-	return d.Store.Current()
+	b, err := d.resolve()
+	if err != nil {
+		return nil, err
+	}
+	d.bound, d.boundFor = b, sel
+	return b, nil
+}
+
+// rebind forgets the batch a command resolved, once it changed which batch
+// its driver drives.
+func (d *Driver) rebind() { d.bound = nil }
+
+func (d *Driver) resolve() (*batch.Batch, error) {
+	if d.BatchName != "" {
+		b, err := d.Store.Get(d.BatchName)
+		if err != nil {
+			return nil, &Refused{Reason: err.Error(), cause: err}
+		}
+		if driver := batch.DriverOf(b.Meta); d.DriverName != "" && driver != d.DriverName {
+			return nil, &Refused{Reason: fmt.Sprintf("batch %s is %s, not driver %s's", b.Meta.Name, driverWords(driver), d.DriverName)}
+		}
+		return b, nil
+	}
+	if d.DriverName != "" {
+		b, err := d.Store.Current(d.DriverName)
+		if errors.Is(err, batch.ErrNoBatch) {
+			return nil, &Refused{Reason: fmt.Sprintf("driver %s drives no batch now", d.DriverName), cause: err,
+				Next: fmt.Sprintf("see every batch and its driver: %s; or start one: `drive batch new NAME --webhook %s`", d.runIn("", "batch", "list"), d.DriverName)}
+		}
+		if err != nil {
+			return nil, &Refused{Reason: err.Error(), cause: err}
+		}
+		return b, nil
+	}
+	live, err := d.Store.Live()
+	if err != nil {
+		return nil, &Refused{Reason: err.Error(), cause: err}
+	}
+	var unnamed *batch.Batch
+	var named []*batch.Batch
+	for _, b := range live {
+		if batch.DriverOf(b.Meta) == "" {
+			unnamed = b
+		} else {
+			named = append(named, b)
+		}
+	}
+	if len(named) > 0 {
+		return nil, d.nameYourself(named, unnamed)
+	}
+	if unnamed == nil {
+		return nil, &Refused{Reason: batch.ErrNoBatch.Error(), cause: batch.ErrNoBatch}
+	}
+	return unnamed, nil
+}
+
+// nameYourself refuses a command that named no driver on a machine where
+// named drivers drive batches, with the command again for each.
+func (d *Driver) nameYourself(named []*batch.Batch, unnamed *batch.Batch) *Refused {
+	var drives, runs []string
+	for _, b := range named {
+		driver := batch.DriverOf(b.Meta)
+		drives = append(drives, fmt.Sprintf("%s drives %s", driver, b.Meta.Name))
+		runs = append(runs, "drive "+join(append([]any{"--driver", driver}, lineWords(d.Line)...)...))
+	}
+	if unnamed != nil {
+		drives = append(drives, fmt.Sprintf("a driver of no name drives %s", unnamed.Meta.Name))
+		runs = append(runs, d.runIn(unnamed.Meta.Name, lineWords(d.Line)...))
+	}
+	return &Refused{Reason: "this command names no driver, and drivers here each drive a batch of their own: " + strings.Join(drives, ", "),
+		Next: "run it as the driver you are: " + strings.Join(runs, "; ")}
+}
+
+func lineWords(line []string) []any {
+	out := make([]any, len(line))
+	for i, w := range line {
+		out[i] = w
+	}
+	return out
+}
+
+// driverWords names a batch's driver in a sentence.
+func driverWords(driver string) string {
+	if driver == "" {
+		return "a driver of no name's"
+	}
+	return "driver " + driver + "'s"
 }
 
 // Observation is one session as it stands, read in a batch: what a message
@@ -225,7 +329,7 @@ func (d *Driver) findBlock(ref string) (string, error) {
 // session outside any batch is still read and answered.
 func (d *Driver) inBatch() (*batch.Batch, error) {
 	b, err := d.Batch()
-	if errors.Is(err, batch.ErrNoBatch) {
+	if errors.Is(err, batch.ErrNoBatch) && d.BatchName == "" && d.DriverName == "" {
 		return nil, nil
 	}
 	return b, err

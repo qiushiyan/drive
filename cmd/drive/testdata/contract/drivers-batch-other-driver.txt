@@ -1,0 +1,5 @@
+$ drive --driver itell --batch 2026-10-27 log
+exit 1
+--- stdout
+--- stderr
+drive: error: batch 2026-10-27 is driver session-driver's, not driver itell's
