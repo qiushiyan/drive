@@ -298,3 +298,13 @@ func JobCommand(line string) string {
 	}
 	return strings.ReplaceAll(line[i+len("eval '"):j], `'\''`, "'")
 }
+
+// Vim says whether the account whose config directory is config runs
+// Claude Code's vim editor mode, as its settings say.
+func Vim(config string) bool {
+	var settings struct {
+		EditorMode string `json:"editorMode"`
+	}
+	data, err := os.ReadFile(filepath.Join(config, "settings.json"))
+	return err == nil && json.Unmarshal(data, &settings) == nil && settings.EditorMode == "vim"
+}

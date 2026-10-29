@@ -46,7 +46,7 @@ func (a *action) deliver(line string) (string, error) {
 		if k, _ := turn.InputBox(screen); k != turn.InputTyped {
 			break
 		}
-		_ = a.press("ctrl+u")
+		_ = a.press("end", "ctrl+u") // ctrl+u deletes what stands before the cursor
 	}
 	retype := pad + line
 	if skill.Command(line) != "" {
@@ -75,6 +75,9 @@ func (a *action) typeAndConfirm(line string) (string, *turn.Prompt, error) {
 		if p := f.Newest(); p != nil {
 			before = p.ID
 		}
+	}
+	if err := a.insert(); err != nil {
+		return "", nil, err
 	}
 	if err := a.typeInto(keystrokes(line)); err != nil {
 		return "", nil, err

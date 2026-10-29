@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/qiushiyan/drive/internal/batch"
+	"github.com/qiushiyan/drive/internal/session"
 	"github.com/qiushiyan/drive/internal/turn"
 )
 
@@ -101,6 +102,29 @@ func (a *action) typeInto(text string) error {
 		return err
 	}
 	a.touched = true
+	return nil
+}
+
+// insert puts a vim-mode input box in INSERT mode before keys meant as
+// text. In NORMAL mode a typed line's letters are commands until one
+// inserts, which turned "Reply with the word ok." into "th the word ok.",
+// and ctrl+u deletes only part of a line (seen live, 2.1.312).
+func (a *action) insert() error {
+	o := a.o
+	if !session.Vim(o.Session.Config) {
+		return nil
+	}
+	screen, err := a.d.Term.Capture(o.Session.Block, true)
+	if err != nil || turn.VimInsert(screen) {
+		return nil
+	}
+	if kind, _ := turn.InputBox(screen); kind == turn.InputUnknown || kind == turn.InputPrompt {
+		return nil
+	}
+	if err := a.typeInto("i"); err != nil {
+		return err
+	}
+	a.d.sleep(a.d.poll() / 4)
 	return nil
 }
 

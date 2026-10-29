@@ -91,6 +91,13 @@ type Claude struct {
 
 	Input      string // typed into the box, not sent
 	Suggestion string // Claude Code's dimmed guess
+	// Vim is the account's vim editor mode, as VimMode sets it. Escape on an
+	// idle box puts it in NORMAL mode, where typed letters are commands up
+	// to the first that inserts; i returns to INSERT, the status line says
+	// which, and ctrl+u deletes only what stands before the cursor (as seen
+	// live, 2.1.312).
+	Vim, Normal bool
+	AtStart     bool // the cursor stands at the start of the box's line
 	// Screen, when set, is what the block shows in place of the input box,
 	// such as a full-screen view drawn over it: no ❯ line.
 	Screen    string
@@ -417,13 +424,25 @@ func (w *World) Capture(block string, vt bool) (string, error) {
 		// A prompt draws its options where the input box was, the chosen
 		// one behind the ❯ the box uses, as seen live.
 		return "Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No, and tell Claude what to do differently (esc)\r\n", nil
-	case c.Input != "":
-		return "╭───\n❯ " + c.Input + "\r\n╰───\n", nil
-	case c.Suggestion != "" && vt:
-		return "❯ \x1b[0m\x1b[2m" + c.Suggestion + "\x1b[0m\r\n", nil
-	default:
-		return "❯ \r\n", nil
 	}
+	status := ""
+	if c.Vim && !c.Normal {
+		status = "  -- INSERT -- ⏵⏵ auto mode on\r\n"
+	}
+	switch {
+	case c.Input != "":
+		return "╭───\n❯ " + c.Input + "\r\n╰───\n" + status, nil
+	case c.Suggestion != "" && vt:
+		return "❯ \x1b[0m\x1b[2m" + c.Suggestion + "\x1b[0m\r\n" + status, nil
+	default:
+		return "❯ \r\n" + status, nil
+	}
+}
+
+// VimMode turns on the account's vim editor mode, as its settings say.
+func (c *Claude) VimMode() {
+	_ = os.WriteFile(filepath.Join(c.Config, "settings.json"), []byte(`{"editorMode":"vim"}`), 0o644)
+	c.Edit(func(c *Claude) { c.Vim = true })
 }
 
 func (w *World) Type(block, text string) error {
@@ -443,6 +462,18 @@ func (w *World) Type(block, text string) error {
 		return fmt.Errorf("no block")
 	}
 	c.Typed = append(c.Typed, text)
+	if c.Normal {
+		// Letters are commands until one inserts; what follows it is text.
+		i := strings.IndexAny(text, "iaoIAOsSC")
+		if i < 0 {
+			return nil
+		}
+		c.Normal, text = false, text[i+1:]
+	}
+	if c.AtStart {
+		c.Input = text + c.Input
+		return nil
+	}
 	if c.DropHead > 0 && len(text) > c.DropHead {
 		// A real lost head comes back as a line break in its place:
 		// "\nopy-handoff-distill merged and deployed".
@@ -536,6 +567,8 @@ func (w *World) Key(block string, keys ...string) error {
 						"content": []map[string]any{{"type": "text", "text": "[Request interrupted by user for tool use]"}}}})
 				c.activity("idle", "")
 				c.running, c.stale = false, true
+			} else if c.Vim && c.Activity == "idle" {
+				c.Normal = true // the box leaves INSERT mode
 			}
 		case "ctrl+c":
 			if c.Activity == "busy" {
@@ -545,7 +578,16 @@ func (w *World) Key(block string, keys ...string) error {
 				interrupted = true
 			}
 		case "ctrl+u":
-			c.Input = ""
+			switch {
+			case c.Normal && c.Input != "":
+				c.Input = c.Input[len(c.Input)-1:]
+			case !c.AtStart:
+				c.Input = ""
+			}
+		case "home":
+			c.AtStart = true
+		case "end":
+			c.AtStart = false
 		}
 	}
 	reply, slow := c.Reply, c.SlowCompact

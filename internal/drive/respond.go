@@ -83,8 +83,14 @@ func (d *Driver) Respond(view, response string) (res *Responded, err error) {
 	var uncleared *Failed
 	if response == "clear" {
 		kind, typed := turn.InputUnknown, ""
+		// ctrl+u deletes what stands before the cursor, so it goes from the
+		// line's end, in INSERT mode: a "?25h" left with the cursor at its
+		// start outlived two clears on 10-28.
+		if err := a.insert(); err != nil {
+			return nil, unsent(err, again)
+		}
 		for i := 0; i < 5 && kind != turn.InputEmpty && kind != turn.InputSuggestion; i++ {
-			if err := a.press("ctrl+u"); err != nil && i == 0 {
+			if err := a.press("end", "ctrl+u"); err != nil && i == 0 {
 				return nil, unsent(err, again)
 			} else if err != nil {
 				return nil, &Failed{What: fmt.Sprintf("pressed ctrl+u in %s %d times, then Rex failed: %v", o.Label, i, err),

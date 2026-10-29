@@ -19,6 +19,12 @@ const (
 var sgr = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 var leadingSGR = regexp.MustCompile(`^(?:\x1b\[[0-9;]*m)*`)
 
+// VimInsert says whether a screen's status line shows Claude Code's vim
+// editor mode in INSERT mode. NORMAL mode shows nothing there.
+func VimInsert(vt string) bool {
+	return strings.Contains(sgr.ReplaceAllString(vt, ""), "-- INSERT --")
+}
+
 // InputBox reads the input box from a screen captured with its terminal
 // sequences (`rex capture --format vt`): the last line holding the ❯ prompt.
 // Claude Code draws its suggestion dim (SGR 2) and typed text plain.

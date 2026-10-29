@@ -1024,3 +1024,44 @@ func TestAStuckWatchIsFlaggedAndRestarted(t *testing.T) {
 		t.Fatalf("the restart is a new watch: %d", n)
 	}
 }
+
+// Every account runs Claude Code's vim editor mode. An Escape on an idle box,
+// the session's own or a split terminal sequence's, leaves it in NORMAL mode,
+// where typing "Reply with the word ok." sent "th the word ok." (seen live,
+// 2.1.312). A step typed into such a box goes in INSERT mode first.
+func TestAStepTypedIntoAVimBoxInNormalModeArrivesWhole(t *testing.T) {
+	r := newRig(t, "none")
+	c := adopted(t, r, "T1")
+	c.VimMode()
+	if err := r.w.Key(c.Block, "escape"); err != nil {
+		t.Fatal(err)
+	}
+	sent, err := r.d.Send(r.view("T1"), drive.Step{Line: "Reply with the word ok."}, drive.SendOptions{})
+	if err != nil || sent.Outcome != "arrived" {
+		t.Fatalf("the step arrives whole: %+v %v", sent, err)
+	}
+}
+
+// A stray "?25h", the tail of a terminal sequence, stayed in ITELL's P2 box
+// through two clears on 10-28: ctrl+u deletes only what stands before the
+// cursor, and in NORMAL mode only part of the line. The clear reaches the
+// line's end in INSERT mode first.
+func TestClearEmptiesTheBoxWhereverTheCursorStands(t *testing.T) {
+	for name, set := range map[string]func(c *testkit.Claude){
+		"cursor at the start": func(c *testkit.Claude) { c.Input, c.AtStart = "?25h", true },
+		"normal mode":         func(c *testkit.Claude) { c.Input, c.Normal = "stray text", true },
+	} {
+		r := newRig(t, "none")
+		c := adopted(t, r, "T1")
+		c.VimMode()
+		c.Edit(set)
+		if _, err := r.d.Respond(r.view("T1"), "clear"); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+		c.Edit(func(c *testkit.Claude) {
+			if c.Input != "" || c.Normal {
+				t.Errorf("%s: the box holds %q, normal mode %t", name, c.Input, c.Normal)
+			}
+		})
+	}
+}
