@@ -469,7 +469,7 @@ func sentLabel(e *batch.Event) string {
 	case e.Mode == "file":
 		return "file"
 	default:
-		return clip(strings.TrimSpace(e.Text), 40)
+		return clip(strings.TrimSpace(stepOf(*e)), 40)
 	}
 }
 
