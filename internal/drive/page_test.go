@@ -115,7 +115,8 @@ func pageBatch(t *testing.T) (*rig, *pageProgress) {
 	prog.steps[p.SID] = progress.Steps{Stage: "review", StageAt: now, PR: &one, PRs: []progress.PRRef{one}}
 	prog.steps[q.SID] = progress.Steps{Stage: "build", StageAt: now}
 	prog.steps[l.SID] = progress.Steps{Stage: "onboard", StageAt: now}
-	prog.steps[c.SID] = progress.Steps{Stage: "docs", StageAt: now, Branch: "retire/fields", PR: &two, PRs: []progress.PRRef{ref(1, false), two}}
+	prog.steps[c.SID] = progress.Steps{Stage: "docs", StageAt: now, Branch: "retire/fields", PR: &two, PRs: []progress.PRRef{ref(1, false), two},
+		Labels: []progress.Label{{Name: "build", At: now}, {Name: "docs", At: now}}}
 	prog.steps[dd.SID] = progress.Steps{Stage: "docs", StageAt: now}
 
 	w.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} }) // its build runs on
@@ -252,6 +253,9 @@ func TestTheOverviewGroupsSessionsByWhereTheyStand(t *testing.T) {
 		if strip = strip[:strings.Index(strip, "</details>")]; !strings.Contains(strip, "<dt>Branch</dt><dd>"+branch+"</dd>") {
 			t.Errorf("%s, open or closed, names its branch %s", label, branch)
 		}
+	}
+	if strip := page[strings.Index(page, `id="b1/C"`):]; !strings.Contains(strip[:strings.Index(strip, "</details>")], `<li class="on newest"><b></b><span>docs</span>`) {
+		t.Error("a closed session keeps its stages, read from its transcript")
 	}
 	if strings.Contains(page, "wake is armed") {
 		t.Error("a batch whose driver waits itself has no wakes to speak of")
@@ -712,16 +716,26 @@ func TestTheLastDriverActionIsNeverAWatchs(t *testing.T) {
 		t.Errorf("the page says when and what:\n%s", page[strings.Index(page, `<dl class="health">`):][:300])
 	}
 
-	// A wake an action arms as it ends is told as that action; one armed on
-	// its own is an action of its own.
+	// A step the driver sent is its action, not the wake it armed, nor one
+	// the scheduled watchdog arms later because no run acted, nor an open
+	// that never started its session.
 	_ = r.b.Append(batch.Event{At: now, Kind: batch.KindSend, Session: "E", Mode: "typed", Text: "go on", Outcome: "arrived"})
 	_ = r.b.Append(batch.Event{At: now.Add(10 * time.Second), Kind: batch.KindWatch, Session: "E"})
-	if ov, err = r.d.Overview(true); err != nil || ov.Acted.Kind != batch.KindSend {
-		t.Fatalf("the step to E, not the wake it armed: %+v %v", ov.Acted, err)
-	}
 	_ = r.b.Append(batch.Event{At: now.Add(2 * time.Minute), Kind: batch.KindWatch, Session: "E"})
-	if ov, err = r.d.Overview(true); err != nil || ov.Acted.Kind != batch.KindWatch {
-		t.Fatalf("a wake armed on its own, as watch --due arms one: %+v %v", ov.Acted, err)
+	r.w.Clock.Sleep(3 * time.Minute)
+	r.w.Down = 100
+	if _, err := r.d.Open("O", drive.Step{}, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work")}); err == nil {
+		t.Fatal("an open with Rex down opens nothing")
+	}
+	r.w.Down = 0
+	if len(r.events(batch.KindOpenIntent)) == 0 {
+		t.Fatal("the failed open recorded its intent first, as every open does")
+	}
+	if ov, err = r.d.Overview(true); err != nil || ov.Acted.Kind != batch.KindSend || ov.Acted.Session != "E" {
+		t.Fatalf("the step to E is still the driver's last action: %+v %v", ov.Acted, err)
+	}
+	if page := string(ov.HTML(r.w.Clock.Now())); !strings.Contains(page, "<small>3m ago, a step to E</small>") {
+		t.Errorf("the page says the step:\n%s", page[strings.Index(page, `<dl class="health">`):][:300])
 	}
 }
 
@@ -927,5 +941,44 @@ func TestEveryLinkOnThePageLandsInItsBatch(t *testing.T) {
 	}
 	if len(asks) != 3 {
 		t.Fatalf("three open questions across the two batches: %d", len(asks))
+	}
+}
+
+// A session's history is what its log holds for its owner, read through
+// the overview: a reopen, a prompt answered, a wake posted, a watch that
+// ended without one, and a close, beside the steps and joins.
+func TestASessionsHistoryIsReadFromTheLog(t *testing.T) {
+	r, _ := pageBatch(t)
+	evs, _ := r.b.Events()
+	w := batch.Find(batch.Members(evs), "W")
+	now := r.w.Clock.Now()
+	for _, e := range []batch.Event{
+		{Kind: batch.KindOpen, Session: "W", Block: w.Block, SID: w.SID, Ref: w.SID},
+		{Kind: batch.KindRespond, Session: "W", Action: "approve", Outcome: "working"},
+		{Kind: batch.KindWake, Session: "W", HTTP: 200, Outcome: "done"},
+		{Kind: batch.KindFailure, Session: "W", Reason: "watch ended without a wake: webhook answered 502"},
+	} {
+		e.At = now
+		_ = r.b.Append(e)
+	}
+	ov, err := r.d.Overview(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(ov.HTML(r.w.Clock.Now()))
+	strip := func(label string) string {
+		s := page[strings.Index(page, `id="b1/`+label+`"`):]
+		return s[:strings.Index(s, "</details>")]
+	}
+	for label, wants := range map[string][]string{
+		"W": {`<span class="kind">Reopened</span>`, `<span class="kind">Answered its prompt:</span> approved.`, `<span class="kind">Woke the driver:</span> turn ended.`,
+			`<span class="kind">Failed:</span> watch ended without a wake: webhook answered 502`, `<span class="kind">Sent</span> “build it”`, `<span class="kind">Joined the batch</span>`},
+		"C": {`<span class="kind">Closed</span>`},
+	} {
+		for _, want := range wants {
+			if !strings.Contains(strip(label), want) {
+				t.Errorf("%s's history says %q", label, want)
+			}
+		}
 	}
 }

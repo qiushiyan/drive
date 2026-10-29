@@ -44,6 +44,25 @@ var byDriver = map[string]bool{
 	KindClose: true, KindWatch: true, KindRefused: true, KindOpenIntent: true, KindOpen: true,
 }
 
+// Acted says a driver's command changed a session, or set a timer: a step
+// that reached it or may have, a prompt answered, an open that started its
+// Claude Code, an adoption, a park or a close. What only shows a command
+// ran is ByDriver's: an intent whose action may have failed, a refusal, or a
+// wake armed, which a driver's scheduled watchdog does when no run acts.
+func Acted(e Event) bool {
+	switch e.Kind {
+	case KindSend:
+		return e.Outcome != ""
+	case KindOpen:
+		return e.SID != ""
+	case KindWatch:
+		return e.Session == "" // a timer
+	case KindRespond, KindAdopt, KindPark, KindClose:
+		return true
+	}
+	return false
+}
+
 // Event is one line of the log. Fields not used by a kind stay empty.
 type Event struct {
 	At      time.Time `json:"at"`

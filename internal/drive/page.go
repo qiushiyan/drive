@@ -2,7 +2,6 @@ package drive
 
 import (
 	"bytes"
-	"cmp"
 	_ "embed"
 	"fmt"
 	"html/template"
@@ -66,7 +65,7 @@ type batchView struct {
 	Groups  []groupView
 	Decided []decisionView
 	Grants  []string
-	Notes   []entryView // the driver's notes on no one session, newest first
+	Notes   []entryView // notes on no one session, the driver's and drive's own, newest first
 	Holds   []string
 	Empty   string
 }
@@ -531,25 +530,21 @@ func healthOf(ov *Overview, now time.Time) []healthView {
 
 // actedWords is what a driver did, in a few words.
 func actedWords(e batch.Event) string {
-	who := cmp.Or(e.Session, "the batch")
 	switch e.Kind {
-	case batch.KindSendIntent, batch.KindSend:
-		return "a step to " + who
+	case batch.KindSend:
+		return "a step to " + e.Session
 	case batch.KindRespond:
-		return who + "'s prompt answered"
-	case batch.KindOpenIntent, batch.KindOpen:
-		return who + " opened"
+		return e.Session + "'s prompt answered"
+	case batch.KindOpen:
+		return e.Session + " opened"
+	case batch.KindAdopt:
+		return e.Session + " joined"
 	case batch.KindPark:
-		return who + " parked"
+		return e.Session + " parked"
 	case batch.KindClose:
-		return who + " closed"
+		return e.Session + " closed"
 	case batch.KindWatch:
-		if e.Session == "" {
-			return "a timer set"
-		}
-		return who + "'s wake armed"
-	case batch.KindRefused:
-		return "an action on " + who + " refused"
+		return "a timer set"
 	}
 	return e.Kind
 }

@@ -30,9 +30,9 @@ type Overview struct {
 	Answered []*batch.Ask  // questions the owner answered, or that stopped mattering, in the order asked
 	Grants   []batch.Event // authority the owner handed over
 	Notes    []batch.Event // notes on no one session: the driver's, and drive's own
-	// Acted is the newest thing a driver's command wrote (batch.ByDriver).
-	// A watch's own events never count, so a driver that has gone reads as
-	// gone.
+	// Acted is the newest thing a driver did to a session (batch.Acted).
+	// Watches and the scheduled watchdog never count, so a driver that has
+	// gone reads as gone.
 	Acted *batch.Event
 }
 
@@ -120,7 +120,7 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 	}
 	histories := map[string][]batch.Event{}
 	for _, e := range evs {
-		if batch.ByDriver(e) && !armedBy(e, ov.Acted) {
+		if batch.Acted(e) {
 			ov.Acted = &e
 		}
 		if e.Kind == batch.KindAnswer {
@@ -223,12 +223,6 @@ func forOwner(e batch.Event) bool {
 		return true
 	}
 	return false
-}
-
-// armedBy says e is the wake an action arms as it ends, so it is told as
-// part of that action: the step sent, rather than the wake behind it.
-func armedBy(e batch.Event, action *batch.Event) bool {
-	return e.Kind == batch.KindWatch && action != nil && action.Session == e.Session && e.Session != "" && e.At.Sub(action.At) < time.Minute
 }
 
 func views(refs []progress.PRRef) []PRView {
