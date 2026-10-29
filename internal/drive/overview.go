@@ -26,6 +26,14 @@ type Overview struct {
 	Asks   []*batch.Ask  // questions put to the owner with no answer yet
 	Groups []Group       // the sessions, by where each stands, in the order the page shows them
 	Holds  []string
+
+	Answered []*batch.Ask  // questions the owner answered, or that stopped mattering, in the order asked
+	Grants   []batch.Event // authority the owner handed over
+	Notes    []batch.Event // the driver's notes on no one session
+	// Acted is the newest thing a driver did to a session: a step sent, a
+	// prompt answered, an open, a park or a close. A watch's own events
+	// never count, so a driver that has gone reads as gone.
+	Acted *batch.Event
 }
 
 // Group is sessions that stand alike. Closed is a group of its own, apart
@@ -53,9 +61,16 @@ type Card struct {
 	Row     *Row // as read live; nil for a closed session, or one not read live
 	Stage   string
 	StageAt time.Time
+	Labels  []progress.Label // every stage, with its newest step's time
+	Branch  string
 	PRs     []PRView
 	Asks    []string // the open asks that name it
 	Unread  string   // what of it could not be read
+	// History is what the record holds of it for its owner, oldest first:
+	// its opens, the steps sent, prompts answered, parks and close, the
+	// asks put about it and their answers, the driver's notes on it, and
+	// its wakes. An answer is filed under its ask's session.
+	History []batch.Event
 }
 
 // PRView is a pull request a session opened or named, with its state as read.
@@ -89,13 +104,41 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 		return nil, err
 	}
 	members := batch.Members(evs)
-	_, asks, _ := batch.Records(evs)
+	grants, asks, notes := batch.Records(evs)
 	for _, a := range asks {
 		if a.Answer == nil {
 			ov.Asks = append(ov.Asks, a)
+		} else {
+			ov.Answered = append(ov.Answered, a)
+		}
+	}
+	ov.Grants = grants
+	for _, n := range notes {
+		if n.Session == "" {
+			ov.Notes = append(ov.Notes, n)
+		}
+	}
+	histories := map[string][]batch.Event{}
+	for _, e := range evs {
+		if acted(e) {
+			ov.Acted = &e
+		}
+		if e.Kind == batch.KindAnswer {
+			// An answer names its ask; the ask names the session.
+			for _, a := range asks {
+				if a.ID == e.Ref {
+					e.Session = a.Session
+				}
+			}
+		}
+		if e.Session != "" && forOwner(e) {
+			histories[e.Session] = append(histories[e.Session], e)
 		}
 	}
 	rows := map[string]*Row{}
+	if !live {
+		ov.Live = "only the batch's record was read"
+	}
 	if live {
 		// A Rex session that ended, as on a server restart, leaves its
 		// sessions to read as gone.
@@ -117,14 +160,14 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 	cards := make([]Card, len(members))
 	var wg sync.WaitGroup
 	for i, m := range members {
-		c := Card{Member: m, Row: rows[m.Label]}
+		c := Card{Member: m, Row: rows[m.Label], History: histories[m.Label]}
 		for _, a := range ov.Asks {
 			if a.Session == m.Label {
 				c.Asks = append(c.Asks, a.ID)
 			}
 		}
 		if r := c.Row; r != nil {
-			c.Stage, c.StageAt, c.PRs = r.Stage, r.StageAt, views(r.PRs)
+			c.Stage, c.StageAt, c.Labels, c.Branch, c.PRs = r.Stage, r.StageAt, r.Labels, r.Branch, views(r.PRs)
 			switch {
 			case r.Error != "":
 				c.Unread = r.Error
@@ -139,7 +182,7 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 				if s, err := d.Progress.Steps(m.SID); err != nil {
 					cards[i].Unread = "its stage and pull requests (" + firstLine(err.Error()) + ")"
 				} else {
-					cards[i].Stage, cards[i].StageAt, cards[i].PRs = s.Stage, s.StageAt, views(s.PRs)
+					cards[i].Stage, cards[i].StageAt, cards[i].Labels, cards[i].Branch, cards[i].PRs = s.Stage, s.StageAt, s.Labels, s.Branch, views(s.PRs)
 				}
 			})
 		}
@@ -164,6 +207,37 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 	ov.Groups = grouped(cards)
 	ov.Took = d.now().Sub(ov.At)
 	return ov, nil
+}
+
+// acted says a driver did e to a session. Watches write their posts, their
+// wakes, a wake that failed and the notes of commands run after a wake, so
+// none of those count.
+func acted(e batch.Event) bool {
+	switch e.Kind {
+	case batch.KindSend:
+		return e.Outcome != ""
+	case batch.KindOpen:
+		return e.SID != ""
+	case batch.KindRespond, batch.KindPark, batch.KindClose, batch.KindAdopt:
+		return true
+	}
+	return false
+}
+
+// forOwner says e belongs in a session's history as its owner reads it.
+// What only a driver acts on stays out: intents, watches armed and stopped,
+// posts under way and refusals.
+func forOwner(e batch.Event) bool {
+	switch e.Kind {
+	case batch.KindOpen:
+		return e.SID != "" // the open that started its Claude Code, not the block opening
+	case batch.KindSend:
+		return e.Outcome != ""
+	case batch.KindAdopt, batch.KindRespond, batch.KindPark, batch.KindClose, batch.KindAsk, batch.KindAnswer,
+		batch.KindNote, batch.KindWake, batch.KindFailure, batch.KindGoal:
+		return true
+	}
+	return false
 }
 
 func views(refs []progress.PRRef) []PRView {

@@ -2,42 +2,157 @@ package drive
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"html/template"
+	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/qiushiyan/drive/internal/batch"
+	"github.com/qiushiyan/drive/internal/progress"
 )
 
 // What the page prints, for the owner on a phone: the words are theirs, not
 // a driver's. Every fact is in the view below, worded in Go, so the
-// template only lays it out.
+// template only lays it out and its script only moves between batches.
 
 type pageView struct {
 	Title   string
-	Batch   string   // what the header says of the batch, or the batches
-	Read    string   // when the page was read, and how long that took
-	Live    []string // why sessions were not read live, a line per batch
-	Asks    []askView
+	Read    string // when the page's batches were read
+	Several bool   // several batches, each a tab, with All beside them
+	Tabs    []tabView
+	Asks    []askView  // every open ask of every batch shown, each once
+	Waiting []waitView // the sessions waiting on their driver, every batch's
 	Batches []batchView
-	Several bool   // the page shows several drivers' batches, each under its own heading
 	Empty   string // what to say when there is nothing to show
 }
 
-// batchView is one batch's sessions on the page.
+// tabView is a batch's tab, or All's.
+type tabView struct {
+	Anchor string // the batch's name, or "all"
+	Name   string
+	Sub    string
+	Asks   int  // its open asks
+	Unread bool // it was not read live
+	Segs   []segView
+}
+
+// segView is how many sessions stand in one place, for the bar.
+type segView struct {
+	Kind  string // the state it is coloured as
+	N     int
+	Title string
+}
+
+type healthView struct {
+	Title, Value, Sub string
+	Alert             bool // something the owner should look at
+}
+
+// batchView is one batch's section of the page.
 type batchView struct {
-	Name   string // also its anchor
-	Title  string // its heading, when the page shows several
-	Groups []groupView
-	Holds  []string
-	Empty  string
+	Name    string // also its anchor
+	Title   string // what the page calls it: its project
+	Eyebrow string
+	Driver  string // who drives it, and how they hear
+	Rex     string // the Rex session its sessions open in
+	Read    string // when it was read, and how long that took
+	Live    string // why it was not read live
+	Health  []healthView
+	Segs    []segView
+	Groups  []groupView
+	Decided []decisionView
+	Grants  []string
+	Notes   []entryView // the driver's notes on no one session, newest first
+	Holds   []string
+	Empty   string
+	Asks    int
+}
+
+type groupView struct {
+	Title  string
+	Kind   string
+	Strips []stripView
+}
+
+// stripView is one session: a summary that always shows, the rest once
+// opened.
+type stripView struct {
+	Anchor  string // the batch's name and the label, so a link names one session on a page of several batches
+	Label   string
+	Kind    string // the state it is coloured as: next, work, park, alert, done
+	State   string
+	For     string
+	Stage   string
+	StageAt string
+	Why     string   // a park's reason, in the driver's words then
+	Since   []string // what happened after the park
+	Goal    string
+	Asks    []askLink // the open asks that name it, each linking to its question
+	PRs     []link    // the pull requests it opened
+	Chips   []string
+	Facts   []factView
+	Labels  []labelView
+	History []entryView // the newest of its record, newest first
+	Earlier []entryView // the rest
+}
+
+type askLink struct {
+	ID   string
+	Href template.URL
+}
+
+type factView struct {
+	Title string
+	Text  string
+	Links []link // pull requests, after the text
+	Error bool   // what could not be read
+}
+
+type link struct {
+	Text  string
+	URL   string
+	State string
+	Kind  string // merged, open, failing or closed
+}
+
+// labelView is one stage: when the session's newest step under it was
+// taken, a dated fact and no verdict.
+type labelView struct {
+	Name, Age  string
+	On, Newest bool
+}
+
+// entryView is one thing the record holds.
+type entryView struct {
+	When string
+	Kind string
+	Head string
+	Text string
+	Note bool // the driver's own words, set apart
+}
+
+// decisionView is a question the owner answered, or one that stopped
+// mattering, where its link still lands.
+type decisionView struct {
+	Anchor   string
+	ID       string
+	Session  string
+	Card     template.URL // its session's card; "" for the whole batch
+	Question string
+	Took     string
+	Kind     string
+	Said     string
+	When     string
 }
 
 type askView struct {
 	ID             string
 	Anchor         string       // the batch's name and the ask's, since every batch numbers its asks from A1
-	Batch          string       // the batch it was asked in, named when the page shows several
+	Batch          string       // the batch it was asked in, which the page's tabs show it under
+	BatchTitle     string       // named when the page shows several
 	Session        string       // the session it holds, whose card it links to; "" for the whole batch
 	Card           template.URL // the link to that card
 	Asked          string
@@ -47,51 +162,35 @@ type askView struct {
 	IfUnanswered   string
 }
 
-type groupView struct {
-	Title string
-	Cards []cardView
-}
-
-type cardView struct {
-	Label  string
-	Anchor string // the batch's name and the label, so a link names one session's card on a page of several drivers' batches
-	State  string
-	Asks   []askLink // the open asks that name it, each linking to its question
-	Goal   string
-	Facts  []fact
-	Closed bool
-}
-
-type askLink struct {
-	ID   string
-	Href template.URL
+// waitView is a session waiting on its driver, as All lists it beside
+// every other batch's.
+type waitView struct {
+	Href  template.URL
+	Label string
+	Batch string
+	Kind  string
+	State string
+	Goal  string
 }
 
 // href links to an anchor on the page. The anchor's slash stays a slash:
 // a batch's name and a label hold none, and a driver writes the link.
 func href(anchor string) template.URL { return template.URL("#" + anchor) }
 
-type fact struct {
-	Text  string
-	Links []link // pull requests, after the text
-	Minor bool   // secondary: delivery metadata
-	Error bool   // what could not be read
-}
-
-type link struct {
-	Text, URL, State string
-}
-
 // Anchor is where a session's card is on the page: the batch's name, a
 // slash and the session's label, such as 2026-10-27/ON.
 func Anchor(batchName, label string) string { return batchName + "/" + label }
+
+// The history a strip shows before the rest folds away.
+const historyShown = 12
 
 // HTML is the page of one batch, as of now.
 func (ov *Overview) HTML(now time.Time) []byte { return PageHTML([]*Overview{ov}, now) }
 
 // PageHTML is the page of the batches ovs read, as of now: the questions
-// waiting on the owner from every batch first, then each batch's sessions.
-// An Overview with no batch is a page with nothing to show.
+// waiting on the owner from every batch first, then each batch's sessions,
+// each batch a tab when there are several. An Overview with no batch is a
+// page with nothing to show.
 func PageHTML(ovs []*Overview, now time.Time) []byte {
 	v := pageView{Title: "drive"}
 	var shown []*Overview
@@ -101,74 +200,48 @@ func PageHTML(ovs []*Overview, now time.Time) []byte {
 		}
 	}
 	v.Several = len(shown) > 1
-	switch {
-	case len(shown) == 0:
+	names := pageNames(shown)
+	switch len(shown) {
+	case 0:
 		v.Empty = "No batch is live."
-	case len(shown) == 1:
-		ov := shown[0]
-		v.Title = "drive · " + ov.Batch.Name
-		v.Batch = fmt.Sprintf("Batch %s%s, started %s", ov.Batch.Name, driverClause(ov.Batch), when(ov.Batch.Started, now, ov.Zone))
-	default:
-		var names []string
-		for _, ov := range shown {
-			names = append(names, ov.Batch.Name)
-		}
-		v.Batch = "Batches " + strings.Join(names, ", ")
+	case 1:
+		v.Title = "drive · " + names[0]
 	}
 	if len(ovs) > 0 {
-		first, took := ovs[0], time.Duration(0)
+		first := ovs[0]
 		for _, ov := range ovs {
-			took = max(took, ov.Took)
+			if ov.At.Before(first.At) {
+				first = ov
+			}
 		}
-		v.Read = fmt.Sprintf("Read at %s, in %s.", first.At.In(first.Zone).Format("15:04:05"), took.Round(100*time.Millisecond))
+		v.Read = "Read at " + first.At.In(first.Zone).Format("15:04:05")
 	}
-	for _, ov := range shown {
-		at := func(t time.Time) string { return when(t, now, ov.Zone) }
-		name := ov.Batch.Name
-		if ov.Live != "" {
-			if v.Several {
-				v.Live = append(v.Live, fmt.Sprintf("Batch %s not read live: %s. What follows of it is what its record holds.", name, ov.Live))
-			} else {
-				v.Live = append(v.Live, fmt.Sprintf("Not read live: %s. What follows is what the batch's record holds.", ov.Live))
-			}
-		}
-		goals := map[string]string{}
-		for _, g := range ov.Groups {
-			for _, c := range g.Cards {
-				goals[c.Member.Label] = c.Member.Goal
-			}
-		}
+	asks := 0
+	for i, ov := range shown {
+		bv := batchOf(ov, names[i], now)
 		for _, a := range ov.Asks {
-			av := askView{ID: a.ID, Anchor: name + "/ask-" + a.ID, Session: a.Session, Asked: "asked " + at(a.At), Goal: goals[a.Session],
-				Question: a.Question, Recommendation: a.Recommendation, IfUnanswered: a.IfUnanswered}
-			if a.Session != "" {
-				av.Card = href(Anchor(name, a.Session))
-			}
+			av := askOf(ov, a, now)
 			if v.Several {
-				av.Batch = name
+				av.BatchTitle = names[i]
 			}
 			v.Asks = append(v.Asks, av)
 		}
-		bv := batchView{Name: name, Holds: ov.Holds}
-		if v.Several {
-			bv.Title = fmt.Sprintf("Batch %s%s, started %s", name, driverClause(ov.Batch), at(ov.Batch.Started))
-		}
-		for _, g := range ov.Groups {
-			gv := groupView{Title: g.Title}
-			for _, c := range g.Cards {
-				cv := cardOf(c, ov.Wakes, now, ov.Zone)
-				cv.Anchor = Anchor(name, c.Member.Label)
-				for _, id := range c.Asks {
-					cv.Asks = append(cv.Asks, askLink{ID: id, Href: href(name + "/ask-" + id)})
-				}
-				gv.Cards = append(gv.Cards, cv)
+		asks += len(ov.Asks)
+		for _, g := range bv.Groups {
+			if g.Title != GroupPrompt && g.Title != GroupNext {
+				continue
 			}
-			bv.Groups = append(bv.Groups, gv)
+			for _, s := range g.Strips {
+				v.Waiting = append(v.Waiting, waitView{Href: href(s.Anchor), Label: s.Label, Batch: names[i], Kind: s.Kind,
+					State: strings.TrimSpace(s.State + " " + s.For), Goal: s.Goal})
+			}
 		}
-		if len(ov.Groups) == 0 {
-			bv.Empty = "No session has joined the batch yet."
-		}
+		v.Tabs = append(v.Tabs, tabView{Anchor: bv.Name, Name: names[i], Sub: tabSub(ov.Batch), Asks: len(ov.Asks), Unread: ov.Live != "", Segs: bv.Segs})
 		v.Batches = append(v.Batches, bv)
+	}
+	if v.Several {
+		all := tabView{Anchor: "all", Name: "All", Sub: fmt.Sprintf("%d live batches, and what waits in each", len(shown)), Asks: asks}
+		v.Tabs = append([]tabView{all}, v.Tabs...)
 	}
 	var out bytes.Buffer
 	if err := pageTemplate.Execute(&out, v); err != nil {
@@ -177,68 +250,636 @@ func PageHTML(ovs []*Overview, now time.Time) []byte {
 	return out.Bytes()
 }
 
-// driverClause names a batch's driver in its heading, where it names one.
-func driverClause(m *batch.Meta) string {
-	if driver := batch.DriverOf(*m); driver != "" {
-		return ", driven by " + driver
+// pageNames is what the page calls each batch: the Rex session its
+// sessions open in, which names the project, else its driver, else its
+// own name. Two batches the same name would give are told apart by their
+// drivers, or their own names.
+func pageNames(ovs []*Overview) []string {
+	names := make([]string, len(ovs))
+	count := map[string]int{}
+	for i, ov := range ovs {
+		names[i] = projectOf(ov.Batch)
+		count[names[i]]++
 	}
-	return ""
+	for i, ov := range ovs {
+		if count[names[i]] < 2 {
+			continue
+		}
+		if d := batch.DriverOf(*ov.Batch); d != "" && d != names[i] {
+			names[i] += " · " + d
+		} else {
+			names[i] += " · " + ov.Batch.Name
+		}
+	}
+	return names
 }
 
-func cardOf(c Card, wakes bool, now time.Time, zone *time.Location) cardView {
-	at := func(t time.Time) string { return when(t, now, zone) }
+// projectOf names the project a batch works on. An older drive recorded a
+// Rex session by its id, which names nothing.
+func projectOf(m *batch.Meta) string {
+	if l := m.RexSession; l != "" && !strings.HasPrefix(l, "session:") {
+		return l
+	}
+	if d := batch.DriverOf(*m); d != "" {
+		return d
+	}
+	return m.Name
+}
+
+func tabSub(m *batch.Meta) string {
+	if d := batch.DriverOf(*m); d != "" {
+		return d + " · " + m.Name
+	}
+	return m.Name
+}
+
+func askOf(ov *Overview, a *batch.Ask, now time.Time) askView {
+	name := ov.Batch.Name
+	av := askView{ID: a.ID, Anchor: name + "/ask-" + a.ID, Batch: name, Session: a.Session, Asked: "asked " + when(a.At, now, ov.Zone),
+		Question: a.Question, Recommendation: a.Recommendation, IfUnanswered: a.IfUnanswered}
+	if a.Session != "" {
+		av.Card = href(Anchor(name, a.Session))
+		for _, g := range ov.Groups {
+			for _, c := range g.Cards {
+				if c.Member.Label == a.Session {
+					av.Goal = c.Member.Goal
+				}
+			}
+		}
+	}
+	return av
+}
+
+func batchOf(ov *Overview, title string, now time.Time) batchView {
+	at := func(t time.Time) string { return when(t, now, ov.Zone) }
+	m := ov.Batch
+	bv := batchView{Name: m.Name, Title: title, Eyebrow: "Batch " + m.Name + " · started " + pageClock(m.Started, now, ov.Zone), Holds: ov.Holds, Asks: len(ov.Asks)}
+	driver := batch.DriverOf(*m)
+	switch {
+	case driver != "" && ov.Wakes:
+		bv.Driver = "Driven by " + driver + ", woken by webhook"
+	case driver != "":
+		bv.Driver = "Driven by " + driver + ", which waits itself"
+	case ov.Wakes:
+		bv.Driver = "Its driver is woken by webhook"
+	}
+	if l := m.RexSession; l != "" && !strings.HasPrefix(l, "session:") {
+		bv.Rex = l
+	}
+	if ov.Live != "" {
+		bv.Live = "Not read live: " + ov.Live + ". What follows is what the batch's record holds."
+	} else {
+		bv.Read = fmt.Sprintf("Read at %s, in %s.", ov.At.In(ov.Zone).Format("15:04:05"), ov.Took.Round(100*time.Millisecond))
+	}
+	bv.Health = healthOf(ov, now)
+	for _, g := range ov.Groups {
+		bv.Segs = append(bv.Segs, segView{Kind: groupKind(g.Title), N: len(g.Cards), Title: strings.ToLower(g.Title[:1]) + g.Title[1:]})
+		gv := groupView{Title: g.Title, Kind: groupKind(g.Title)}
+		for _, c := range g.Cards {
+			gv.Strips = append(gv.Strips, stripOf(ov, c, g.Title, now))
+		}
+		bv.Groups = append(bv.Groups, gv)
+	}
+	if len(ov.Groups) == 0 {
+		bv.Empty = "No session has joined the batch yet."
+	}
+	answered := slices.Clone(ov.Answered)
+	slices.SortStableFunc(answered, func(a, b *batch.Ask) int { return b.Answer.At.Compare(a.Answer.At) })
+	for _, a := range answered {
+		d := decisionView{Anchor: m.Name + "/ask-" + a.ID, ID: a.ID, Session: a.Session, Question: a.Question, Said: a.Answer.Source,
+			When: fmt.Sprintf("asked %s, answered %s, %s later", pageClock(a.At, now, ov.Zone), pageClock(a.Answer.At, now, ov.Zone), ago(a.Answer.At.Sub(a.At)))}
+		d.Took, d.Kind = answerTook(a.Answer)
+		if a.Session != "" {
+			d.Card = href(Anchor(m.Name, a.Session))
+		} else {
+			d.Session = "the whole batch"
+		}
+		bv.Decided = append(bv.Decided, d)
+	}
+	for _, g := range ov.Grants {
+		bv.Grants = append(bv.Grants, fmt.Sprintf("%s, %s: %s, in your words %s", g.ID, at(g.At), g.Scope, g.Source))
+	}
+	for _, n := range slices.Backward(ov.Notes) {
+		bv.Notes = append(bv.Notes, entryOf(n, nil, now, ov.Zone))
+	}
+	return bv
+}
+
+// groupKind is the state a group's sessions are coloured as.
+func groupKind(title string) string {
+	switch title {
+	case GroupParked:
+		return "park"
+	case GroupWorking:
+		return "work"
+	case GroupUnread:
+		return "alert"
+	case GroupClosed:
+		return "done"
+	}
+	return "next"
+}
+
+// healthOf is the batch at a glance: whether its driver acts, whether it
+// hears, what has merged, and what the owner has decided. What was not
+// read says so, rather than reading as none.
+func healthOf(ov *Overview, now time.Time) []healthView {
+	var out []healthView
+	acted := healthView{Title: "Last driver action", Value: "None yet", Sub: "no step sent, open or park"}
+	if e := ov.Acted; e != nil {
+		acted.Value = pageClock(e.At, now, ov.Zone)
+		acted.Sub = ago(now.Sub(e.At)) + " ago, " + actedWords(*e)
+	}
+	out = append(out, acted)
+
+	var cards []Card
+	for _, g := range ov.Groups {
+		cards = append(cards, g.Cards...)
+	}
+	if ov.Wakes {
+		wakes := healthView{Title: "Wakes", Value: "Not read"}
+		if ov.Live == "" {
+			var open, armed, parked, woken, unread int
+			for _, c := range cards {
+				m, r := c.Member, c.Row
+				switch {
+				case m.Closed:
+				case m.Parked != "":
+					parked++
+				case r == nil || r.Error != "":
+					unread++
+				default:
+					open++
+					if r.Armed {
+						armed++
+					}
+					if r.Unhandled {
+						woken++
+					}
+				}
+			}
+			wakes.Value = fmt.Sprintf("%d of %d armed", armed, open)
+			if open == 0 {
+				wakes.Value = "None needed"
+			}
+			var sub []string
+			if woken > 0 {
+				sub = append(sub, fmt.Sprintf("%d woken with nothing done since", woken))
+				wakes.Alert = true
+			}
+			if armed < open {
+				wakes.Alert = true
+			}
+			if unread > 0 {
+				sub = append(sub, fmt.Sprintf("%d not read", unread))
+			}
+			if parked > 0 {
+				sub = append(sub, fmt.Sprintf("%d parked, which arm none", parked))
+			}
+			if len(sub) == 0 && open > 0 {
+				sub = append(sub, "every open session")
+			}
+			wakes.Sub = strings.Join(sub, ", ")
+		}
+		out = append(out, wakes)
+	}
+
+	prs := healthView{Title: "Pull requests", Value: "Not read", Sub: "the sessions' steps were not read"}
+	if ov.Live == "" {
+		seen := map[string]bool{}
+		var merged, open, closed, unread, failing int
+		stepsUnread := 0
+		for _, c := range cards {
+			if c.Unread != "" {
+				stepsUnread++
+			}
+			for _, p := range c.PRs {
+				if key := prName(p.PRRef) + p.Repo; seen[key] {
+					continue
+				} else {
+					seen[key] = true
+				}
+				switch {
+				case p.PR == nil:
+					unread++
+				case p.PR.State == "MERGED":
+					merged++
+				case p.PR.State == "CLOSED":
+					closed++
+				default:
+					open++
+					if p.PR.Failed > 0 {
+						failing++
+					}
+				}
+			}
+		}
+		var parts []string
+		for _, n := range []struct {
+			n    int
+			word string
+		}{{merged, "merged"}, {open, "open"}, {closed, "closed"}, {unread, "not read"}} {
+			if n.n > 0 {
+				parts = append(parts, fmt.Sprintf("%d %s", n.n, n.word))
+			}
+		}
+		var sub []string
+		switch {
+		case len(parts) > 0:
+			prs.Value = strings.Join(parts, ", ")
+		case stepsUnread > 0:
+			prs.Value = "None found"
+		default:
+			prs.Value, sub = "None yet", []string{"no session has named one"}
+		}
+		if failing > 0 {
+			sub, prs.Alert = append(sub, fmt.Sprintf("%d open with failing checks", failing)), true
+		}
+		if stepsUnread > 0 {
+			sub = append(sub, plural(stepsUnread, "session")+" whose steps were not read")
+		}
+		prs.Sub = strings.Join(sub, ", ")
+	}
+	out = append(out, prs)
+
+	decided := healthView{Title: "Your decisions", Value: "None asked yet"}
+	took := map[string]int{}
+	for _, a := range ov.Answered {
+		took[a.Answer.Took]++
+	}
+	owner := len(ov.Answered) - took["moot"]
+	if len(ov.Answered)+len(ov.Asks) > 0 {
+		decided.Value = fmt.Sprintf("%d answered", owner)
+		var sub []string
+		for _, t := range []struct{ key, word string }{{"recommended", "as recommended"}, {"amended", "amended"}, {"delegated", "handed on"}, {"moot", "recorded moot"}} {
+			if took[t.key] > 0 {
+				sub = append(sub, fmt.Sprintf("%d %s", took[t.key], t.word))
+			}
+		}
+		if len(ov.Asks) > 0 {
+			sub = append(sub, fmt.Sprintf("%d open", len(ov.Asks)))
+		}
+		decided.Sub = strings.Join(sub, ", ")
+	}
+	out = append(out, decided)
+	return out
+}
+
+// actedWords is what a driver did, in a few words.
+func actedWords(e batch.Event) string {
+	switch e.Kind {
+	case batch.KindSend:
+		return "a step to " + e.Session
+	case batch.KindRespond:
+		return e.Session + "'s prompt answered"
+	case batch.KindOpen:
+		return e.Session + " opened"
+	case batch.KindAdopt:
+		return e.Session + " joined"
+	case batch.KindPark:
+		return e.Session + " parked"
+	case batch.KindClose:
+		return e.Session + " closed"
+	}
+	return e.Kind
+}
+
+// answerTook is how an answer was taken, and the state it is coloured as.
+// A question that stopped mattering is no decision of the owner's.
+func answerTook(e *batch.Event) (string, string) {
+	words, kind := "Answered", "work"
+	switch e.Took {
+	case "recommended":
+		words = "As recommended"
+	case "amended":
+		words, kind = "Amended", "you"
+	case "delegated":
+		words, kind = "Handed to a fresh model", "next"
+	case "moot":
+		words, kind = "Recorded moot", "done"
+	}
+	if e.Explained {
+		words += ", once explained"
+	}
+	return words, kind
+}
+
+func stripOf(ov *Overview, c Card, group string, now time.Time) stripView {
+	at := func(t time.Time) string { return when(t, now, ov.Zone) }
 	m, r := c.Member, c.Row
-	v := cardView{Label: m.Label, Goal: m.Goal, Closed: m.Closed}
+	read := r != nil && r.Error == ""
+	s := stripView{Anchor: Anchor(ov.Batch.Name, m.Label), Label: m.Label, Kind: groupKind(group), Goal: m.Goal}
+	if read && (r.State == "error" || r.State == "blocked:auth") {
+		s.Kind = "alert"
+	}
 	switch {
 	case m.Closed:
-		v.State = "Closed " + at(m.ClosedAt)
-	case r != nil && r.Error == "":
-		v.State = stateWords(r.State) + " for " + ago(r.For)
+		s.State, s.For = "Closed", at(m.ClosedAt)
+	case read && r.State.onPrompt():
+		s.State, s.For = stateWords(r.State), "for "+ago(r.For)
+	case m.Parked != "":
+		s.State, s.For = "Parked", at(m.ParkedAt)
+	case read:
+		s.State, s.For = stateWords(r.State), "for "+ago(r.For)
+	default:
+		s.State = "Not read live"
 	}
 	if m.Parked != "" && !m.Closed {
-		v.Facts = append(v.Facts, fact{Text: "Parked by the driver " + at(m.ParkedAt) + ": " + m.Parked})
+		s.Why = m.Parked
+		s.Since = sinceThePark(ov, c, now)
+		if read {
+			s.Chips = append(s.Chips, strings.ToLower(stateWords(r.State))+" for "+ago(r.For))
+		}
 	}
+	if c.Stage != "" {
+		s.Stage, s.StageAt = c.Stage, pageClock(c.StageAt, now, ov.Zone)
+	}
+	for _, id := range c.Asks {
+		s.Asks = append(s.Asks, askLink{ID: id, Href: href(ov.Batch.Name + "/ask-" + id)})
+	}
+
 	var opened, named []link
 	for _, p := range c.PRs {
-		l := link{Text: fmt.Sprintf("#%d", p.Number), URL: p.URL, State: prWords(p)}
+		l := link{Text: prName(p.PRRef), URL: p.URL, State: prWords(p), Kind: prKind(p)}
 		if p.Opened {
 			opened = append(opened, l)
 		} else {
 			named = append(named, l)
 		}
 	}
+	s.PRs = opened
+	if read && len(r.Jobs) > 0 && !m.Closed {
+		s.Chips = append(s.Chips, plural(len(r.Jobs), "job")+" running")
+	}
+	if e := m.LastSend; e != nil {
+		s.Chips = append(s.Chips, "sent "+pageClock(e.At, now, ov.Zone)+": "+sentLabel(e))
+	}
+
 	if len(opened) > 0 {
-		v.Facts = append(v.Facts, fact{Text: "Pull requests it opened:", Links: opened})
+		s.Facts = append(s.Facts, factView{Title: "Opened", Text: "Pull requests it opened:", Links: opened})
 	}
 	if len(named) > 0 {
-		v.Facts = append(v.Facts, fact{Text: "Pull requests it named:", Links: named})
+		s.Facts = append(s.Facts, factView{Title: "Named", Text: "Pull requests it named:", Links: named})
 	}
-	if c.Stage != "" {
-		v.Facts = append(v.Facts, fact{Text: "Last recorded step: " + c.Stage + ", " + at(c.StageAt)})
+	if e := m.LastSend; e != nil {
+		s.Facts = append(s.Facts, factView{Title: "Last step", Text: "Sent " + at(e.At) + ": " + sentWords(*e) + delivered(e.Outcome)})
 	}
-	if r != nil && !m.Closed {
+	if c.Branch != "" {
+		s.Facts = append(s.Facts, factView{Title: "Branch", Text: c.Branch})
+	}
+	if m.Dir != "" {
+		s.Facts = append(s.Facts, factView{Title: "Directory", Text: tilde(m.Dir)})
+	}
+	if m.Parked != "" && !m.Closed {
+		s.Facts = append(s.Facts, factView{Title: "Parked", Text: "Parked by the driver " + at(m.ParkedAt) + ". A parked session arms no wake until its next step."})
+	}
+	if read && !m.Closed {
+		if len(r.Jobs) > 0 {
+			s.Facts = append(s.Facts, factView{Title: "Jobs", Text: plural(len(r.Jobs), "background job") + " running"})
+		}
 		// Whether the driver will hear of it: a wake nobody acted on, one
 		// that should have come and has not, or none at all.
 		switch {
 		case r.Unhandled:
-			v.Facts = append(v.Facts, fact{Text: "The driver was woken " + at(m.Woken) + " and has done nothing since."})
-		case !wakes || r.Due == "" || m.Parked != "":
+			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "The driver was woken " + at(m.Woken) + " and has done nothing since.", Error: true})
+		case !ov.Wakes || m.Parked != "":
+		case r.Due == "" && r.Armed:
+			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "Armed: its driver hears when its turn ends."})
+		case r.Due == "":
 		case r.Armed:
-			v.Facts = append(v.Facts, fact{Text: "Its wake is armed but has not come since its turn ended, so the driver may not have heard."})
+			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "Its wake is armed but has not come since its turn ended, so the driver may not have heard.", Error: true})
 		default:
-			v.Facts = append(v.Facts, fact{Text: "No wake is armed for it, so the driver is not told when it needs its next step."})
+			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "No wake is armed for it, so the driver is not told when it needs its next step.", Error: true})
 		}
-		if len(r.Jobs) > 0 {
-			v.Facts = append(v.Facts, fact{Text: fmt.Sprintf("Background jobs running: %d", len(r.Jobs)), Minor: true})
-		}
-	}
-	if s := m.LastSend; s != nil {
-		v.Facts = append(v.Facts, fact{Text: "Last step sent " + at(s.At) + ": " + sentLabel(s), Minor: true})
 	}
 	if c.Unread != "" {
-		v.Facts = append(v.Facts, fact{Text: "Not read: " + c.Unread, Error: true})
+		s.Facts = append(s.Facts, factView{Title: "Not read", Text: "Not read: " + c.Unread, Error: true})
+	}
+
+	for _, l := range c.Labels {
+		lv := labelView{Name: l.Name, Age: "·", On: !l.At.IsZero(), Newest: l.Name == c.Stage}
+		if lv.On {
+			lv.Age = ago(now.Sub(l.At))
+		}
+		s.Labels = append(s.Labels, lv)
+	}
+
+	asks := map[string]*batch.Event{} // the asks about it, for the answers to name what they answer
+	for i := range c.History {
+		if e := &c.History[i]; e.Kind == batch.KindAsk {
+			asks[e.ID] = e
+		}
+	}
+	for _, h := range slices.Backward(c.History) {
+		e := entryOf(h, asks, now, ov.Zone)
+		if len(s.History) < historyShown {
+			s.History = append(s.History, e)
+		} else {
+			s.Earlier = append(s.Earlier, e)
+		}
+	}
+	return s
+}
+
+// sinceThePark is what the record and the read show happened to a parked
+// session after the park: answers to the questions about it, and where its
+// turn has stood since. The park stays in the words it was written in.
+func sinceThePark(ov *Overview, c Card, now time.Time) []string {
+	m, r := c.Member, c.Row
+	var out []string
+	for _, e := range c.History {
+		if e.Kind == batch.KindAnswer && e.At.After(m.ParkedAt) {
+			out = append(out, "Since the park: "+answerHead(e)+" "+when(e.At, now, ov.Zone)+".")
+		}
+	}
+	if r != nil && r.Error == "" {
+		if changed := ov.At.Add(-r.For); changed.After(m.ParkedAt) {
+			out = append(out, "Since the park: "+sinceWords(r.State, pageClock(changed, now, ov.Zone))+".")
+		}
+	}
+	return out
+}
+
+// sinceWords is a turn's state, from when it began.
+func sinceWords(s State, t string) string {
+	switch s {
+	case "working":
+		return "it has been working since " + t
+	case "done":
+		return "its turn ended at " + t
+	case "idle":
+		return "it has been idle since " + t
+	case "interrupted":
+		return "it was interrupted at " + t
+	case "error":
+		return "it stopped on an API error at " + t
+	case "blocked:permission":
+		return "it has waited on a permission prompt since " + t
+	case "blocked:question":
+		return "it has waited on a question it asked since " + t
+	case "blocked:auth":
+		return "its login was rejected at " + t
+	}
+	return "it has read as " + string(s) + " since " + t
+}
+
+// answerHead says who settled a question and how. An answer the owner
+// gave is theirs; one recorded moot is not.
+func answerHead(e batch.Event) string {
+	switch e.Took {
+	case "recommended":
+		return "you took the recommendation on " + e.Ref
+	case "amended":
+		return "you amended " + e.Ref
+	case "delegated":
+		return "you handed " + e.Ref + " to a fresh model"
+	case "moot":
+		return e.Ref + " was recorded moot"
+	}
+	return e.Ref + " was answered"
+}
+
+// entryOf is one thing the record holds, as its owner reads it. asks are
+// the questions the answers among the history answer.
+func entryOf(e batch.Event, asks map[string]*batch.Event, now time.Time, zone *time.Location) entryView {
+	v := entryView{When: pageClock(e.At, now, zone), Kind: "next"}
+	switch e.Kind {
+	case batch.KindOpen:
+		v.Kind, v.Head, v.Text = "done", "Opened", "in a new block of Rex."
+		if e.Ref != "" {
+			v.Head, v.Text = "Reopened", "in a new block, resuming its conversation."
+		}
+	case batch.KindAdopt:
+		v.Kind, v.Head, v.Text = "done", "Joined the batch", "when the driver first sent to it."
+	case batch.KindSend:
+		v.Head, v.Text = "Sent", sentWords(e)+delivered(e.Outcome)
+		if e.Outcome != "arrived" && e.Outcome != "queued" {
+			v.Kind = "alert"
+		}
+	case batch.KindRespond:
+		v.Head, v.Text = "Answered its prompt:", respondWords(e.Action)
+	case batch.KindPark:
+		v.Kind, v.Head, v.Text = "park", "Parked:", e.Reason
+	case batch.KindClose:
+		v.Kind, v.Head = "done", "Closed"
+	case batch.KindAsk:
+		v.Kind, v.Head, v.Text = "you", "Asked "+e.ID+":", e.Question
+	case batch.KindAnswer:
+		head := answerHead(e)
+		v.Kind, v.Head, v.Text = "you", strings.ToUpper(head[:1])+head[1:], e.Source
+		if e.Took == "moot" {
+			v.Kind = "done"
+		}
+		if a := asks[e.Ref]; a != nil && e.Source == "" {
+			v.Text = a.Question
+		}
+	case batch.KindNote:
+		v.Kind, v.Head, v.Text, v.Note = "done", "Note", e.Note, true
+		if e.ID != "" {
+			v.Head = "Note " + e.ID
+		}
+	case batch.KindWake:
+		v.Head = "Woke the driver"
+		if e.Outcome != "" {
+			v.Head += ":"
+		}
+		if e.Reason != "" {
+			v.Kind, v.Head, v.Text = "alert", "A wake failed:", e.Reason
+		} else if e.Outcome == "gone" {
+			v.Kind, v.Text = "alert", "the session was gone."
+		} else if e.Outcome != "" {
+			v.Text = strings.ToLower(stateWords(State(e.Outcome))) + "."
+		}
+	case batch.KindFailure:
+		v.Kind, v.Head, v.Text = "alert", "Failed:", e.Reason
+	case batch.KindGoal:
+		v.Kind, v.Head, v.Text = "done", "Goal recorded:", e.Goal
+	default:
+		v.Head = e.Kind
 	}
 	return v
+}
+
+// sentWords is the step a send carried: the snippet it came from, a file
+// the driver wrote, or the line typed.
+func sentWords(e batch.Event) string {
+	switch {
+	case e.Key != "":
+		return "the snippet " + e.Key
+	case e.Mode == "file":
+		return "a file the driver wrote"
+	}
+	return "“" + clip(strings.TrimSpace(stepOf(e)), 160) + "”"
+}
+
+// delivered is how a step reached its session, when that is worth saying.
+func delivered(outcome string) string {
+	switch outcome {
+	case "arrived", "":
+		return ""
+	case "queued":
+		return ", queued behind its turn"
+	case "recovered":
+		return ", retyped after its start was lost"
+	case "garbled":
+		return ", which arrived without its start"
+	case "other":
+		return ", though the session received something else"
+	case "unknown":
+		return ", which may not have arrived"
+	}
+	return ", " + outcome
+}
+
+func respondWords(action string) string {
+	switch action {
+	case "approve":
+		return "approved."
+	case "deny":
+		return "denied."
+	case "interrupt":
+		return "interrupted the turn."
+	case "clear":
+		return "cleared its input box."
+	}
+	return action + "."
+}
+
+func plural(n int, thing string) string {
+	if n == 1 {
+		return "1 " + thing
+	}
+	return fmt.Sprintf("%d %ss", n, thing)
+}
+
+// tilde is a directory with the home directory as ~.
+func tilde(dir string) string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(dir, home+"/") {
+		return "~" + dir[len(home):]
+	}
+	return dir
+}
+
+// prName is a pull request with its repository's name, since a batch's
+// sessions may work in several.
+func prName(ref progress.PRRef) string {
+	repo := ref.Repo[strings.LastIndex(ref.Repo, "/")+1:]
+	return fmt.Sprintf("%s#%d", repo, ref.Number)
+}
+
+// prKind is the state a pull request is coloured as.
+func prKind(p PRView) string {
+	switch {
+	case p.PR == nil:
+		return "unread"
+	case p.PR.State == "MERGED":
+		return "merged"
+	case p.PR.State == "CLOSED":
+		return "closed"
+	case p.PR.Failed > 0:
+		return "failing"
+	}
+	return "open"
 }
 
 // stateWords is a turn's state as the owner reads it.
@@ -314,97 +955,32 @@ func when(t, now time.Time, zone *time.Location) string {
 	if t.IsZero() {
 		return "at an unrecorded time"
 	}
+	c := pageClock(t, now, zone)
+	if !strings.Contains(c, " ") {
+		return "at " + c
+	}
+	return c
+}
+
+// pageClock is a time as a column of times shows it: 15:04 today, Mon 15:04
+// within the week, 2 Jan 15:04 before that.
+func pageClock(t, now time.Time, zone *time.Location) string {
+	if t.IsZero() {
+		return "–"
+	}
 	t, now = t.In(zone), now.In(zone)
 	y1, m1, d1 := t.Date()
 	y2, m2, d2 := now.Date()
 	switch {
 	case y1 == y2 && m1 == m2 && d1 == d2:
-		return "at " + t.Format("15:04")
+		return t.Format("15:04")
 	case now.Sub(t) < 6*24*time.Hour:
 		return t.Format("Mon 15:04")
 	}
 	return t.Format("2 Jan 15:04")
 }
 
-var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{.Title}}</title>
-<style>
-:root { --bg: #f7f7f5; --card: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e4e3df; --accent: #8a4b00; --accent-bg: #fff3e0; --error: #a1261d; --link: #1a5fb4; }
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #161615; --card: #20201e; --ink: #ecebe6; --muted: #a09f99; --line: #33332f; --accent: #f0b35a; --accent-bg: #3a2a12; --error: #f08a80; --link: #8fb8f0; }
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; -webkit-text-size-adjust: 100%; }
-main { max-width: 760px; margin: 0 auto; padding: 16px 16px 48px; }
-header.page h1 { font-size: 1.25rem; margin: 0 0 2px; }
-header.page p { margin: 0; color: var(--muted); font-size: 0.9rem; }
-.banner { margin: 12px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--accent-bg); color: var(--accent); }
-h2, h3 { font-size: 1rem; margin: 28px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-h2.batch { font-size: 1.1rem; margin: 40px 0 0; padding-top: 12px; border-top: 1px solid var(--line); color: var(--ink); text-transform: none; letter-spacing: 0; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 0 0 10px; }
-.card.closed { opacity: 0.85; }
-.card:target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
-.badge a { color: inherit; }
-.top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
-.label { font-weight: 650; }
-.state { color: var(--muted); font-size: 0.9rem; }
-.badge { font-size: 0.8rem; font-weight: 600; color: var(--accent); background: var(--accent-bg); padding: 1px 8px; border-radius: 999px; }
-.goal { margin: 6px 0 0; }
-.goal.none { color: var(--muted); font-style: italic; }
-ul.facts { list-style: none; margin: 8px 0 0; padding: 0; font-size: 0.92rem; }
-ul.facts li { margin: 3px 0; overflow-wrap: anywhere; }
-ul.facts li.minor { color: var(--muted); }
-ul.facts li.error { color: var(--error); }
-a { color: var(--link); }
-.pr a { white-space: nowrap; }
-.ask p { margin: 4px 0 0; }
-.ask .head { color: var(--muted); font-size: 0.9rem; margin: 0; }
-.ask .question { font-weight: 600; }
-.empty { color: var(--muted); }
-footer { margin-top: 32px; color: var(--muted); font-size: 0.85rem; }
-</style>
-</head>
-<body>
-<main>
-<header class="page">
-<h1>{{if .Batch}}{{.Batch}}{{else}}drive{{end}}</h1>
-<p>{{.Read}}</p>
-{{range .Live}}<p class="banner">{{.}}</p>
-{{end}}</header>
-{{if .Empty}}<p class="empty">{{.Empty}}</p>{{end}}
-{{if .Batches}}
-<h2>Needs you</h2>
-{{range .Asks}}<article class="card ask" id="{{.Anchor}}">
-<p class="head">{{.ID}}{{with .Batch}} · {{.}}{{end}} · {{if .Session}}<a href="{{.Card}}">{{.Session}}</a>{{else}}the whole batch{{end}} · {{.Asked}}</p>
-{{with .Goal}}<p class="goal">{{.}}</p>{{end}}
-<p class="question">{{.Question}}</p>
-{{with .Recommendation}}<p>Recommended: {{.}}</p>{{end}}
-<p>If unanswered: {{.IfUnanswered}}</p>
-</article>
-{{else}}<p class="empty">Nothing waits on you.</p>
-{{end}}
-{{end}}
-{{range .Batches}}<section class="batch" id="{{.Name}}">
-{{with .Title}}<h2 class="batch">{{.}}</h2>
-{{end}}{{with .Empty}}<p class="empty">{{.}}</p>
-{{end}}{{range .Groups}}<h3>{{.Title}}</h3>
-{{range .Cards}}<article class="card{{if .Closed}} closed{{end}}" id="{{.Anchor}}">
-<div class="top"><span class="label">{{.Label}}</span>{{with .State}}<span class="state">{{.}}</span>{{end}}{{with .Asks}}<span class="badge">Waits on you:{{range $i, $a := .}}{{if $i}},{{end}} <a href="{{$a.Href}}">{{$a.ID}}</a>{{end}}</span>{{end}}</div>
-{{if .Goal}}<p class="goal">{{.Goal}}</p>{{else}}<p class="goal none">No goal recorded.</p>{{end}}
-{{if .Facts}}<ul class="facts">
-{{range .Facts}}<li{{if .Minor}} class="minor"{{else if .Error}} class="error"{{end}}>{{.Text}}{{range $i, $l := .Links}}{{if $i}};{{end}} <span class="pr">{{if .URL}}<a href="{{.URL}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}{{with .State}} {{.}}{{end}}</span>{{end}}</li>
-{{end}}</ul>{{end}}
-</article>
-{{end}}{{end}}{{if .Holds}}<h3>Holds</h3>
-<ul class="facts">{{range .Holds}}<li>{{.}}</li>{{end}}</ul>
-{{end}}</section>
-{{end}}
-<footer>Reload to read it again; a read is reused for 30 seconds.</footer>
-</main>
-</body>
-</html>
-`))
+//go:embed page.html
+var pageSource string
+
+var pageTemplate = template.Must(template.New("page").Parse(pageSource))

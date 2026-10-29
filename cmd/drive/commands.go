@@ -617,11 +617,15 @@ type PageCmd struct {
 func (c *PageCmd) Help() string {
 	return `
 Each request reads every live batch, each driver's current one, on one
-page: the questions waiting on the owner first, then each batch's sessions,
-closed ones included. --batch or --driver shows one batch instead. It
-changes nothing. A card's anchor is the batch's name and the session's
-label, such as #2026-10-27/T1, so a link opens one session's card. A read
-is reused for 30 seconds; one that takes longer than 20 seconds is answered
+page: the questions waiting on the owner first, then each batch under a
+tab named for its project, the Rex session its sessions open in, beside
+All, which lists the sessions waiting on a driver. Each session opens to
+its stages and its history in the batch's record, the driver's notes
+among it, closed sessions and answered questions included. --batch or
+--driver shows one batch instead. It changes nothing. A session's anchor is
+the batch's name and its label, such as #2026-10-27/T1, so a link opens
+that batch's tab and the session; #2026-10-27 opens the tab. A read is
+reused for 30 seconds; one that takes longer than 20 seconds is answered
 from the batch's record while it finishes.
 
 It runs until stopped, and exits once the drive binary it runs is

@@ -172,7 +172,9 @@ type Row struct {
 	Input    turn.InputKind
 	Typed    string
 	Stage    string
-	StageAt  time.Time    // when its stage's newest step was taken
+	StageAt  time.Time        // when its stage's newest step was taken
+	Labels   []progress.Label // every stage, with its newest step's time
+	Branch   string
 	PR       *progress.PR // the newest it named, as read
 	PRRef    *progress.PRRef
 	PRErr    string
@@ -501,7 +503,7 @@ func (d *Driver) row(b *batch.Batch, members []*batch.Member, label string, with
 		if s, err := d.Progress.Steps(o.Session.ID); err != nil {
 			r.StepsErr = firstLine(err.Error())
 		} else {
-			r.Stage, r.StageAt, r.PRRef, r.PRs = s.Stage, s.StageAt, s.PR, s.PRs
+			r.Stage, r.StageAt, r.Labels, r.Branch, r.PRRef, r.PRs = s.Stage, s.StageAt, s.Labels, s.Branch, s.PR, s.PRs
 		}
 	}
 	return r

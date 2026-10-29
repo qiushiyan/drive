@@ -225,13 +225,15 @@ func TestTheOverviewGroupsSessionsByWhereTheyStand(t *testing.T) {
 	page := string(ov.HTML(r.w.Clock.Now()))
 	for _, want := range []string{
 		"Build the importer.", "No goal recorded.",
-		"Parked by the driver " + clockOf(t, r, batch.KindPark, "P") + ": waits on the S3 baseline",
-		"Closed " + clockOf(t, r, batch.KindClose, "C"), "Closed " + clockOf(t, r, batch.KindClose, "D"),
+		`<span class="why">waits on the S3 baseline</span>`, "Parked by the driver " + clockOf(t, r, batch.KindPark, "P") + ".",
+		`Closed</span><span class="for">` + clockOf(t, r, batch.KindClose, "C"), `Closed</span><span class="for">` + clockOf(t, r, batch.KindClose, "D"),
 		// A question links to its session's card, and the card back to the question.
-		`<article class="card ask" id="b1/ask-A1">`, `A1 · <a href="#b1/P">P</a>`, `id="b1/P"`, `Waits on you: <a href="#b1/ask-A1">A1</a>`,
-		"A2 · the whole batch",
-		"Merge before the baseline?", "Recommended: wait for it", "If unanswered: P stays parked", "If unanswered: nothing releases",
+		`<article class="ask" id="b1/ask-A1" data-batch="b1">`, `<span class="ask-id">A1</span><a href="#b1/P">P</a>`, `<details class="strip st-park" id="b1/P">`,
+		`<a class="chip ask" href="#b1/ask-A1">Waits on you: A1</a>`, `<span class="ask-id">A2</span><span>the whole batch</span>`,
+		"Merge before the baseline?", "<dt>Recommended</dt><dd>wait for it</dd>", "<dt>If nobody answers</dt><dd>P stays parked</dd>", "<dd>nothing releases</dd>",
 		"Pull requests it opened:", "Pull requests it named:", "1 check failing",
+		// A pull request names its repository, since a batch's sessions may work in several.
+		`<a class="chip pr pr-failing" href="https://github.com/acme/app/pull/2">app#2 <span class="pr-st">open, 1 check failing</span></a>`,
 		"The driver was woken at", "Waiting on a permission prompt", "Its login was rejected",
 	} {
 		if !strings.Contains(page, want) {
@@ -487,8 +489,12 @@ func TestThePageShowsEveryDriversBatch(t *testing.T) {
 	defer srv.Close()
 	_, _, body := get(t, srv.URL)
 	for _, want := range []string{
-		"Batches b1, itell-2026-10-28", "Batch itell-2026-10-28, driven by itell, started",
-		`id="b1/ask-A1"`, `id="itell-2026-10-28/ask-A1"`, `A1 · itell-2026-10-28 · <a href="#itell-2026-10-28/P">P</a>`,
+		// Each batch is a tab, named for its project, beside All.
+		`<a class="tab" href="#all" data-tab="all">`, `<a class="tab" href="#b1" data-tab="b1"><span class="tab-name">b1</span>`,
+		`<a class="tab" href="#itell-2026-10-28" data-tab="itell-2026-10-28"><span class="tab-name">itell</span>`,
+		`<section class="batch" id="itell-2026-10-28" data-batch="itell-2026-10-28" data-view>`, "Batch itell-2026-10-28 · started", "Driven by itell, which waits itself",
+		`id="b1/ask-A1"`, `id="itell-2026-10-28/ask-A1"`,
+		`<span class="ask-id">A1</span><span class="bt">itell</span><a href="#itell-2026-10-28/P">P</a>`,
 		`id="b1/P"`, `id="itell-2026-10-28/P"`, "Take the payment milestone first?", "Build the importer.",
 	} {
 		if !strings.Contains(body, want) {
@@ -505,7 +511,8 @@ func TestThePageShowsEveryDriversBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.Chmod(log, 0o644)
-	if code, _, body := get(t, srv.URL); code != 200 || !strings.Contains(body, "Batch itell-2026-10-28 not read live: its record could not be read") ||
+	if code, _, body := get(t, srv.URL); code != 200 || !strings.Contains(body, "Not read live: its record could not be read") ||
+		!strings.Contains(body, `<span class="tab-name">itell</span><span class="warn" title="not read live">!</span>`) ||
 		!strings.Contains(body, "Build the importer.") {
 		t.Fatalf("an unreadable batch keeps none of the others off the page: %d\n%s", code, body)
 	}
@@ -514,7 +521,194 @@ func TestThePageShowsEveryDriversBatch(t *testing.T) {
 	r.d.DriverName = "itell"
 	one := httptest.NewServer(drive.NewPage(r.d))
 	defer one.Close()
-	if _, _, body := get(t, one.URL); !strings.Contains(body, "Batch itell-2026-10-28, driven by itell") || strings.Contains(body, "Build the importer.") {
+	if _, _, body := get(t, one.URL); !strings.Contains(body, "Batch itell-2026-10-28 · started") || strings.Contains(body, "Build the importer.") || strings.Contains(body, `data-tab=`) {
 		t.Fatalf("--driver shows that driver's batch alone:\n%s", body)
+	}
+}
+
+// Each batch is named for its project: the Rex session its sessions open
+// in, else its driver, else its own name. Two batches that would read alike
+// are told apart by their drivers, and a Rex session an older drive
+// recorded by its id names nothing.
+func TestTheTabsNameEachBatchByItsProject(t *testing.T) {
+	now := time.Date(2026, 10, 29, 13, 17, 0, 0, time.UTC)
+	ov := func(m batch.Meta) *drive.Overview {
+		m.Started = now.Add(-time.Hour)
+		return &drive.Overview{Batch: &m, Zone: time.UTC, At: now, Wakes: m.Wake == "webhook"}
+	}
+	page := string(drive.PageHTML([]*drive.Overview{
+		ov(batch.Meta{Name: "2026-10-28", Driver: "session-driver", RexSession: "planlab", Wake: "webhook"}),
+		ov(batch.Meta{Name: "planlab-2", Driver: "nightly", RexSession: "planlab"}),
+		ov(batch.Meta{Name: "verify", Driver: "attest", RexSession: "session:01a17cd1"}),
+		ov(batch.Meta{Name: "dogfood-verify", RexSession: "session:01a17cd1"}),
+	}, now))
+	for _, want := range []string{
+		`data-tab="2026-10-28"><span class="tab-name">planlab · session-driver</span>`,
+		`data-tab="planlab-2"><span class="tab-name">planlab · nightly</span>`,
+		`data-tab="verify"><span class="tab-name">attest</span>`,
+		`data-tab="dogfood-verify"><span class="tab-name">dogfood-verify</span>`,
+		"Rex session <b>planlab</b>", "Driven by session-driver, woken by webhook",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page says %q", want)
+		}
+	}
+	if strings.Contains(page, "<b>session:") {
+		t.Error("a Rex session recorded by its id is never shown as a name")
+	}
+}
+
+// What the record holds sits beside what was read: a park keeps the words
+// it was written in, with what came after it; an answered question keeps
+// its link, now on the decision, and says who settled it; a session's
+// history holds its asks, their answers and the driver's notes verbatim,
+// and each stage the configuration names shows when the session last
+// stepped under it.
+func TestTheRecordShowsWhatHappenedSinceThePark(t *testing.T) {
+	r, prog := pageBatch(t)
+	r.w.Clock.Sleep(time.Minute)
+	if _, err := r.d.Answer("A1", "the baseline landed meanwhile", "moot", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.Answer("A2", `"yes, tonight" (14:02)`, "recommended", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.Note("P", "N1: baseline landed; P waits for its next step"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.Note("", "plan: W builds, P reviews"); err != nil {
+		t.Fatal(err)
+	}
+	evs, _ := r.b.Events()
+	w := batch.Find(batch.Members(evs), "W")
+	now := r.w.Clock.Now()
+	prog.steps[w.SID] = progress.Steps{Stage: "build", StageAt: now, Labels: []progress.Label{
+		{Name: "onboard", At: now.Add(-time.Hour)}, {Name: "spec"}, {Name: "build", At: now},
+	}}
+	ov, err := r.d.Overview(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(ov.HTML(r.w.Clock.Now()))
+	answered := clockOf(t, r, batch.KindAnswer, "")
+	for _, want := range []string{
+		`<span class="why">waits on the S3 baseline</span>`,
+		`<span class="since">Since the park: A1 was recorded moot ` + answered + `.</span>`,
+		`<div class="row st-done" id="b1/ask-A1">`, `Recorded moot</span>the baseline landed meanwhile`,
+		`<div class="row st-work" id="b1/ask-A2">`, `As recommended</span>&#34;yes, tonight&#34; (14:02)`,
+		`<span class="kind">A1 was recorded moot</span> the baseline landed meanwhile`,
+		`<span class="kind">Note N1</span><span class="note">N1: baseline landed; P waits for its next step</span>`,
+		"Notes for the whole batch", "plan: W builds, P reviews",
+		"<dt>Your decisions</dt><dd>1 answered<small>1 as recommended, 1 recorded moot</small>",
+		`<p class="empty" data-none>Nothing waits on you.</p>`,
+		`<li class="on"><b></b><span>onboard</span><em>1h00m</em></li>`, `<li class=""><b></b><span>spec</span><em>·</em></li>`,
+		`<li class="on newest"><b></b><span>build</span>`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page says %q", want)
+		}
+	}
+	if n := strings.Count(page, `id="b1/ask-A1"`); n != 1 {
+		t.Errorf("an answered question is on the page once, under its own link: %d", n)
+	}
+	if strings.Contains(page, "you took the recommendation on A1") || strings.Contains(page, "you amended A1") {
+		t.Error("a question that stopped mattering is no answer of the owner's")
+	}
+	if !strings.Contains(page[strings.Index(page, `id="b1/C"`):], "What the record holds") {
+		t.Error("a closed session keeps its history")
+	}
+}
+
+// A session's history shows its newest entries and folds the rest away,
+// still on the page.
+func TestASessionsHistoryFoldsPastTheNewest(t *testing.T) {
+	r, _ := pageBatch(t)
+	for i := 1; i <= 14; i++ {
+		if _, err := r.d.Note("W", fmt.Sprintf("step %02d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ov, err := r.d.Overview(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(ov.HTML(r.w.Clock.Now()))
+	strip := page[strings.Index(page, `id="b1/W"`):]
+	strip = strip[:strings.Index(strip, "</details>\n</div>")]
+	fold := strings.Index(strip, `<details class="earlier"><summary>6 earlier</summary>`)
+	if fold < 0 {
+		t.Fatalf("W's 18 entries show 12 and fold 6:\n%s", strip)
+	}
+	if newest, oldest := strings.Index(strip, "step 14"), strings.Index(strip, "step 01"); newest < 0 || newest > fold || oldest < fold {
+		t.Fatalf("the newest show and the oldest fold: %d %d %d", newest, fold, oldest)
+	}
+}
+
+// What was not read says so rather than reading as none: a batch answered
+// from its record alone has no count of wakes or pull requests to give.
+func TestWhatWasNotReadIsNotNone(t *testing.T) {
+	r := newRig(t, "webhook")
+	r.d.Cfg.Webhook = config.Webhook{URL: "http://127.0.0.1:1/none"}
+	c := r.w.Add("K")
+	done(c, "onboard", "analysis")
+	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "review"}, drive.SendOptions{Label: "K"}); err != nil {
+		t.Fatal(err)
+	}
+	ov, err := r.d.Overview(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(ov.HTML(r.w.Clock.Now()))
+	for _, want := range []string{"<dt>Wakes</dt><dd>Not read", "<dt>Pull requests</dt><dd>Not read", "Not read live: only the batch&#39;s record was read"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page says %q", want)
+		}
+	}
+	if ov, err = r.d.Overview(true); err != nil {
+		t.Fatal(err)
+	}
+	if page := string(ov.HTML(r.w.Clock.Now())); !strings.Contains(page, "<dt>Wakes</dt><dd>1 of 1 armed") || !strings.Contains(page, "<dt>Pull requests</dt><dd>None yet") {
+		t.Errorf("read live, it counts them:\n%s", page)
+	}
+}
+
+// The driver's last action is a step, an open, a park or a close; a watch's
+// own events, such as one that ended without a wake, never count, so a
+// driver that has gone reads as gone.
+func TestTheLastDriverActionIsNeverAWatchs(t *testing.T) {
+	r, _ := pageBatch(t)
+	closed := clockOf(t, r, batch.KindClose, "D")
+	r.w.Clock.Sleep(5 * time.Minute)
+	r.d.WatchFailed("E", errors.New("no webhook configured"))
+	ov, err := r.d.Overview(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := ov.Acted; e == nil || e.Kind != batch.KindClose || e.Session != "D" {
+		t.Fatalf("the newest thing a driver did is D's close: %+v", e)
+	}
+	if page := string(ov.HTML(r.w.Clock.Now())); !strings.Contains(page, "<dt>Last driver action</dt><dd>"+strings.TrimPrefix(closed, "at ")+"<small>5m ago, D closed</small>") {
+		t.Errorf("the page says when and what:\n%s", page[strings.Index(page, `<dl class="health">`):][:300])
+	}
+}
+
+// All lists every session waiting on its driver, from every batch: one on
+// a prompt as well as one whose turn ended, each linking to its strip.
+func TestAllListsEverySessionWaitingOnItsDriver(t *testing.T) {
+	r, _ := pageBatch(t)
+	newDriverBatch(t, r, "itell-2026-10-28", "itell")
+	adopted(t, r, "P")
+	r.d.DriverName = ""
+	srv := httptest.NewServer(drive.NewPage(r.d))
+	defer srv.Close()
+	_, _, body := get(t, srv.URL)
+	all := body[strings.Index(body, `<section id="all" data-view>`):strings.Index(body, `<section class="batch"`)]
+	for _, want := range []string{`<a class="go st-next" href="#b1/Q">`, `<a class="go st-next" href="#b1/E">`, `<a class="go st-alert" href="#b1/L">`} {
+		if !strings.Contains(all, want) {
+			t.Errorf("All lists %q:\n%s", want, all)
+		}
+	}
+	if strings.Contains(all, "#b1/W") || strings.Contains(all, " id=\"b1/") {
+		t.Error("All lists only sessions waiting on a driver, and links to them rather than repeating them")
 	}
 }

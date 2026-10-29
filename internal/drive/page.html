@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{.Title}}</title>
+<style>
+/* A strip board: each batch a tab, each session a strip in the group of
+   where it stands. Colour means state; the chrome stays ink. */
+:root {
+  --ground: #f1f2f4; --surface: #ffffff; --sunk: #e9ebef; --ink: #14161a; --ink-2: #3b414b; --muted: #5b626e; --line: #dcdfe5; --line-2: #c6cbd3;
+  --you: #8f5200; --you-bg: #fcefd8; --you-mark: #e08a00;
+  --next: #1d4cc0; --next-bg: #e3eafb; --next-mark: #3b6ee8;
+  --work: #16703d; --work-bg: #dcf1e4; --work-mark: #25a35d;
+  --park: #6c3fa3; --park-bg: #eee6f8; --park-mark: #9064d6;
+  --alert: #b0261d; --alert-bg: #fbe4e1; --alert-mark: #dc3b2f;
+  --done: #5b626e; --done-bg: #e6e8ec; --done-mark: #a3a9b3;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #0e1014; --surface: #171a1f; --sunk: #20242b; --ink: #e8eaee; --ink-2: #c2c7d0; --muted: #959dab; --line: #282d35; --line-2: #3a4049;
+    --you: #f3b55c; --you-bg: #3a2a12; --you-mark: #f0a030;
+    --next: #9bb7ff; --next-bg: #1a2746; --next-mark: #5b88ff;
+    --work: #78d8a3; --work-bg: #12321f; --work-mark: #34b46c;
+    --park: #cdaaf6; --park-bg: #2a1f3d; --park-mark: #a77ae8;
+    --alert: #ff9a92; --alert-bg: #3d1916; --alert-mark: #f0574b;
+    --done: #a3aab6; --done-bg: #23272e; --done-mark: #5f6672;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 15px/1.5 var(--sans); -webkit-text-size-adjust: 100%; -webkit-font-smoothing: antialiased; }
+p, h1, h2, h3, dl, dd, ol, ul { margin: 0; }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 6px; }
+[hidden] { display: none !important; }
+
+.st-you { --k: var(--you); --k-bg: var(--you-bg); --k-mark: var(--you-mark); }
+.st-next { --k: var(--next); --k-bg: var(--next-bg); --k-mark: var(--next-mark); }
+.st-work { --k: var(--work); --k-bg: var(--work-bg); --k-mark: var(--work-mark); }
+.st-park { --k: var(--park); --k-bg: var(--park-bg); --k-mark: var(--park-mark); }
+.st-alert { --k: var(--alert); --k-bg: var(--alert-bg); --k-mark: var(--alert-mark); }
+.st-done { --k: var(--done); --k-bg: var(--done-bg); --k-mark: var(--done-mark); }
+
+.shell { display: grid; grid-template-columns: minmax(0, 1fr); }
+.rail { padding: 14px max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); border-bottom: 1px solid var(--line); background: var(--ground); position: sticky; top: 0; z-index: 2; }
+.rail-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding-bottom: 10px; }
+.brand { display: flex; align-items: baseline; gap: 8px; }
+.brand b { font: 700 19px/1 var(--mono); letter-spacing: -.02em; }
+.brand span, .read { color: var(--muted); font-size: 13px; }
+.read { font-family: var(--mono); font-size: 12px; }
+.tabs { display: flex; gap: 6px; overflow-x: auto; margin: 0 -16px; padding: 2px 16px 12px; scrollbar-width: none; }
+.tab { display: flex; align-items: center; gap: 8px; flex: none; padding: 7px 13px; border-radius: 999px; border: 1px solid var(--line); text-decoration: none; }
+.tab[aria-current="page"] { background: var(--ink); color: var(--ground); border-color: var(--ink); }
+.tab-name { font: 600 14px/1.3 var(--mono); }
+.tab-sub, .tab .bar { display: none; }
+.count { font: 700 12px/20px var(--mono); min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--you-bg); color: var(--you); text-align: center; }
+.warn { font: 700 12px/20px var(--mono); width: 20px; height: 20px; border-radius: 10px; background: var(--alert-bg); color: var(--alert); text-align: center; }
+main { padding: 20px max(16px, env(safe-area-inset-right)) 56px max(16px, env(safe-area-inset-left)); min-width: 0; max-width: 1120px; width: 100%; }
+footer { margin-top: 36px; color: var(--muted); font-size: 13px; }
+
+.bar { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; }
+.bar span { min-width: 5px; background: var(--k-mark); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); list-style: none; padding: 0; margin-top: 10px; }
+.legend li { display: flex; align-items: center; gap: 7px; }
+.legend li::before { content: ""; width: 9px; height: 9px; border-radius: 2px; background: var(--k-mark); }
+.legend b { font: 600 13px var(--mono); }
+
+.bh { display: flex; flex-direction: column; gap: 12px; padding: 26px 0 22px; border-bottom: 1px solid var(--line); }
+.eyebrow { font: 600 11.5px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.bh h1 { font: 700 25px/1.05 var(--mono); letter-spacing: -.03em; text-wrap: balance; }
+.who { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 14px; color: var(--ink-2); }
+.who b { font-family: var(--mono); font-weight: 600; }
+.banner { padding: 10px 12px; border-radius: 8px; background: var(--alert-bg); color: var(--alert); font-size: 14px; }
+.health { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; }
+.health div { min-width: 0; }
+.health dt { font: 600 11px/1.3 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.health dd { margin-top: 5px; font-weight: 600; font-size: 16px; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.health dd small { display: block; font-weight: 400; font-size: 13px; color: var(--muted); margin-top: 2px; }
+.health .alert dd small { color: var(--alert); }
+.holds { font-size: 14px; color: var(--ink-2); padding-left: 18px; }
+
+.sec { margin-top: 26px; }
+.sec-h { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-bottom: 12px; font: 700 12px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); }
+.sec-h::before { content: ""; width: 10px; height: 10px; border-radius: 2px; background: var(--k-mark, var(--ink)); }
+.sec-h .n { color: var(--muted); }
+.empty { font-size: 14.5px; color: var(--muted); }
+
+.asks { display: flex; flex-direction: column; gap: 12px; }
+.ask { background: var(--surface); border: 1px solid var(--you-mark); border-radius: 12px; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 10px; scroll-margin-top: 110px; }
+.ask:target { box-shadow: 0 0 0 2px var(--ink); }
+.ask-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 13px; color: var(--muted); }
+.ask-id { font: 700 13px/24px var(--mono); padding: 0 9px; border-radius: 6px; background: var(--you-bg); color: var(--you); }
+.ask-head a { font-family: var(--mono); font-weight: 600; color: var(--ink); text-decoration-color: var(--line-2); text-underline-offset: 3px; }
+.bt { font: 600 12px/20px var(--mono); padding: 0 7px; border-radius: 5px; border: 1px solid var(--line-2); color: var(--ink-2); }
+.ask-goal { font-size: 14px; color: var(--muted); max-width: 76ch; }
+.ask-q { font-weight: 600; font-size: 15.5px; line-height: 1.45; max-width: 72ch; overflow-wrap: anywhere; }
+.ask-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px 24px; padding-top: 12px; border-top: 1px solid var(--line); }
+.ask-grid dt { font: 600 11px/1.3 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.ask-grid dd { margin-top: 4px; font-size: 14.5px; overflow-wrap: anywhere; }
+.ask-grid .rec dd { font-weight: 600; color: var(--you); }
+
+.bay { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.strip { border-top: 1px solid var(--line); scroll-margin-top: 110px; }
+.strip:first-child { border-top: 0; }
+.strip:target { box-shadow: inset 0 0 0 2px var(--ink); }
+.strip > summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: 42px minmax(0, 1fr) 16px; gap: 12px; padding: 12px 14px 12px 12px; }
+.strip > summary::-webkit-details-marker { display: none; }
+.strip > summary:hover .tile { filter: saturate(1.3); }
+.tile { display: block; height: 34px; border-radius: 8px; background: var(--k-bg); color: var(--k); font: 700 13px/34px var(--mono); text-align: center; letter-spacing: -.01em; overflow: hidden; }
+.sum { display: block; min-width: 0; }
+.l1 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.state { display: inline-flex; align-items: center; gap: 7px; font-weight: 650; color: var(--k); }
+.state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--k-mark); align-self: center; }
+.st-work .state::before { animation: breathe 2.4s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: .3; } }
+.for { font: 13px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.stage { font: 12.5px/22px var(--mono); color: var(--ink-2); background: var(--sunk); padding: 0 8px; border-radius: 5px; white-space: nowrap; }
+.stage em { font-style: normal; color: var(--muted); }
+.why { display: block; margin-top: 6px; color: var(--park); font-weight: 550; max-width: 76ch; overflow-wrap: anywhere; }
+.since { display: block; margin-top: 4px; font-size: 13.5px; color: var(--you); font-weight: 600; }
+.goal { display: block; margin-top: 5px; color: var(--ink-2); max-width: 76ch; overflow-wrap: anywhere; }
+.goal.none { color: var(--muted); font-style: italic; }
+.clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.strip[open] .clamp { display: block; -webkit-line-clamp: unset; }
+.chev { align-self: start; margin-top: 3px; color: var(--muted); display: block; transition: transform .15s; }
+.strip[open] .chev { transform: rotate(180deg); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font: 12.5px/24px var(--mono); padding: 0 8px; border-radius: 6px; background: var(--sunk); color: var(--ink-2); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.chip { text-decoration: none; }
+.chip.pr { border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.chip.pr:hover { border-color: var(--ink); }
+.chip.pr::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--p, var(--done-mark)); flex: none; }
+.chip.pr .pr-st { color: var(--muted); }
+.chip.ask { background: var(--you-bg); color: var(--you); font-weight: 700; }
+.pr-open { --p: var(--work-mark); }
+.pr-merged { --p: var(--park-mark); }
+.pr-failing { --p: var(--alert-mark); }
+
+.strip-body { padding: 4px 14px 18px; display: flex; flex-direction: column; gap: 20px; }
+.facts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; font-size: 14px; }
+.facts div { display: contents; }
+.facts dt { font: 600 11px/21px var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.facts dd { min-width: 0; overflow-wrap: anywhere; margin-bottom: 8px; }
+.facts .error dd { color: var(--alert); }
+.facts dd a { white-space: nowrap; }
+.sub-h { font: 600 11px/1.3 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-bottom: 9px; }
+.sub-h span { text-transform: none; letter-spacing: 0; font-family: var(--sans); font-weight: 400; font-size: 12.5px; }
+.track { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px 5px; list-style: none; padding: 0; }
+.track li { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.track b { height: 5px; border-radius: 3px; background: var(--line); }
+.track span { font: 12px/1.2 var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track em { font: 11.5px/1.2 var(--mono); font-style: normal; color: var(--muted); }
+.track .on b { background: var(--ink-2); }
+.track .on span { color: var(--ink); }
+.track .newest b { background: var(--k-mark); }
+.track .newest span { color: var(--k); font-weight: 700; }
+.tl { list-style: none; padding: 0; position: relative; display: flex; flex-direction: column; }
+.tl::before { content: ""; position: absolute; left: 82px; top: 12px; bottom: 12px; width: 1px; background: var(--line); }
+.tl li { display: grid; grid-template-columns: 72px 9px minmax(0, 1fr); gap: 10px; padding: 5px 0; font-size: 14px; }
+.tl time { font: 12px/21px var(--mono); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.tl .pt { width: 9px; height: 9px; border-radius: 50%; background: var(--k-mark); margin-top: 6px; box-shadow: 0 0 0 3px var(--surface); position: relative; }
+.tl .what { min-width: 0; overflow-wrap: anywhere; }
+.tl .kind { font-weight: 650; color: var(--k); }
+.tl .note { display: block; margin-top: 3px; padding-left: 10px; border-left: 2px solid var(--line); color: var(--muted); font: 12.5px/1.55 var(--mono); white-space: pre-wrap; }
+.earlier > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); padding: 6px 0 0 92px; }
+
+.rows { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.row { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 4px 12px; align-items: baseline; padding: 12px 14px 12px 12px; border-top: 1px solid var(--line); scroll-margin-top: 110px; }
+.row:first-child { border-top: 0; }
+.row:target { box-shadow: inset 0 0 0 2px var(--ink); }
+.row .lab { font: 700 13.5px var(--mono); color: var(--k); text-align: center; }
+.row .txt { min-width: 0; font-size: 14px; color: var(--ink-2); overflow-wrap: anywhere; }
+.row .txt a { font-family: var(--mono); font-weight: 600; color: var(--ink); }
+.row .txt small { display: block; color: var(--muted); font-size: 13px; margin-top: 4px; }
+.row .when { grid-column: 2; font: 12.5px var(--mono); color: var(--muted); }
+.took { font: 600 11px/20px var(--mono); letter-spacing: .04em; text-transform: uppercase; padding: 0 7px; border-radius: 5px; background: var(--k-bg); color: var(--k); margin-right: 8px; white-space: nowrap; }
+.notes > summary { cursor: pointer; }
+.notes .tl { margin-top: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
+.notes .tl::before { left: 96px; }
+
+.go { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 12px; padding: 12px 14px 12px 12px; border-top: 1px solid var(--line); text-decoration: none; }
+.go:first-child { border-top: 0; }
+.go:hover { background: var(--sunk); }
+.bgrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.bcard { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; text-decoration: none; }
+.bcard:hover { border-color: var(--ink); }
+.bcard h3 { font: 700 21px/1.1 var(--mono); letter-spacing: -.02em; }
+.bcard .sub { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.bcard ul { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--ink-2); }
+.bcard ul b { font-weight: 600; color: var(--ink); }
+
+@media (min-width: 760px) {
+  main { padding-left: 40px; padding-right: 40px; }
+  .bh h1 { font-size: 32px; }
+  .health { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 28px; }
+  .ask { padding: 16px 20px 18px; }
+  .ask-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 2.2fr); }
+  .strip > summary { grid-template-columns: 52px minmax(0, 1fr) 18px; gap: 14px; padding: 14px 18px 14px 16px; }
+  .tile { height: 40px; line-height: 40px; font-size: 14px; }
+  .strip-body { padding: 4px 22px 20px 82px; }
+  .facts { grid-template-columns: max-content minmax(0, 1fr); gap: 7px 18px; }
+  .facts dd { margin-bottom: 0; }
+  .track { grid-template-columns: repeat(10, minmax(0, 1fr)); }
+  .row { grid-template-columns: 52px minmax(0, 1fr) auto; gap: 4px 14px; padding: 12px 18px 12px 16px; }
+  .row .when { grid-column: auto; text-align: right; white-space: nowrap; }
+  .go { grid-template-columns: 52px minmax(0, 1fr); gap: 14px; padding: 14px 18px 14px 16px; }
+  .bgrid { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+}
+@media (min-width: 1000px) {
+  .shell.several { grid-template-columns: 272px minmax(0, 1fr); }
+  .several .rail { position: sticky; top: 0; height: 100vh; overflow-y: auto; border-bottom: 0; border-right: 1px solid var(--line); padding: 22px 14px; }
+  .several .rail-top { flex-direction: column; gap: 8px; padding: 0 8px 22px; }
+  .several .tabs { flex-direction: column; overflow: visible; margin: 0; padding: 0; gap: 3px; }
+  .several .tab { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 2px 8px; padding: 10px; border-radius: 9px; border: 0; }
+  .several .tab:hover { background: var(--sunk); }
+  .several .tab[aria-current="page"] { background: var(--ink); }
+  .several .tab-name { font-size: 15px; }
+  .several .tab-sub { display: block; grid-column: 1 / -1; font-size: 12.5px; line-height: 1.35; color: var(--muted); }
+  .several .tab[aria-current="page"] .tab-sub { color: inherit; opacity: .7; }
+  .several .tab .bar { display: flex; grid-column: 1 / -1; margin-top: 7px; }
+  .strip, .ask, .row { scroll-margin-top: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .st-work .state::before { animation: none; }
+  .chev { transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="shell{{if .Several}} several{{end}}">
+<header class="rail">
+<div class="rail-top"><p class="brand"><b>drive</b><span>owner's page</span></p>{{with .Read}}<p class="read">{{.}}</p>{{end}}</div>
+{{- if .Several}}
+<nav class="tabs" aria-label="Batches">
+{{- range .Tabs}}
+<a class="tab" href="#{{.Anchor}}" data-tab="{{.Anchor}}"><span class="tab-name">{{.Name}}</span>{{if .Asks}}<span class="count" title="questions waiting on you">{{.Asks}}</span>{{end}}{{if .Unread}}<span class="warn" title="not read live">!</span>{{end}}<span class="tab-sub">{{.Sub}}</span>{{with .Segs}}<span class="bar" aria-hidden="true">{{range .}}<span class="st-{{.Kind}}" style="flex-grow: {{.N}}"></span>{{end}}</span>{{end}}</a>
+{{- end}}
+</nav>
+{{- end}}
+</header>
+<main>
+{{- if .Empty}}
+<p class="empty">{{.Empty}}</p>
+{{- else}}
+<section class="sec st-you" id="needs-you">
+<h2 class="sec-h">Needs you</h2>
+<div class="asks">
+{{- range .Asks}}
+<article class="ask" id="{{.Anchor}}" data-batch="{{.Batch}}">
+<p class="ask-head"><span class="ask-id">{{.ID}}</span>{{with .BatchTitle}}<span class="bt">{{.}}</span>{{end}}{{if .Session}}<a href="{{.Card}}">{{.Session}}</a>{{else}}<span>the whole batch</span>{{end}}<span>{{.Asked}}</span></p>
+{{- with .Goal}}
+<p class="ask-goal">{{.}}</p>
+{{- end}}
+<p class="ask-q">{{.Question}}</p>
+<dl class="ask-grid">{{with .Recommendation}}<div class="rec"><dt>Recommended</dt><dd>{{.}}</dd></div>{{end}}<div><dt>If nobody answers</dt><dd>{{.IfUnanswered}}</dd></div></dl>
+</article>
+{{- end}}
+</div>
+<p class="empty" data-none{{if .Asks}} hidden{{end}}>Nothing waits on you.</p>
+</section>
+{{- if .Several}}
+<section id="all" data-view>
+<section class="sec st-next">
+<h2 class="sec-h">Waiting on a driver <span class="n">{{len .Waiting}}</span></h2>
+{{- if .Waiting}}
+<div class="bay">
+{{- range .Waiting}}
+<a class="go st-{{.Kind}}" href="{{.Href}}"><span class="tile">{{.Label}}</span><span class="sum"><span class="l1"><span class="state">{{.State}}</span><span class="bt">{{.Batch}}</span></span>{{with .Goal}}<span class="goal clamp">{{.}}</span>{{end}}</span></a>
+{{- end}}
+</div>
+{{- else}}
+<p class="empty">No session waits on its driver.</p>
+{{- end}}
+</section>
+<section class="sec">
+<h2 class="sec-h">Batches</h2>
+<div class="bgrid">
+{{- range .Batches}}
+<a class="bcard" href="#{{.Name}}">
+<div><h3>{{.Title}}</h3><p class="sub">{{.Eyebrow}}</p></div>
+{{- with .Segs}}
+<div><span class="bar" aria-hidden="true">{{range .}}<span class="st-{{.Kind}}" style="flex-grow: {{.N}}"></span>{{end}}</span><ul class="legend">{{range .}}<li class="st-{{.Kind}}"><b>{{.N}}</b> {{.Title}}</li>{{end}}</ul></div>
+{{- end}}
+{{- with .Live}}
+<p class="banner">{{.}}</p>
+{{- end}}
+<ul>{{range .Health}}<li>{{.Title}}: <b>{{.Value}}</b>{{with .Sub}}, {{.}}{{end}}</li>{{end}}</ul>
+</a>
+{{- end}}
+</div>
+</section>
+</section>
+{{- end}}
+{{- range .Batches}}
+<section class="batch" id="{{.Name}}" data-batch="{{.Name}}" data-view>
+<header class="bh">
+<p class="eyebrow">{{.Eyebrow}}</p>
+<h1>{{.Title}}</h1>
+{{- if or .Driver .Rex}}
+<p class="who">{{with .Driver}}<span>{{.}}</span>{{end}}{{with .Rex}}<span>Rex session <b>{{.}}</b></span>{{end}}</p>
+{{- end}}
+{{- with .Live}}
+<p class="banner">{{.}}</p>
+{{- end}}
+{{- with .Read}}
+<p class="read">{{.}}</p>
+{{- end}}
+<dl class="health">{{range .Health}}<div{{if .Alert}} class="alert"{{end}}><dt>{{.Title}}</dt><dd>{{.Value}}{{with .Sub}}<small>{{.}}</small>{{end}}</dd></div>{{end}}</dl>
+{{- with .Segs}}
+<div><span class="bar" aria-hidden="true">{{range .}}<span class="st-{{.Kind}}" style="flex-grow: {{.N}}"></span>{{end}}</span><ul class="legend">{{range .}}<li class="st-{{.Kind}}"><b>{{.N}}</b> {{.Title}}</li>{{end}}</ul></div>
+{{- end}}
+{{- with .Holds}}
+<ul class="holds">{{range .}}<li>{{.}}</li>{{end}}</ul>
+{{- end}}
+</header>
+{{- with .Empty}}
+<p class="empty sec">{{.}}</p>
+{{- end}}
+{{- range .Groups}}
+<section class="sec st-{{.Kind}}">
+<h2 class="sec-h">{{.Title}} <span class="n">{{len .Strips}}</span></h2>
+<div class="bay">
+{{- range .Strips}}
+<details class="strip st-{{.Kind}}" id="{{.Anchor}}">
+<summary><span class="tile">{{.Label}}</span><span class="sum"><span class="l1"><span class="state">{{.State}}</span>{{with .For}}<span class="for">{{.}}</span>{{end}}{{if .Stage}}<span class="stage">{{.Stage}} <em>{{.StageAt}}</em></span>{{end}}</span>
+{{- with .Why}}<span class="why">{{.}}</span>{{end}}
+{{- range .Since}}<span class="since">{{.}}</span>{{end}}
+{{- if .Goal}}<span class="goal clamp">{{.Goal}}</span>{{else}}<span class="goal none">No goal recorded.</span>{{end}}
+{{- if or .Asks .PRs .Chips}}<span class="chips">{{range .Asks}}<a class="chip ask" href="{{.Href}}">Waits on you: {{.ID}}</a>{{end}}{{range .PRs}}<a class="chip pr pr-{{.Kind}}" href="{{.URL}}">{{.Text}}{{with .State}} <span class="pr-st">{{.}}</span>{{end}}</a>{{end}}{{range .Chips}}<span class="chip">{{.}}</span>{{end}}</span>{{end}}</span>
+<svg class="chev" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></svg></summary>
+<div class="strip-body">
+{{- with .Facts}}
+<dl class="facts">{{range .}}<div{{if .Error}} class="error"{{end}}><dt>{{.Title}}</dt><dd>{{.Text}}{{range $i, $l := .Links}}{{if $i}};{{end}} <a href="{{.URL}}">{{.Text}}</a>{{with .State}} {{.}}{{end}}{{end}}</dd></div>{{end}}</dl>
+{{- end}}
+{{- with .Labels}}
+<div><p class="sub-h">Stages <span>· when its newest step under each was taken, a dated fact and no verdict</span></p><ol class="track">{{range .}}<li class="{{if .Newest}}on newest{{else if .On}}on{{end}}"><b></b><span>{{.Name}}</span><em>{{.Age}}</em></li>{{end}}</ol></div>
+{{- end}}
+{{- if .History}}
+<div><p class="sub-h">What the record holds <span>· newest first, with the driver's notes</span></p>
+<ol class="tl">{{range .History}}{{template "entry" .}}{{end}}</ol>
+{{- with .Earlier}}
+<details class="earlier"><summary>{{len .}} earlier</summary><ol class="tl">{{range .}}{{template "entry" .}}{{end}}</ol></details>
+{{- end}}
+</div>
+{{- end}}
+</div>
+</details>
+{{- end}}
+</div>
+</section>
+{{- end}}
+{{- if .Decided}}
+<section class="sec st-you">
+<h2 class="sec-h">Your decisions <span class="n">{{len .Decided}}</span></h2>
+<div class="rows">
+{{- range .Decided}}
+<div class="row st-{{.Kind}}" id="{{.Anchor}}"><span class="lab">{{.ID}}</span><span class="txt">{{if .Card}}<a href="{{.Card}}">{{.Session}}</a>{{else}}{{.Session}}{{end}} · {{.Question}}<small><span class="took">{{.Took}}</span>{{.Said}}</small></span><span class="when">{{.When}}</span></div>
+{{- end}}
+</div>
+</section>
+{{- end}}
+{{- if .Grants}}
+<section class="sec st-you">
+<h2 class="sec-h">Authority you handed over <span class="n">{{len .Grants}}</span></h2>
+<ul class="holds">{{range .Grants}}<li>{{.}}</li>{{end}}</ul>
+</section>
+{{- end}}
+{{- if .Notes}}
+<details class="sec notes">
+<summary class="sec-h">Notes for the whole batch <span class="n">{{len .Notes}}</span></summary>
+<ol class="tl">{{range .Notes}}{{template "entry" .}}{{end}}</ol>
+</details>
+{{- end}}
+</section>
+{{- end}}
+{{- end}}
+<footer>Reload to read it again; a read is reused for 30 seconds. Coming back to the page after a minute reads it again.</footer>
+</main>
+</div>
+<script>
+// The page is whole without this script, every batch one after another.
+// With it, each batch is a tab: the link's anchor picks the tab and opens
+// the session or question it names.
+(function () {
+  var all = document.getElementById("all");
+  var views = document.querySelectorAll("[data-view]");
+  var asks = document.querySelectorAll("#needs-you .ask");
+  var none = document.querySelector("#needs-you [data-none]");
+  var tabs = document.querySelectorAll("[data-tab]");
+  function route() {
+    var id = decodeURIComponent(location.hash.slice(1));
+    var el = id ? document.getElementById(id) : null;
+    if (all) {
+      var holder = el && el.closest("[data-batch]");
+      var batch = holder ? holder.getAttribute("data-batch") : "";
+      views.forEach(function (v) { v.hidden = batch ? v.getAttribute("data-batch") !== batch : v !== all; });
+      var shown = 0;
+      asks.forEach(function (a) { a.hidden = !!batch && a.getAttribute("data-batch") !== batch; if (!a.hidden) shown++; });
+      if (none) none.hidden = shown > 0;
+      tabs.forEach(function (t) { t.setAttribute("aria-current", t.getAttribute("data-tab") === (batch || "all") ? "page" : "false"); });
+    }
+    if (!el) return;
+    for (var d = el; d; d = d.parentElement) if (d.tagName === "DETAILS") d.open = true;
+    if (id.indexOf("/") > 0) el.scrollIntoView();
+    else if (all) window.scrollTo(0, 0);
+  }
+  window.addEventListener("hashchange", route);
+  route();
+  // A tab left open is read again when its owner comes back to it, never
+  // while they read.
+  var loaded = Date.now();
+  function stale() { return document.visibilityState === "visible" && Date.now() - loaded > 60000; }
+  document.addEventListener("visibilitychange", function () { if (stale()) location.reload(); });
+  window.addEventListener("pageshow", function (e) { if (e.persisted && stale()) location.reload(); });
+})();
+</script>
+</body>
+</html>
+{{define "entry"}}<li class="st-{{.Kind}}"><time>{{.When}}</time><span class="pt"></span><span class="what"><span class="kind">{{.Head}}</span>{{if .Note}}<span class="note">{{.Text}}</span>{{else}}{{with .Text}} {{.}}{{end}}{{end}}</span></li>{{end}}
