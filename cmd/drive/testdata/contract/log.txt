@@ -3,7 +3,7 @@ exit 0
 --- stdout
 02:00  batch                 started
 02:00  adopt        T1       block a00001, account acct@example.com, $ROOT/work
-02:00  send-intent  T1       Read $HOME/state/batches/b1/sends/T1-1.md and do what it asks.
+02:00  send-intent  T1       @$HOME/state/batches/b1/sends/T1-1.md
 02:00  send         T1       arrived: snippet land-pr (the notice first)
 02:02  refused      T1       T1 has moved past view T1@00000000: it has received another prompt since: the land-pr snippet drive sent at 02:00
 02:02  respond      a00002   approve Bash: pnpm install → working
@@ -18,10 +18,8 @@ exit 0
 02:02  open-intent  J1       Review the spec in docs/spec.md (goal: Check docs/spec.md against the code it describes.)
 02:02  open         J1       block a00003, account , $ROOT/work
 02:02  open         J1       block a00003, account acct@example.com, $ROOT/work
-02:02  send-intent  J1       Read $HOME/state/batches/b1/sends/J1-1.md and do what it asks.
 02:02  send-intent  J1       Review the spec in docs/spec.md
-02:02  send         J1       arrived: Read $HOME/state/batches/b1/sends/J1-1.md and do what it asks. (the notice first)
-02:02  send         J1       arrived: Review the spec in docs/spec.md
+02:02  send         J1       arrived: Review the spec in docs/spec.md (the notice attached)
 02:02  refused      J1       J1 is already open as block a00003 (since 02:02)
 02:02  close        T1       
 --- stderr

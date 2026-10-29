@@ -1,5 +1,5 @@
 $ drive --driver session-driver send a00001@e274d317 --as ON go on
 exit 0
 --- stdout
-arrived ON: go on, notice first; wake armed
+arrived ON: go on, notice attached; wake armed
 --- stderr

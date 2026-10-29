@@ -58,7 +58,7 @@ func lastStep(b *batch.Batch, label string) Step {
 			if e.Path != "" {
 				return Step{File: e.Path}
 			}
-			return Step{Line: e.Text}
+			return Step{Line: stepOf(e)}
 		}
 	}
 	return Step{}

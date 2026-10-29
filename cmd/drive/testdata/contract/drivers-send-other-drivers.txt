@@ -1,4 +1,4 @@
-$ drive --driver itell send a00001@4bfdfefb --as I1 go on
+$ drive --driver itell send a00001@12c8579c --as I1 go on
 exit 1
 --- stdout
 --- stderr

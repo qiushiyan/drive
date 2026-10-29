@@ -111,7 +111,7 @@ func TestANoticeTurnThatStopsOnAPromptHoldsTheStep(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "prompt") {
 		t.Fatalf("the step waits when the notice's turn stops on a prompt: %v", err)
 	}
-	if typed, _ := c.Seen(); len(typed) != 1 || !strings.HasPrefix(typed[0], "Read ") {
+	if typed, _ := c.Seen(); len(typed) != 1 || !strings.HasPrefix(typed[0], "@") {
 		t.Fatalf("only the notice went: %q", typed)
 	}
 }
@@ -126,9 +126,10 @@ func noticeSent(r *rig, label string) bool {
 	return false
 }
 
-// A typed first step follows the notice once the notice's turn has ended.
-// The hold the step takes stands through that gap, until the step itself
-// has gone: the notice's arrival is not the step's.
+// A typed first step the notice cannot ride, such as a command no skill file
+// backs, follows the notice once the notice's turn has ended. The hold the
+// step takes stands through that gap, until the step itself has gone: the
+// notice's arrival is not the step's.
 func TestAHoldStandsBetweenTheNoticeAndItsStep(t *testing.T) {
 	r := newRig(t, "none")
 	adopted(t, r, "T3")
@@ -145,7 +146,7 @@ func TestAHoldStandsBetweenTheNoticeAndItsStep(t *testing.T) {
 	v := r.view(c.Block[len(c.Block)-6:])
 	first := make(chan error, 1)
 	go func() {
-		_, err := r.d.Send(v, drive.Step{Line: "release"}, drive.SendOptions{Label: "T5", Hold: "release"})
+		_, err := r.d.Send(v, drive.Step{Line: "/release"}, drive.SendOptions{Label: "T5", Hold: "release"})
 		first <- err
 	}()
 	for i := 0; i < 2000 && !noticeSent(r, "T5"); i++ {
@@ -162,7 +163,7 @@ func TestAHoldStandsBetweenTheNoticeAndItsStep(t *testing.T) {
 }
 
 // A notice nobody could confirm may never have reached the session: the
-// step sent after it carries it again.
+// step sent after it carries it again, in a copy of its own.
 func TestANoticeLeftUnknownGoesAgain(t *testing.T) {
 	r := newRig(t, "none")
 	c := r.w.Add("T1")
@@ -179,8 +180,8 @@ func TestANoticeLeftUnknownGoesAgain(t *testing.T) {
 	if err != nil || !sent.Notice {
 		t.Fatalf("the next send carries the notice: %+v %v", sent, err)
 	}
-	if typed, _ := c.Seen(); len(typed) != 3 || !strings.HasPrefix(typed[1], "Read ") || typed[2] != "go" {
-		t.Fatalf("the notice, then the step: %q", typed)
+	if typed, _ := c.Seen(); len(typed) != 2 || !strings.HasPrefix(typed[1], "go @") || typed[1] == typed[0] {
+		t.Fatalf("the step, with the notice again: %q", typed)
 	}
 }
 
@@ -206,19 +207,19 @@ func TestADriverGoneAfterTheNoticeLeavesItsStepToSettle(t *testing.T) {
 	c := r.w.Add("T5")
 	done(c, "onboard", "analysis")
 	v := r.view(c.Block[len(c.Block)-6:])
-	r.d.Term = &dyingTerm{World: r.w, line: "release"}
+	r.d.Term = &dyingTerm{World: r.w, line: "/release"}
 	gone := make(chan struct{})
 	go func() {
 		defer close(gone)
-		_, _ = r.d.Send(v, drive.Step{Line: "release"}, drive.SendOptions{Label: "T5", Hold: "release"})
+		_, _ = r.d.Send(v, drive.Step{Line: "/release"}, drive.SendOptions{Label: "T5", Hold: "release"})
 	}()
 	<-gone
 	r.d.Term = r.w
 	st, _ := r.d.Status(false)
-	if len(st.InFlight) != 1 || st.InFlight[0].Text != "release" || st.InFlight[0].Driver != nil {
+	if len(st.InFlight) != 1 || st.InFlight[0].Text != "/release" || st.InFlight[0].Driver != nil {
 		t.Fatalf("the step is in flight with its driver gone: %+v", st.InFlight)
 	}
-	if _, err := r.d.Send(r.view("T5"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
+	if _, err := r.d.Send(r.view("T5"), drive.Step{Line: "/release"}, drive.SendOptions{Hold: "release"}); err != nil {
 		t.Fatalf("the next driver sends it: %v", err)
 	}
 	settled := 0
@@ -579,7 +580,7 @@ func TestAnOpenChecksItsHoldFirst(t *testing.T) {
 	r := newRig(t, "none")
 	a := adopted(t, r, "T5")
 	a.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} }) // the release runs on
-	if _, err := r.d.Send(r.view("T5"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
+	if _, err := r.d.Send(r.view("T5"), drive.Step{Line: "/release"}, drive.SendOptions{Hold: "release"}); err != nil {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(r.w.Root, "work")

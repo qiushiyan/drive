@@ -226,12 +226,14 @@ func (s Step) atMostOne() error {
 
 var stepSections = []clikit.Section{{Title: "Steps", Body: `
 A step is one of:
-  'one short line'        typed as is, a slash command too ('/write-spec Go with D1')
-  --file PATH             sent as "Read <copy> and do what it asks."; drive keeps the copy
+  'one short line'        typed as is, a slash command too; an @PATH in it attaches
+                          that file, as the owner's would ('/write-spec @/tmp/answers.md')
+  --file PATH             typed as @<copy>, which attaches it; drive keeps the copy
   --snippet KEY 'TEXT'    the owner's snippet for the session's directory, with the
                           step's words, TEXT, where the owner would type after it
 Text that starts with a dash goes after --, which ends the flags.
-The first step a session gets in a batch carries the owner's notice ahead of it.`}}
+The first step a session gets in a batch carries the owner's notice: at the head
+of its file, or attached after its line.`}}
 
 type SendCmd struct {
 	runs

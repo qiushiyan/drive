@@ -24,7 +24,7 @@ exit 0
     "mode": "file",
     "key": "land-pr",
     "path": "$HOME/state/batches/b1/sends/T1-1.md",
-    "text": "Read $HOME/state/batches/b1/sends/T1-1.md and do what it asks.",
+    "text": "@$HOME/state/batches/b1/sends/T1-1.md",
     "notice": true,
     "view": "a00001@e274d317"
   },
@@ -36,7 +36,7 @@ exit 0
     "mode": "file",
     "key": "land-pr",
     "path": "$HOME/state/batches/b1/sends/T1-1.md",
-    "text": "Read $HOME/state/batches/b1/sends/T1-1.md and do what it asks.",
+    "text": "@$HOME/state/batches/b1/sends/T1-1.md",
     "notice": true,
     "outcome": "arrived",
     "view": "a00001@e274d317"
@@ -145,18 +145,9 @@ exit 0
     "kind": "send-intent",
     "session": "J1",
     "intent": "intent-3",
-    "mode": "notice",
-    "text": "Read $HOME/state/batches/b1/sends/J1-1.md and do what it asks.",
-    "notice": true,
-    "view": "J1@bd50bd50"
-  },
-  {
-    "at": "2026-10-23T01:02:04Z",
-    "kind": "send-intent",
-    "session": "J1",
-    "intent": "intent-4",
     "mode": "typed",
-    "text": "Review the spec in docs/spec.md",
+    "text": "Review the spec in docs/spec.md @$HOME/state/batches/b1/sends/J1-1.md",
+    "notice": true,
     "view": "J1@bd50bd50"
   },
   {
@@ -164,30 +155,20 @@ exit 0
     "kind": "send",
     "session": "J1",
     "intent": "intent-3",
-    "mode": "notice",
-    "text": "Read $HOME/state/batches/b1/sends/J1-1.md and do what it asks.",
+    "mode": "typed",
+    "text": "Review the spec in docs/spec.md @$HOME/state/batches/b1/sends/J1-1.md",
     "notice": true,
     "outcome": "arrived",
     "view": "J1@bd50bd50"
   },
   {
-    "at": "2026-10-23T01:02:12Z",
-    "kind": "send",
-    "session": "J1",
-    "intent": "intent-4",
-    "mode": "typed",
-    "text": "Review the spec in docs/spec.md",
-    "outcome": "arrived",
-    "view": "J1@bd50bd50"
-  },
-  {
-    "at": "2026-10-23T01:02:12Z",
+    "at": "2026-10-23T01:02:07Z",
     "kind": "refused",
     "session": "J1",
     "reason": "J1 is already open as block a00003 (since 02:02)"
   },
   {
-    "at": "2026-10-23T01:02:12Z",
+    "at": "2026-10-23T01:02:07Z",
     "kind": "close",
     "session": "T1",
     "block": "block:00000000-0000-0000-0000-000000a00001",

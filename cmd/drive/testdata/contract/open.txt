@@ -2,5 +2,5 @@ $ drive open J1 --dir $ROOT/work --goal Check docs/spec.md against the code it d
 exit 0
 --- stdout
 opened J1 in block a00003 on account acct@example.com (session sid-3)
-arrived J1: Review the spec in docs/spec.md, notice first
+arrived J1: Review the spec in docs/spec.md, notice attached
 --- stderr

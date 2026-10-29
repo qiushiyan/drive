@@ -194,8 +194,11 @@ func TestFirstSendCarriesNoticeOnce(t *testing.T) {
 	if !sent.Notice || !strings.HasPrefix(string(body), noticeText) || !strings.Contains(string(body), "Build it end to end.") {
 		t.Fatalf("the first step carries the notice ahead of it: %q", body)
 	}
-	if sent.Typed != "Read "+sent.Path+" and do what it asks." {
-		t.Fatalf("a file step is typed as the sentence claude-steps matches, got %q", sent.Typed)
+	if sent.Typed != "@"+sent.Path || sent.Outcome != "arrived" {
+		t.Fatalf("a file step is typed as its copy's @-mention, which Claude Code attaches: %+v", sent)
+	}
+	if typed, keys := c.Seen(); len(typed) != 1 || typed[0] != "@"+sent.Path+" " || len(keys) != 1 {
+		t.Fatalf("a space closes the file completion, so one Enter sends: %q %q", typed, keys)
 	}
 	sent2, err := r.d.Send(r.view("T1"), drive.Step{File: step}, drive.SendOptions{})
 	if err != nil {
@@ -210,16 +213,65 @@ func TestFirstSendCarriesNoticeOnce(t *testing.T) {
 	}
 }
 
-func TestTypedFirstStepSendsNoticeAlone(t *testing.T) {
+// Sent alone ahead of a typed step, the notice was a turn of its own: on
+// 10-24 to 10-28 all 13 such turns ended on "the step isn't here", and 12
+// went looking through the batch's files for it. It rides the step's line
+// as an @-mention instead, after a skill's arguments too, which Claude Code
+// attaches as it does in a prompt. A command no skill file backs may read
+// its arguments itself, such as /model, and a line the mention would
+// take past what Claude Code keeps of typing, keep the turn of their own.
+func TestTypedFirstStepCarriesTheNotice(t *testing.T) {
+	r := newRig(t, "none")
+	spec := filepath.Join(r.d.Cfg.Home, ".claude", "skills", "write-spec")
+	_ = os.MkdirAll(spec, 0o755)
+	_ = os.WriteFile(filepath.Join(spec, "SKILL.md"), []byte("---\nname: write-spec\ndisable-model-invocation: true\n---\n"), 0o644)
+	long := strings.Repeat("go on ", 80)
+	for _, c := range []struct {
+		line  string
+		alone bool
+	}{
+		{"Go with D1 and D2.", false},
+		{"/write-spec Go with D1", false},
+		{"/model sonnet", true},
+		{long, true},
+	} {
+		s := r.w.Add("T1")
+		done(s, "onboard", "analysis")
+		sent, err := r.d.Send(r.view(s.Block[len(s.Block)-6:]), drive.Step{Line: c.line}, drive.SendOptions{Label: "S" + s.Block[len(s.Block)-3:]})
+		if err != nil || !sent.Notice {
+			t.Fatalf("%.20q: %+v %v", c.line, sent, err)
+		}
+		typed, _ := s.Seen()
+		line := strings.TrimSpace(c.line)
+		switch {
+		case c.alone && (len(typed) != 2 || !strings.HasPrefix(typed[0], "@") || typed[1] != line):
+			t.Errorf("%.20q: the notice goes first as a file, then the line alone: %q", c.line, typed)
+		case !c.alone && (len(typed) != 1 || !strings.HasPrefix(typed[0], line+" @") || !strings.HasSuffix(typed[0], ".md ")):
+			t.Errorf("%.20q: the notice rides the line as an @-mention: %q", c.line, typed)
+		case !c.alone:
+			notice, _ := os.ReadFile(strings.TrimSpace(strings.TrimPrefix(typed[0], line+" @")))
+			if !strings.HasPrefix(string(notice), noticeText) || sent.Typed != strings.TrimSpace(typed[0]) {
+				t.Errorf("%.20q: the mention is the notice's copy: %q, typed %q", c.line, notice, sent.Typed)
+			}
+		}
+	}
+}
+
+// A mention typed while the session works is taken as words, with no file
+// attached, so a step sent mid-turn asks for its file to be read.
+func TestAQueuedFileStepAsksForItsFileToBeRead(t *testing.T) {
 	r := newRig(t, "none")
 	c := r.w.Add("T1")
 	done(c, "onboard", "analysis")
-	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "/write-spec Go with D1"}, drive.SendOptions{Label: "T1"}); err != nil {
+	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "decisions"}, drive.SendOptions{Label: "T1"}); err != nil {
 		t.Fatal(err)
 	}
-	typed, _ := c.Seen()
-	if len(typed) != 2 || !strings.HasPrefix(typed[0], "Read ") || typed[1] != "/write-spec Go with D1" {
-		t.Fatalf("the notice goes first as a file, then the command is typed alone: %q", typed)
+	c.Busy("work")
+	step := filepath.Join(r.w.Root, "step.md")
+	_ = os.WriteFile(step, []byte("Build it end to end.\n"), 0o644)
+	sent, err := r.d.Send(r.view("T1"), drive.Step{File: step}, drive.SendOptions{Queue: true})
+	if err != nil || sent.Typed != "Read "+sent.Path+" and do what it asks." {
+		t.Fatalf("a queued file step is the sentence claude-steps matches: %+v %v", sent, err)
 	}
 }
 
@@ -417,17 +469,6 @@ func TestAGarbledTurnThatEndedIsNotTakenBack(t *testing.T) {
 	if _, keys := c.Seen(); contains(keys, "ctrl+c") {
 		t.Fatalf("no Ctrl+C into a finished turn: %q", keys)
 	}
-}
-
-// without drops the lines starting with prefix: the notice a first step sends ahead of it.
-func without(xs []string, prefix string) []string {
-	var out []string
-	for _, x := range xs {
-		if !strings.HasPrefix(x, prefix) {
-			out = append(out, x)
-		}
-	}
-	return out
 }
 
 func contains(xs []string, x string) bool {

@@ -174,7 +174,7 @@ func TestAReadThatFailsBeforeAnyEffectIsARefusal(t *testing.T) {
 	if !isRefused(err) || !strings.Contains(nextOf(err), "drive --batch b1 respond "+v+" interrupt") {
 		t.Fatalf("a respond refused, with itself to run again: %v", err)
 	}
-	if typed, keys := c.Seen(); len(without(typed, "Read ")) != 1 || len(keys) != 2 {
+	if typed, keys := c.Seen(); len(typed) != 1 || len(keys) != 1 {
 		t.Fatalf("nothing typed or pressed: %q %q", typed, keys)
 	}
 }

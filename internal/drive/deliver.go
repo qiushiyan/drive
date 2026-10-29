@@ -76,7 +76,7 @@ func (a *action) typeAndConfirm(line string) (string, *turn.Prompt, error) {
 			before = p.ID
 		}
 	}
-	if err := a.typeInto(line); err != nil {
+	if err := a.typeInto(keystrokes(line)); err != nil {
 		return "", nil, err
 	}
 	d.sleep(time.Second)
@@ -129,6 +129,16 @@ func (a *action) typeAndConfirm(line string) (string, *turn.Prompt, error) {
 	}
 	return "unknown", nil, &Failed{What: what,
 		Next: fmt.Sprintf("if the line sits in its input box (%s shows it), clear it and send again: %s", d.run("read", o.Label), d.run("respond", viewNow(o), "clear"))}
+}
+
+// keystrokes is what is typed for line. A line ending in an @-mention holds
+// Claude Code's file completion open, and Enter would take the completion
+// and send nothing; a space after the path closes it.
+func keystrokes(line string) string {
+	if f := strings.Fields(line); len(f) > 0 && strings.HasPrefix(f[len(f)-1], "@") {
+		return strings.TrimRight(line, " ") + " "
+	}
+	return line
 }
 
 // received is what the session made of line, typed into it, in prompt p:

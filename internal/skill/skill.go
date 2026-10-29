@@ -37,6 +37,19 @@ func TypedOnly(home, config, dir, name string) bool {
 	return false
 }
 
+// Found says whether a session working in dir under config would find the
+// skill name in a skill file of its own, rather than as a built-in command
+// or a plugin's, which may read their arguments as they please.
+func Found(home, config, dir, name string) bool {
+	name = strings.TrimPrefix(name[strings.LastIndex(name, ":")+1:], "/")
+	for _, base := range searchPath(home, config, dir) {
+		if _, err := os.Stat(filepath.Join(base, name, "SKILL.md")); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func searchPath(home, config, dir string) []string {
 	var out []string
 	if dir != "" {

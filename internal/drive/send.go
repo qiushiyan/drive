@@ -18,7 +18,7 @@ import (
 )
 
 // Step is what to send: a short line typed as is (a slash command too), a
-// file the session is told to read, or one of the owner's snippets.
+// file typed as its path's @-mention, or one of the owner's snippets.
 type Step struct {
 	Line string
 	File string
@@ -44,11 +44,31 @@ type Sent struct {
 	Notice  bool
 	Watched bool
 	From    string // the snippet's file
+	line    string // the step's own line, when the notice rode it
 }
 
-// The sentence a file step is typed as. claude-steps matches it word for word
-// to show which snippet a file carried.
-func pointer(path string) string { return "Read " + path + " and do what it asks." }
+// The line a file step is typed as: its path as an @-mention, which Claude
+// Code attaches to the prompt, as the owner attaches a file. A mention taken
+// mid-turn is only words, so a queued step asks for the file to be read.
+// claude-steps matches both word for word to show which snippet a file
+// carried.
+func pointer(path string, queued bool) string {
+	if queued {
+		return "Read " + path + " and do what it asks."
+	}
+	return "@" + path
+}
+
+// stepOf is the step a typed send carried: its text without the notice's
+// @-mention, which a typed step carries last when the notice rides it.
+func stepOf(e batch.Event) string {
+	if e.Notice && e.Mode == "typed" {
+		if i := strings.LastIndex(e.Text, " @"); i >= 0 {
+			return e.Text[:i]
+		}
+	}
+	return e.Text
+}
 
 const maxLine = 500
 
@@ -181,8 +201,10 @@ type plan struct {
 	step   Step
 	notice bool   // the notice goes ahead of the step
 	alone  bool   // in a turn of its own, ahead of a typed step
+	ride   bool   // or as an @-mention after the typed step, when it fits
 	text   []byte // the notice, when it goes alone
 	typed  string // what is typed for the step; a file step's pointer once saved
+	line   string // the step's own line, when the notice rides it
 	body   string // a file step's text, the notice ahead of it when it rides along
 	path   string
 	key    string
@@ -236,7 +258,7 @@ func (d *Driver) plan(dir, config, resend string, step Step, notice bool) (*plan
 			return nil, &Refused{
 				Reason: fmt.Sprintf("/%s starts only when typed: a session told to run it from a file refuses", name),
 				Next: fmt.Sprintf("type the command and put the rest in a file it points at: %s %s",
-					resend, join(text(first+" Read <file> for the rest")))}
+					resend, join(text(first+" @<file>")))}
 		}
 	}
 	if notice {
@@ -248,7 +270,9 @@ func (d *Driver) plan(dir, config, resend string, step Step, notice bool) (*plan
 		if p.body != "" {
 			p.body = strings.TrimRight(string(text), "\n") + "\n\n" + p.body
 		} else {
+			name := skill.Command(p.typed)
 			p.alone, p.text = true, text
+			p.ride = name == "" || skill.Found(d.Cfg.Home, config, dir, name)
 		}
 	}
 	return p, nil
@@ -321,19 +345,24 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 			if err != nil {
 				return err
 			}
-			// The notice goes in a turn of its own, under an intent of its own:
-			// the step's intent, and any hold it takes, stay pending until the
-			// step itself has an outcome.
-			noticeLine, noticeIntent = pointer(path), newIntent()
-			add = append(add, batch.Event{At: d.now(), Kind: batch.KindSendIntent, Session: o.Label, Intent: noticeIntent,
-				View: view, Text: noticeLine, Mode: "notice", Notice: true})
+			if line := p.typed + " " + pointer(path, false); p.ride && !opt.Queue && len(line) <= maxLine {
+				// The notice rides the step's own line, attached to its turn.
+				p.line, p.typed, p.alone = p.typed, line, false
+			} else {
+				// The notice goes in a turn of its own, under an intent of its own:
+				// the step's intent, and any hold it takes, stay pending until the
+				// step itself has an outcome.
+				noticeLine, noticeIntent = pointer(path, opt.Queue), newIntent()
+				add = append(add, batch.Event{At: d.now(), Kind: batch.KindSendIntent, Session: o.Label, Intent: noticeIntent,
+					View: view, Text: noticeLine, Mode: "notice", Notice: true})
+			}
 		}
 		if p.body != "" {
 			path, err := b.SaveSend(o.Label, []byte(strings.TrimRight(p.body, "\n")+"\n"))
 			if err != nil {
 				return err
 			}
-			p.path, p.typed = path, pointer(path)
+			p.path, p.typed = path, pointer(path, opt.Queue)
 		}
 		add = append(add, batch.Event{At: d.now(), Kind: batch.KindSendIntent, Session: o.Label, Intent: intent,
 			Hold: opt.Hold, View: view, Key: p.key, Text: p.typed, Path: p.path, Mode: p.mode(), Notice: p.notice && !p.alone})
@@ -402,7 +431,7 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 		o, a.o = after, after
 	}
 	outcome, err := a.deliver(p.typed)
-	sent := &Sent{Label: o.Label, Outcome: outcome, Typed: p.typed, Path: p.path, Notice: p.notice, From: p.from}
+	sent := &Sent{Label: o.Label, Outcome: outcome, Typed: p.typed, Path: p.path, Notice: p.notice, From: p.from, line: p.line}
 	if outcome != "" {
 		record(batch.Event{Kind: batch.KindSend, Outcome: outcome, Mode: p.mode(), Text: p.typed, Path: p.path, Key: p.key, Notice: p.notice && !p.alone})
 	}

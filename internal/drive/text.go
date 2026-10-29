@@ -24,7 +24,10 @@ func (s *Sent) Text() string {
 		what = s.Path
 	}
 	extra := ""
-	if s.Notice {
+	switch {
+	case s.line != "":
+		what, extra = s.line, ", notice attached"
+	case s.Notice:
 		extra += ", notice first"
 	}
 	if s.From != "" {
@@ -278,11 +281,14 @@ func LogText(b *batch.Batch, evs []batch.Event, now time.Time) string {
 func describe(e batch.Event) string {
 	switch e.Kind {
 	case batch.KindSend:
-		s := e.Outcome + ": " + clip(e.Text, 100)
+		s := e.Outcome + ": " + clip(stepOf(e), 100)
 		if e.Key != "" {
 			s = e.Outcome + ": snippet " + e.Key
 		}
-		if e.Notice {
+		switch {
+		case e.Notice && e.Mode == "typed":
+			s += " (the notice attached)"
+		case e.Notice:
 			s += " (the notice first)"
 		}
 		if e.Hold != "" {
@@ -290,7 +296,7 @@ func describe(e batch.Event) string {
 		}
 		return s
 	case batch.KindSendIntent:
-		return clip(e.Text, 100)
+		return clip(stepOf(e), 100)
 	case batch.KindOpenIntent:
 		if e.Goal != "" {
 			return clip(e.Text, 100) + " (goal: " + clip(e.Goal, 100) + ")"

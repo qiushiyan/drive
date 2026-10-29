@@ -4,7 +4,7 @@ exit 0
 {
   "batch": "b1",
   "from": "2026-10-23T01:00:00Z",
-  "to": "2026-10-23T01:02:12Z",
+  "to": "2026-10-23T01:02:07Z",
   "sessions": 2,
   "asks": 2,
   "answered": 1,
@@ -13,7 +13,7 @@ exit 0
     "amended": 1
   },
   "explained": 1,
-  "owner_wait_seconds": 8,
+  "owner_wait_seconds": 3,
   "median_answer_seconds": 0,
   "merged": [],
   "per_merge_seconds": 0,

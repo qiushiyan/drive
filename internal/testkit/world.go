@@ -488,6 +488,13 @@ func (w *World) Key(block string, keys ...string) error {
 				continue
 			}
 			text := c.Input
+			if f := strings.Fields(text); len(f) > 0 && strings.HasPrefix(f[len(f)-1], "@") && !strings.HasSuffix(text, " ") {
+				// A line ending in an @-mention holds Claude Code's file
+				// completion open: Enter takes it, a space after the path,
+				// and sends nothing (2.1.312, as seen live).
+				c.Input += " "
+				continue
+			}
 			c.Input, c.Suggestion = "", ""
 			if text == "" {
 				continue
@@ -511,6 +518,8 @@ func (w *World) Key(block string, keys ...string) error {
 				compact = true
 				continue
 			}
+			// Claude Code records the prompt without the space after its end.
+			text = strings.TrimRight(text, " ")
 			c.Prompt(text)
 			c.activity("busy", "")
 			c.set("working", "", "")

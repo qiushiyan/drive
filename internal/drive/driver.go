@@ -470,7 +470,7 @@ func sentStep(evs []batch.Event, label string, p turn.Prompt, zone *time.Locatio
 		if e.Kind != batch.KindSend || e.Session != label || e.Text == "" || strings.TrimSpace(e.Text) != strings.TrimSpace(p.Text) {
 			continue
 		}
-		what := fmt.Sprintf("the step %q", clip(e.Text, 60))
+		what := fmt.Sprintf("the step %q", clip(stepOf(e), 60))
 		switch {
 		case e.Key != "":
 			what = "the " + e.Key + " snippet"
