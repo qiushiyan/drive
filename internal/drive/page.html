@@ -406,9 +406,20 @@ a.chip { text-decoration: none; }
     if (!el) return;
     for (var d = el; d; d = d.parentElement) if (d.tagName === "DETAILS") d.open = true;
     if (id.indexOf("/") > 0) el.scrollIntoView();
-    else if (all) window.scrollTo(0, 0);
+    else if (all) requestAnimationFrame(function () { window.scrollTo(0, 0); });
   }
   window.addEventListener("hashchange", route);
+  // A tab opens at the top of the page, where its questions are, rather
+  // than where the browser would scroll its anchor to.
+  document.querySelectorAll("a[data-tab], a.bcard").forEach(function (a) {
+    a.addEventListener("click", function (e) {
+      e.preventDefault();
+      if (location.hash !== a.getAttribute("href")) history.pushState(null, "", a.getAttribute("href"));
+      route();
+    });
+  });
+  window.addEventListener("popstate", route);
+  if ("scrollRestoration" in history) history.scrollRestoration = "manual";
   route();
   // A tab left open is read again when its owner comes back to it, never
   // while they read.
