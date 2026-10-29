@@ -55,7 +55,7 @@ The page is a third printer of a batch beside text and `--json` (`internal/drive
 
 Serving (`internal/drive/serve.go`) is shaped by those costs and by Rex calls that can hang. A visit resolves the live batches once and reads them at once, each on its own reads and deadline, so one slow or unreadable batch keeps none of the others off the page. One read of a batch runs at a time and is reused for 30 seconds from when it ended. A visit waits for what is left of the running read's 20 seconds, then is answered from the record alone (goals, asks, parks, each session's history), as it is when Rex cannot be read; a read still running after 2 minutes is left to finish, and the next visit starts another. The server exits once an install replaces its binary, for its supervisor to start the new one.
 
-On the mini the dotfiles' launchd agent `com.qiushi.drive-page` keeps it listening on `127.0.0.1:8792`, with a PATH that reaches `rex`, `claude-steps` and `gh`, and `tailscale serve` publishes it on the company tailnet at `https://qiushi-mini.tailf7adf1.ts.net:8444`. Anyone on the tailnet can open it, by the owner's choice; it only reads.
+Each machine serves the page of its own batches, since each keeps its own state directory. The dotfiles' launchd agent `com.qiushi.drive-page`, in `launchd-mini/` and `launchd-mac/`, keeps it listening on `127.0.0.1:8792` with a PATH that reaches `rex`, `claude-steps` and `gh`, and `tailscale serve` publishes it on the company tailnet: `https://qiushi-mini.tailf7adf1.ts.net:8444` for the mini, `https://qiushis-macbook-pro.tailf7adf1.ts.net:8444` for the mac, which answers only while the laptop is awake. Anyone on the tailnet can open either, by the owner's choice; it only reads.
 
 ## Wakes
 
