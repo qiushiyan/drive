@@ -232,6 +232,13 @@ func TestTheOverviewGroupsSessionsByWhereTheyStand(t *testing.T) {
 		// A question links to its session's card, and the card back to the question.
 		`<article class="ask" id="b1/ask-A1" data-batch="b1">`, `<span class="ask-id">A1</span><a href="#b1/P">P</a>`, `<details class="strip st-park" id="b1/P">`,
 		`<a class="chip ask" href="#b1/ask-A1">Waits on you: A1</a>`, `<span class="ask-id">A2</span><span>the whole batch</span>`,
+		// A session's label is its link, to copy from the phone.
+		`<summary><a class="tile" href="#b1/W" title="Link to this session">W</a>`,
+		// What keeps a session from being heard or read shows without opening it.
+		`<span class="chip alert">woken ` + strings.TrimPrefix(clockOf(t, r, batch.KindWake, "E"), "at ") + `, nothing done since</span>`,
+		`<span class="chip alert">stage and pull requests not read</span>`,
+		// A link that names nothing live says so, once the script finds it does.
+		`<p class="banner" data-missing hidden>The link you followed names nothing live`,
 		"Merge before the baseline?", "<dt>Recommended</dt><dd>wait for it</dd>", "<dt>If nobody answers</dt><dd>P stays parked</dd>", "<dd>nothing releases</dd>",
 		"Pull requests it opened:", "Pull requests it named:", "1 check failing",
 		// A pull request names its repository, since a batch's sessions may work in several.
@@ -290,6 +297,12 @@ func TestTheWakeLineSaysWhatTheWakeIs(t *testing.T) {
 	}
 	if strings.Count(page, "No wake is armed for it") != 1 {
 		t.Fatal("only N has no wake armed")
+	}
+	for label, chip := range map[string]string{"K": "its wake has not come", "N": "no wake armed"} {
+		summary := page[strings.Index(page, `<summary><a class="tile" href="#b1/`+label+`"`):]
+		if summary = summary[:strings.Index(summary, "</summary>")]; !strings.Contains(summary, `<span class="chip alert">`+chip+`</span>`) {
+			t.Errorf("%s's summary says %q without opening it", label, chip)
+		}
 	}
 }
 

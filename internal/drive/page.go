@@ -80,6 +80,7 @@ type groupView struct {
 // opened.
 type stripView struct {
 	Anchor  string // the batch's name and the label, so a link names one session on a page of several batches
+	Href    template.URL
 	Label   string
 	Kind    string // the state it is coloured as: next, work, park, alert, done
 	State   string
@@ -92,6 +93,7 @@ type stripView struct {
 	Asks    []askLink // the open asks that name it, each linking to its question
 	PRs     []link    // the pull requests it opened
 	Chips   []string
+	Alerts  []string // what keeps it from being heard or read, on its summary
 	Facts   []factView
 	Labels  []labelView
 	History []entryView // the newest of its record, newest first
@@ -574,6 +576,7 @@ func stripOf(ov *Overview, c Card, group string, now time.Time) stripView {
 	m, r := c.Member, c.Row
 	read := r != nil && r.Error == ""
 	s := stripView{Anchor: Anchor(ov.Batch.Name, m.Label), Label: m.Label, Kind: groupKind(group), Goal: m.Goal}
+	s.Href = href(s.Anchor)
 	if read && (r.State == "error" || r.State == "blocked:auth") {
 		s.Kind = "alert"
 	}
@@ -647,18 +650,24 @@ func stripOf(ov *Overview, c Card, group string, now time.Time) stripView {
 		switch {
 		case r.Unhandled:
 			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "The driver was woken " + at(m.Woken) + " and has done nothing since.", Error: true})
+			s.Alerts = append(s.Alerts, "woken "+pageClock(m.Woken, now, ov.Zone)+", nothing done since")
 		case !ov.Wakes || m.Parked != "":
 		case r.Due == "" && r.Armed:
 			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "Armed: its driver hears when its turn ends."})
 		case r.Due == "":
 		case r.Armed:
 			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "Its wake is armed but has not come since its turn ended, so the driver may not have heard.", Error: true})
+			s.Alerts = append(s.Alerts, "its wake has not come")
 		default:
 			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "No wake is armed for it, so the driver is not told when it needs its next step.", Error: true})
+			s.Alerts = append(s.Alerts, "no wake armed")
 		}
 	}
 	if c.Unread != "" {
 		s.Facts = append(s.Facts, factView{Title: "Not read", Text: "Not read: " + c.Unread, Error: true})
+		if r == nil || r.Error == "" { // a session that could not be read at all says so in its state
+			s.Alerts = append(s.Alerts, "stage and pull requests not read")
+		}
 	}
 
 	for _, l := range c.Labels {
