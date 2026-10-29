@@ -39,8 +39,10 @@ Constraints:
 Steps:
   A step is one of:
     'one short line'        typed as is, a slash command too; an @PATH in it attaches
-                            that file, as the owner's would ('/write-spec @/tmp/answers.md')
-    --file PATH             typed as @<copy>, which attaches it; drive keeps the copy
+                            that file, as the owner's would ('/write-spec @/tmp/answers.md'),
+                            except in a step queued mid-turn, where it stays a path
+    --file PATH             typed as @<copy>, which attaches it, drive keeping the copy;
+                            queued mid-turn, a line asks the session to read the copy
     --snippet KEY 'TEXT'    the owner's snippet for the session's directory, with the
                             step's words, TEXT, where the owner would type after it
   Text that starts with a dash goes after --, which ends the flags.

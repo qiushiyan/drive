@@ -257,7 +257,7 @@ func (d *Driver) plan(dir, config, resend string, step Step, notice bool) (*plan
 		if name := skill.Command(first); name != "" && skill.TypedOnly(d.Cfg.Home, config, dir, name) {
 			return nil, &Refused{
 				Reason: fmt.Sprintf("/%s starts only when typed: a session told to run it from a file refuses", name),
-				Next: fmt.Sprintf("type the command and put the rest in a file it points at: %s %s",
+				Next: fmt.Sprintf("type the command, with the rest in a file it attaches: %s %s",
 					resend, join(text(first+" @<file>")))}
 		}
 	}
