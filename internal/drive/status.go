@@ -168,6 +168,7 @@ type Row struct {
 	Window   string
 	State    State
 	For      time.Duration // since its state last changed
+	Since    time.Time     // when its state last changed
 	Account  string
 	Input    turn.InputKind
 	Typed    string
@@ -496,7 +497,8 @@ func (d *Driver) row(b *batch.Batch, members []*batch.Member, label string, with
 		}
 		return r
 	}
-	r.Block, r.SID, r.State, r.For, r.Account = o.Session.Block, o.Session.ID, o.State(), d.now().Sub(o.Session.Since()), o.Session.Account
+	r.Block, r.SID, r.State, r.Since, r.Account = o.Session.Block, o.Session.ID, o.State(), o.Session.Since(), o.Session.Account
+	r.For = d.now().Sub(r.Since)
 	r.Input, r.Typed, r.View = o.Input, o.Typed, o.View
 	r.Jobs = d.Host.Shells(o.Session.Status.PID)
 	if withProgress && d.Progress != nil && o.Session.ID != "" {

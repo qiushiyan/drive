@@ -64,10 +64,12 @@ func TestStepsListsEveryStageInTheConfigurationsOrder(t *testing.T) {
 	if strings.Join(names, ",") != "onboard,spec,build,verify,docs" {
 		t.Fatalf("every stage, in the configuration's order: %v", names)
 	}
-	if !s.Labels[1].At.IsZero() || !s.Labels[4].At.IsZero() || s.Labels[2].At.IsZero() {
-		t.Fatalf("a stage with no step has no time: %+v", s.Labels)
+	for i, want := range []string{"2026-10-28T16:59:46Z", "", "2026-10-29T11:46:53Z", "2026-10-29T12:57:51Z", ""} {
+		if got := s.Labels[i].At; want == "" && !got.IsZero() || want != "" && got.Format(time.RFC3339) != want {
+			t.Errorf("%s's newest step: %v, want %q", s.Labels[i].Name, got, want)
+		}
 	}
-	if s.Stage != "verify" || !s.StageAt.Equal(s.Labels[3].At) {
+	if s.Stage != "verify" || s.StageAt.Format(time.RFC3339) != "2026-10-29T12:57:51Z" {
 		t.Fatalf("the newest step's stage is the session's: %s %v", s.Stage, s.StageAt)
 	}
 }

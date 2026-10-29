@@ -57,13 +57,6 @@ type Metrics struct {
 	Unwatched int
 }
 
-// driverActions are what a driver does to a session; any of them after a
-// wake shows the wake reached a driver.
-var driverActions = map[string]bool{
-	batch.KindSendIntent: true, batch.KindSend: true, batch.KindRespond: true, batch.KindPark: true,
-	batch.KindClose: true, batch.KindWatch: true, batch.KindRefused: true, batch.KindOpenIntent: true, batch.KindOpen: true,
-}
-
 // MergedPR is a change the batch merged, with the sessions that name it:
 // its builder, and its strategic reviewer when one merged it. A change
 // merged without a pull request, as a personal tool's closeout merges it, is
@@ -137,7 +130,7 @@ func (m *Metrics) actions(evs []batch.Event, wakes bool) {
 	woken := map[string]bool{}    // a session's posted wake that no driver action has followed yet
 	unwatched := map[string]int{} // a session's steps that no wake, park or close has followed yet
 	for _, e := range evs {
-		if e.Session != "" && driverActions[e.Kind] {
+		if e.Session != "" && batch.ByDriver(e) { // a driver's action on it shows the wake reached a driver
 			woken[e.Session] = false
 		}
 		switch e.Kind {

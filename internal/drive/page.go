@@ -2,6 +2,7 @@ package drive
 
 import (
 	"bytes"
+	"cmp"
 	_ "embed"
 	"fmt"
 	"html/template"
@@ -68,7 +69,6 @@ type batchView struct {
 	Notes   []entryView // the driver's notes on no one session, newest first
 	Holds   []string
 	Empty   string
-	Asks    int
 }
 
 type groupView struct {
@@ -313,7 +313,7 @@ func askOf(ov *Overview, a *batch.Ask, now time.Time) askView {
 func batchOf(ov *Overview, title string, now time.Time) batchView {
 	at := func(t time.Time) string { return when(t, now, ov.Zone) }
 	m := ov.Batch
-	bv := batchView{Name: m.Name, Title: title, Eyebrow: "Batch " + m.Name + " · started " + pageClock(m.Started, now, ov.Zone), Holds: ov.Holds, Asks: len(ov.Asks)}
+	bv := batchView{Name: m.Name, Title: title, Eyebrow: "Batch " + m.Name + " · started " + pageClock(m.Started, now, ov.Zone), Holds: ov.Holds}
 	driver := batch.DriverOf(*m)
 	switch {
 	case driver != "" && ov.Wakes:
@@ -418,8 +418,12 @@ func healthOf(ov *Overview, now time.Time) []healthView {
 					}
 				}
 			}
-			wakes.Value = fmt.Sprintf("%d of %d armed", armed, open)
-			if open == 0 {
+			switch {
+			case open > 0:
+				wakes.Value = fmt.Sprintf("%d of %d armed", armed, open)
+			case unread > 0:
+				wakes.Value = "Not read"
+			default:
 				wakes.Value = "None needed"
 			}
 			var sub []string
@@ -432,6 +436,7 @@ func healthOf(ov *Overview, now time.Time) []healthView {
 			}
 			if unread > 0 {
 				sub = append(sub, fmt.Sprintf("%d not read", unread))
+				wakes.Alert = true
 			}
 			if parked > 0 {
 				sub = append(sub, fmt.Sprintf("%d parked, which arm none", parked))
@@ -446,7 +451,7 @@ func healthOf(ov *Overview, now time.Time) []healthView {
 
 	prs := healthView{Title: "Pull requests", Value: "Not read", Sub: "the sessions' steps were not read"}
 	if ov.Live == "" {
-		seen := map[string]bool{}
+		seen := map[prKey]bool{}
 		var merged, open, closed, unread, failing int
 		stepsUnread := 0
 		for _, c := range cards {
@@ -454,11 +459,10 @@ func healthOf(ov *Overview, now time.Time) []healthView {
 				stepsUnread++
 			}
 			for _, p := range c.PRs {
-				if key := prName(p.PRRef) + p.Repo; seen[key] {
+				if seen[keyOf(p.PRRef)] {
 					continue
-				} else {
-					seen[key] = true
 				}
+				seen[keyOf(p.PRRef)] = true
 				switch {
 				case p.PR == nil:
 					unread++
@@ -527,19 +531,25 @@ func healthOf(ov *Overview, now time.Time) []healthView {
 
 // actedWords is what a driver did, in a few words.
 func actedWords(e batch.Event) string {
+	who := cmp.Or(e.Session, "the batch")
 	switch e.Kind {
-	case batch.KindSend:
-		return "a step to " + e.Session
+	case batch.KindSendIntent, batch.KindSend:
+		return "a step to " + who
 	case batch.KindRespond:
-		return e.Session + "'s prompt answered"
-	case batch.KindOpen:
-		return e.Session + " opened"
-	case batch.KindAdopt:
-		return e.Session + " joined"
+		return who + "'s prompt answered"
+	case batch.KindOpenIntent, batch.KindOpen:
+		return who + " opened"
 	case batch.KindPark:
-		return e.Session + " parked"
+		return who + " parked"
 	case batch.KindClose:
-		return e.Session + " closed"
+		return who + " closed"
+	case batch.KindWatch:
+		if e.Session == "" {
+			return "a timer set"
+		}
+		return who + "'s wake armed"
+	case batch.KindRefused:
+		return "an action on " + who + " refused"
 	}
 	return e.Kind
 }
@@ -612,7 +622,7 @@ func stripOf(ov *Overview, c Card, group string, now time.Time) stripView {
 		s.Chips = append(s.Chips, plural(len(r.Jobs), "job")+" running")
 	}
 	if e := m.LastSend; e != nil {
-		s.Chips = append(s.Chips, "sent "+pageClock(e.At, now, ov.Zone)+": "+sentLabel(e))
+		s.Chips = append(s.Chips, "sent "+pageClock(e.At, now, ov.Zone)+": "+clip(sentWords(*e), 48))
 	}
 
 	if len(opened) > 0 {
@@ -692,10 +702,8 @@ func sinceThePark(ov *Overview, c Card, now time.Time) []string {
 			out = append(out, "Since the park: "+answerHead(e)+" "+when(e.At, now, ov.Zone)+".")
 		}
 	}
-	if r != nil && r.Error == "" {
-		if changed := ov.At.Add(-r.For); changed.After(m.ParkedAt) {
-			out = append(out, "Since the park: "+sinceWords(r.State, pageClock(changed, now, ov.Zone))+".")
-		}
+	if r != nil && r.Error == "" && r.Since.After(m.ParkedAt) {
+		out = append(out, "Since the park: "+sinceWords(r.State, pageClock(r.Since, now, ov.Zone))+".")
 	}
 	return out
 }
@@ -774,9 +782,11 @@ func entryOf(e batch.Event, asks map[string]*batch.Event, now time.Time, zone *t
 			v.Text = a.Question
 		}
 	case batch.KindNote:
-		v.Kind, v.Head, v.Text, v.Note = "done", "Note", e.Note, true
+		// A driver's note has an id; drive's own, such as an after-wake
+		// command that failed, has none.
+		v.Kind, v.Head, v.Text = "done", "drive noted:", e.Note
 		if e.ID != "" {
-			v.Head = "Note " + e.ID
+			v.Head, v.Note = "Note "+e.ID, true
 		}
 	case batch.KindWake:
 		v.Head = "Woke the driver"

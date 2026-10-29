@@ -261,6 +261,9 @@ a.chip { text-decoration: none; }
 {{- end}}
 </div>
 <p class="empty" data-none{{if .Asks}} hidden{{end}}>Nothing waits on you.</p>
+{{- if .Several}}
+<p class="empty" data-none-here hidden>Nothing in this batch waits on you. <a href="#all">Questions wait in other batches.</a></p>
+{{- end}}
 </section>
 {{- if .Several}}
 <section id="all" data-view>
@@ -337,7 +340,7 @@ a.chip { text-decoration: none; }
 <dl class="facts">{{range .}}<div{{if .Error}} class="error"{{end}}><dt>{{.Title}}</dt><dd>{{.Text}}{{range $i, $l := .Links}}{{if $i}};{{end}} <a href="{{.URL}}">{{.Text}}</a>{{with .State}} {{.}}{{end}}{{end}}</dd></div>{{end}}</dl>
 {{- end}}
 {{- with .Labels}}
-<div><p class="sub-h">Stages <span>· when its newest step under each was taken, a dated fact and no verdict</span></p><ol class="track">{{range .}}<li class="{{if .Newest}}on newest{{else if .On}}on{{end}}"><b></b><span>{{.Name}}</span><em>{{.Age}}</em></li>{{end}}</ol></div>
+<div><p class="sub-h">Stages <span>· how long ago its newest step under each was taken</span></p><ol class="track">{{range .}}<li class="{{if .Newest}}on newest{{else if .On}}on{{end}}"><b></b><span>{{.Name}}</span><em>{{.Age}}</em></li>{{end}}</ol></div>
 {{- end}}
 {{- if .History}}
 <div><p class="sub-h">What the record holds <span>· newest first, with the driver's notes</span></p>
@@ -378,7 +381,7 @@ a.chip { text-decoration: none; }
 </section>
 {{- end}}
 {{- end}}
-<footer>Reload to read it again; a read is reused for 30 seconds. Coming back to the page after a minute reads it again.</footer>
+<footer>Reload to read it again; a read is reused for 30 seconds. Coming back after a minute away reads it again.</footer>
 </main>
 </div>
 <script>
@@ -390,22 +393,24 @@ a.chip { text-decoration: none; }
   var views = document.querySelectorAll("[data-view]");
   var asks = document.querySelectorAll("#needs-you .ask");
   var none = document.querySelector("#needs-you [data-none]");
+  var noneHere = document.querySelector("#needs-you [data-none-here]");
   var tabs = document.querySelectorAll("[data-tab]");
   function route() {
     var id = decodeURIComponent(location.hash.slice(1));
-    var el = id ? document.getElementById(id) : null;
+    var el = (id && document.getElementById(id)) || all;
     if (all) {
       var holder = el && el.closest("[data-batch]");
       var batch = holder ? holder.getAttribute("data-batch") : "";
       views.forEach(function (v) { v.hidden = batch ? v.getAttribute("data-batch") !== batch : v !== all; });
       var shown = 0;
       asks.forEach(function (a) { a.hidden = !!batch && a.getAttribute("data-batch") !== batch; if (!a.hidden) shown++; });
-      if (none) none.hidden = shown > 0;
+      if (none) none.hidden = shown > 0 || (!!batch && asks.length > 0);
+      if (noneHere) noneHere.hidden = !batch || shown > 0 || asks.length === 0;
       tabs.forEach(function (t) { t.setAttribute("aria-current", t.getAttribute("data-tab") === (batch || "all") ? "page" : "false"); });
     }
     if (!el) return;
     for (var d = el; d; d = d.parentElement) if (d.tagName === "DETAILS") d.open = true;
-    if (id.indexOf("/") > 0) el.scrollIntoView();
+    if (el !== all && id.indexOf("/") > 0) el.scrollIntoView();
     else if (all) requestAnimationFrame(function () { window.scrollTo(0, 0); });
   }
   window.addEventListener("hashchange", route);
@@ -421,12 +426,17 @@ a.chip { text-decoration: none; }
   window.addEventListener("popstate", route);
   if ("scrollRestoration" in history) history.scrollRestoration = "manual";
   route();
-  // A tab left open is read again when its owner comes back to it, never
-  // while they read.
-  var loaded = Date.now();
-  function stale() { return document.visibilityState === "visible" && Date.now() - loaded > 60000; }
-  document.addEventListener("visibilitychange", function () { if (stale()) location.reload(); });
-  window.addEventListener("pageshow", function (e) { if (e.persisted && stale()) location.reload(); });
+  // A page its owner left for over a minute is read again when they come
+  // back, never while they read nor after a glance at another app.
+  var hiddenAt = 0;
+  function away() { return hiddenAt && Date.now() - hiddenAt > 60000; }
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") hiddenAt = Date.now();
+    else if (away()) location.reload();
+    else hiddenAt = 0;
+  });
+  window.addEventListener("pagehide", function () { hiddenAt = hiddenAt || Date.now(); });
+  window.addEventListener("pageshow", function (e) { if (e.persisted && away()) location.reload(); });
 })();
 </script>
 </body>

@@ -32,6 +32,18 @@ const (
 	KindGoal       = "goal" // what a session sets out to do, for the owner; the latest per label stands
 )
 
+// ByDriver says a driver's command wrote e: a step or its intent, a prompt
+// answered, an open or its intent, a park, a close, a wake or timer armed,
+// or a refusal. A watch writes its posts, its wakes, a watch that ended
+// without one and the notes of commands run after a wake, so none of those
+// is a driver's.
+func ByDriver(e Event) bool { return byDriver[e.Kind] }
+
+var byDriver = map[string]bool{
+	KindSendIntent: true, KindSend: true, KindRespond: true, KindPark: true,
+	KindClose: true, KindWatch: true, KindRefused: true, KindOpenIntent: true, KindOpen: true,
+}
+
 // Event is one line of the log. Fields not used by a kind stay empty.
 type Event struct {
 	At      time.Time `json:"at"`

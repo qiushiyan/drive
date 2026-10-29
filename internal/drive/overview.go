@@ -29,10 +29,10 @@ type Overview struct {
 
 	Answered []*batch.Ask  // questions the owner answered, or that stopped mattering, in the order asked
 	Grants   []batch.Event // authority the owner handed over
-	Notes    []batch.Event // the driver's notes on no one session
-	// Acted is the newest thing a driver did to a session: a step sent, a
-	// prompt answered, an open, a park or a close. A watch's own events
-	// never count, so a driver that has gone reads as gone.
+	Notes    []batch.Event // notes on no one session: the driver's, and drive's own
+	// Acted is the newest thing a driver's command wrote (batch.ByDriver).
+	// A watch's own events never count, so a driver that has gone reads as
+	// gone.
 	Acted *batch.Event
 }
 
@@ -120,7 +120,7 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 	}
 	histories := map[string][]batch.Event{}
 	for _, e := range evs {
-		if acted(e) {
+		if batch.ByDriver(e) && !armedBy(e, ov.Acted) {
 			ov.Acted = &e
 		}
 		if e.Kind == batch.KindAnswer {
@@ -209,21 +209,6 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 	return ov, nil
 }
 
-// acted says a driver did e to a session. Watches write their posts, their
-// wakes, a wake that failed and the notes of commands run after a wake, so
-// none of those count.
-func acted(e batch.Event) bool {
-	switch e.Kind {
-	case batch.KindSend:
-		return e.Outcome != ""
-	case batch.KindOpen:
-		return e.SID != ""
-	case batch.KindRespond, batch.KindPark, batch.KindClose, batch.KindAdopt:
-		return true
-	}
-	return false
-}
-
 // forOwner says e belongs in a session's history as its owner reads it.
 // What only a driver acts on stays out: intents, watches armed and stopped,
 // posts under way and refusals.
@@ -238,6 +223,12 @@ func forOwner(e batch.Event) bool {
 		return true
 	}
 	return false
+}
+
+// armedBy says e is the wake an action arms as it ends, so it is told as
+// part of that action: the step sent, rather than the wake behind it.
+func armedBy(e batch.Event, action *batch.Event) bool {
+	return e.Kind == batch.KindWatch && action != nil && action.Session == e.Session && e.Session != "" && e.At.Sub(action.At) < time.Minute
 }
 
 func views(refs []progress.PRRef) []PRView {
