@@ -43,8 +43,8 @@ JSON:
               suggested line), stage, pr (number, state, draft, merge, review, passed, failed,
               pending), last_sent, watch (the WAKE column's words), unhandled_wake (a wake was
               posted and nothing done since), wake_due (why --due would arm its wake; left out
-              when nothing is due), view, error (why the row could not be read), jobs (started,
-              command)
+              when nothing is due), view, error (why the row could not be read), next (for a
+              session that is gone, the open that brings it back), jobs (started, command)
   closed      the batch's sessions closed since
   holds       a line per hold, as the table prints it
   open_asks   id, session, at, question, recommendation, if_unanswered

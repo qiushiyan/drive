@@ -56,6 +56,7 @@ type rowDoc struct {
 	WakeDue       string          `json:"wake_due,omitempty"`
 	View          string          `json:"view,omitempty"`
 	Error         string          `json:"error,omitempty"`
+	Next          string          `json:"next,omitempty"`
 	Jobs          []session.Shell `json:"jobs"`
 }
 
@@ -101,7 +102,7 @@ func (st *Status) JSON() any {
 		for _, r := range rs {
 			d := rowDoc{Label: r.Label, SID: r.SID, Block: rex.Short(r.Block), Window: r.Window, Name: r.Name, DrivenBy: r.DrivenBy, Goal: r.Goal, State: string(r.State),
 				ForSeconds: int(r.For.Seconds()), Account: r.Account, Input: string(r.Input), Stage: r.Stage, LastSent: r.LastSent,
-				Watch: r.Watch, UnhandledWake: r.Unhandled, WakeDue: r.Due, View: viewOrEmpty(r.View), Error: r.Error, Jobs: jobs(r.Jobs)}
+				Watch: r.Watch, UnhandledWake: r.Unhandled, WakeDue: r.Due, View: viewOrEmpty(r.View), Error: r.Error, Next: r.Next, Jobs: jobs(r.Jobs)}
 			if r.Input == "typed" || r.Input == "suggestion" {
 				d.InputText = r.Typed
 			}

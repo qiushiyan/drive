@@ -1,0 +1,8 @@
+$ drive watch --stop-all
+exit 0
+--- stdout
+batch 2026-10-28, driver session-driver: no wake was armed
+timers run on: they never reach Rex
+once Rex's server runs again, run in each batch what arms its wakes again and names the open that brings back each session that is gone:
+  drive --batch 2026-10-28 watch --due
+--- stderr

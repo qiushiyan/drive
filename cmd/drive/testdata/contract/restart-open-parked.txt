@@ -1,0 +1,6 @@
+$ drive --driver session-driver open S2 --dir $ROOT/work --resume sid-2 --account acct@example.com
+exit 0
+--- stdout
+opened S2 in block a00003 on account acct@example.com (session sid-2)
+S2 stays parked, so no wake comes until a step is sent to it: waits for the owner's call on D2
+--- stderr

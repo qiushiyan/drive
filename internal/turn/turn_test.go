@@ -270,6 +270,23 @@ func TestATurnEndsWithoutAnAssistantEntry(t *testing.T) {
 	}
 }
 
+// A session resumed after its process ended mid-turn, as a Rex restart
+// ends it, finds a synthetic "No response requested." where the turn's end
+// would be: the turn was cut short, and that is no reply (rows cut from
+// 2.1.312, 10-29, ids shortened).
+func TestAResumedTurnCutShortReadsInterrupted(t *testing.T) {
+	rows := []string{
+		`{"type":"user","uuid":"p1","timestamp":"2026-10-29T10:35:32Z","message":{"role":"user","content":"Write the spec."}}`,
+		`{"type":"assistant","uuid":"a1","timestamp":"2026-10-29T10:41:16Z","message":{"role":"assistant","model":"claude-opus-5-5","content":[{"type":"text","text":"Writing the spec now."},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"cat run.ts"}}]}}`,
+		`{"type":"user","uuid":"r1","timestamp":"2026-10-29T10:41:19Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"..."}]}}`,
+		`{"type":"assistant","uuid":"s1","timestamp":"2026-10-29T10:44:35Z","message":{"role":"assistant","model":"<synthetic>","stop_reason":"stop_sequence","content":[{"type":"text","text":"No response requested."}]}}`,
+	}
+	f, _ := Read(strings.NewReader(strings.Join(rows, "\n")))
+	if !f.Interrupted || !f.Answered() || f.Reply == nil || f.Reply.Text != "Writing the spec now." {
+		t.Fatalf("the turn was cut short, its last words its own: %+v %+v", f, f.Reply)
+	}
+}
+
 // Rows cut from Claude Code 2.1.308 transcripts on this machine (a probe
 // session, and a /cd in a working one), ids shortened, paths invented.
 const pong = `{"type":"user","uuid":"p0","timestamp":"2026-10-22T15:41:46.248Z","origin":{"kind":"human"},"promptSource":"typed","message":{"role":"user","content":"Reply with the single word: pong"}}

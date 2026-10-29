@@ -8,6 +8,7 @@ import (
 
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/progress"
+	"github.com/qiushiyan/drive/internal/rex"
 )
 
 // Overview is the batch as its owner reads it on the page drive page serves:
@@ -96,9 +97,14 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 	}
 	rows := map[string]*Row{}
 	if live {
-		if _, err := d.Term.Blocks(b.Meta.RexSession); err != nil {
+		// A Rex session that ended, as on a server restart, leaves its
+		// sessions to read as gone.
+		switch _, err := d.Term.Blocks(b.Meta.RexSession); {
+		case errors.Is(err, rex.ErrNoServer):
+			ov.Live = "the sessions could not be read: Rex's server is not running"
+		case err != nil && !errors.Is(err, rex.ErrNoSession):
 			ov.Live = "the sessions could not be read: " + firstLine(err.Error())
-		} else {
+		default:
 			holds := d.holdsNow(evs, members)
 			ov.Holds = holdLines(holds, ov.Zone)
 			read := d.memberRows(b, members, nil, holds, ov.Zone, true)

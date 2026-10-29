@@ -1,6 +1,7 @@
 package drive
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,7 +9,29 @@ import (
 	"sort"
 
 	"github.com/qiushiyan/drive/internal/batch"
+	"github.com/qiushiyan/drive/internal/rex"
+	"github.com/qiushiyan/drive/internal/session"
 )
+
+// gone says a session could not be read because it no longer runs: its
+// block ended, as every block does when Rex's server restarts, or its Claude
+// Code did. A read that merely failed says neither.
+func gone(err error) bool {
+	return errors.Is(err, rex.ErrNoBlock) || errors.Is(err, session.ErrNoClaude)
+}
+
+// reopen says how to bring back a member whose session is gone: its own
+// conversation resumed under its label, where it worked, on its account, or
+// the launcher's choice when the primary's launcher is unknown here, since
+// every account resumes it from the shared transcript. Its park and the
+// record of what was sent to it carry over.
+func (d *Driver) reopen(m *batch.Member) string {
+	opt := OpenOptions{Dir: m.Dir, Resume: m.SID, Account: m.Account}
+	if opt.Account == "primary" && d.Cfg.PrimaryName == "" {
+		opt.Account = ""
+	}
+	return "bring it back under its label, its conversation resumed where it stopped: " + d.openCommand(m.Label, opt, Step{})
+}
 
 // otherAccounts names the accounts a session could be relaunched on: not
 // the one it runs on, and none whose login this batch saw rejected. The

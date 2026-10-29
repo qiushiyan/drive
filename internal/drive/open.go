@@ -32,6 +32,7 @@ type Opened struct {
 	Account string
 	Session string // its session id
 	Sent    *Sent  // the first step, when one was given
+	Parked  string // why, for a parked label whose own conversation was resumed with no step
 }
 
 // Open starts a session in a new block under label and sends it its first
@@ -112,15 +113,18 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return nil, unsent(err, whole)
 	}
 
-	block, err = d.Term.Run(rex.Open{Session: b.Meta.RexSession, Dir: opt.Dir, Label: label, Command: d.launch(opt)})
+	block, err = d.openBlock(rex.Open{Session: b.Meta.RexSession, Dir: opt.Dir, Label: label, Command: d.launch(opt)})
 	if err != nil {
 		f := &Failed{What: fmt.Sprintf("Rex did not open a block for %s: %v", label, err),
 			Next: d.run("status") + " lists the blocks; if none opened for it, try it again: " + whole}
+		if errors.Is(err, rex.ErrNoServer) {
+			f.Next = "tell the owner if they did not stop Rex's server, and run this again once it runs: " + whole
+		}
 		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindFailure, Session: label, Intent: intent, Reason: f.What})
 		return nil, f
 	}
 	// On record at once: a driver that ends while Claude Code starts leaves the block known.
-	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindOpen, Session: label, Intent: intent, Block: block, Dir: opt.Dir, Outcome: "starting"}); err != nil {
+	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindOpen, Session: label, Intent: intent, Block: block, Dir: opt.Dir, Ref: opt.Resume, Outcome: "starting"}); err != nil {
 		return nil, d.unrecorded(label, block, err)
 	}
 	s, err := d.awaitSession(block, 90*time.Second)
@@ -137,11 +141,18 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return nil, d.unrecorded(label, block, err)
 	}
 	out = &Opened{Label: label, Block: block, Account: s.Account, Session: s.ID}
+	if evs, err := b.Events(); err == nil && step.empty() {
+		if m := batch.Find(batch.Members(evs), label); m != nil {
+			out.Parked = m.Parked // a parked label's own conversation, brought back
+		}
+	}
 	a, err := d.take(b, label, block, fmt.Sprintf("sending %s its first step", label))
 	if err != nil {
 		return out, err
 	}
-	a.touched = true // a session drive started is watched like one it typed into
+	// A session drive started is watched like one it typed into, unless it
+	// stays parked, which stops its wakes until its next step.
+	a.touched = out.Parked == ""
 	defer func() {
 		if watched := a.finish(&err); out.Sent != nil {
 			out.Sent.Watched = watched
@@ -159,6 +170,37 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	}
 	out.Sent, err = a.send(p, SendOptions{Hold: opt.Hold}, a.o.View.String())
 	return out, err
+}
+
+// openBlock opens o's block in its Rex session, starting that session again
+// under its label when it no longer runs, as after Rex restarted, with the
+// block as its first. Rex lets two sessions share a label, so drivers here
+// start one at a time, whatever batch each drives.
+func (d *Driver) openBlock(o rex.Open) (string, error) {
+	block, err := d.Term.Run(o)
+	if !errors.Is(err, rex.ErrNoSession) || o.Session == "" || rex.IsSessionID(o.Session) {
+		return block, err
+	}
+	release, err := d.waitOwn("rex-session:"+o.Session, "starting Rex session "+o.Session)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	if block, err = d.Term.Run(o); !errors.Is(err, rex.ErrNoSession) {
+		return block, err // another driver started it meanwhile
+	}
+	return d.Term.New(o)
+}
+
+// waitOwn takes a lock another driver holds for a moment, waiting up to
+// half a minute for it.
+func (d *Driver) waitOwn(key, what string) (func(), error) {
+	for end := d.now().Add(30 * time.Second); ; d.sleep(time.Second / 4) {
+		release, err := d.Store.Own(key, what)
+		if _, busy := errors.AsType[*batch.Busy](err); !busy || !d.now().Before(end) {
+			return release, err
+		}
+	}
 }
 
 // unrecorded is a block Rex opened that the batch's log did not take.

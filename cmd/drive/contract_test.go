@@ -293,3 +293,41 @@ func TestContractLoginRejected(t *testing.T) {
 	c.run("login-send", "send", v, "go", "--as", "T4")
 	c.run("login-read-after", "read", "T4")
 }
+
+// A Rex restart, as on 10-29: the owner stops every wake first, the restart
+// ends every block and the batch's Rex session, a command meets the server
+// down, and each session is gone with the one open that brings it back
+// under its label, a parked one parked still.
+func TestContractRexRestart(t *testing.T) {
+	c := newContract(t)
+	write(t, filepath.Join(c.home, "config", "webhooks", "session-driver"), "URL=http://127.0.0.1:9/unused\nAUTH=Bearer x\n")
+	work := filepath.Join(c.w.Root, "work")
+	s1 := c.w.Add("S1")
+	s1.Busy("onboard")
+	s1.Done("analysis")
+	s1.Reply = func(*testkit.Claude, string) {} // the step runs on
+	s2 := c.w.Add("S2")
+	s2.Busy("onboard")
+	s2.Done("analysis")
+	as := func(args ...string) []string { return append([]string{"--driver", "session-driver"}, args...) }
+
+	c.run("restart-batch-new", "batch", "new", "2026-10-28", "--webhook", "session-driver", "--rex-session", "work", "--tz", "Europe/London")
+	cli(c.app, as("send", view(t, c.run("restart-read-s1", as("read", s1.Block[len(s1.Block)-6:])...)), "--as", "S1", "build it")...)
+	_, out, _ := cli(c.app, as("read", s2.Block[len(s2.Block)-6:])...)
+	cli(c.app, as("send", view(t, out), "--as", "S2", "write the design")...)
+	_, out, _ = cli(c.app, as("read", "S2")...)
+	cli(c.app, as("park", view(t, out), "waits for the owner's call on D2")...)
+	c.run("restart-stop-all", "watch", "--stop-all")
+
+	c.w.Restart()
+	c.w.Down = 1
+	c.run("restart-status-server-down", as("status", "--quick")...)
+	c.run("restart-wait-gone", as("wait", "S1")...)
+	c.run("restart-status-gone", as("status", "--quick")...)
+	c.run("restart-status-gone-json", as("status", "--quick", "--json")...)
+	c.run("restart-read-gone", as("read", "S2")...)
+	c.run("restart-watch-due-gone", as("watch", "--due")...)
+	c.run("restart-open-parked", as("open", "S2", "--dir", work, "--resume", s2.SID, "--account", "acct@example.com")...)
+	c.run("restart-open", as("open", "S1", "--dir", work, "--resume", s1.SID, "--account", "acct@example.com")...)
+	c.run("restart-status-after", as("status", "--quick")...)
+}

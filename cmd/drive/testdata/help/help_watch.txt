@@ -9,12 +9,18 @@ turn ends, at once on an API error or an interrupt, and when the session
 stops on a prompt, and ends with next: where the ending decides what to do.
 A refused action armed nothing. Watch arms one by hand.
 
+A restart of Rex's server ends every session in it. Stop the wakes first
+with --stop-all, so none wakes its driver mid-restart; it prints the
+watch --due that arms each batch's again once the server runs.
+
 Arguments:
   <session>            The session whose wake to arm (optional).
 
 Flags:
       --due            Arm every session whose wakes stopped coming, and post once more a wake
                        nobody acted on: a chat driver's watchdog in one command.
+      --stop-all       Before Rex's server restarts: stop the wake of every session in every live
+                       batch, whichever driver drives it. Timers run on.
 
 Inherited flags:
   -h, --help           Show context-sensitive help.

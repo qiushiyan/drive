@@ -1,0 +1,10 @@
+$ drive --driver session-driver status --quick
+exit 0
+--- stdout
+batch 2026-10-28 · driver session-driver · wakes: webhook · Rex session work · times Europe/London (BST, UTC+01:00)
+SESSION  WIN  BLOCK   STATE        FOR  INPUT  STAGE  PR  LAST SENT               WAKE                                         VIEW
+S1       4    a00004  interrupted  <1m  empty             build it 02:00          ended without a wake (watches.log says why)  S1@4bfdd317
+S2       3    a00003  done         <1m  empty             write the design 02:00  parked: waits for the owner's call on D2     S2@aea700a7
+no goal recorded for S1, S2; the owner's page shows each session's goal: drive --batch 2026-10-28 record goal S1 '…'
+what each watch printed: $HOME/state/batches/2026-10-28/watches.log
+--- stderr

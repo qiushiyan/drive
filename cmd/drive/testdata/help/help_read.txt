@@ -4,8 +4,9 @@ Print a session's newest reply, where it stands, its view, and next: where its s
 
 Every mode prints what it read, then where the session stands, its goal as
 recorded, its view and next:; a session another driver drives says so, with
-no next:. A closed or gone session is read from its
-transcript as it ended, with no view, since there is nothing left to act on.
+no next:. A closed or gone session is read from its transcript as it ended,
+with no view, since there is nothing left to act on; a gone one's next: is
+the open that brings it back.
 
 Arguments:
   <session>            The session: a label in the batch, or a block id for one outside it.

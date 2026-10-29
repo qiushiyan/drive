@@ -14,8 +14,9 @@ Flags:
       --webhook=DRIVER         Wake this chat driver by its webhook, the file
                                ~/.config/drive/webhooks/DRIVER that the owner writes; DRIVER is also
                                the driver's name. Without it, the driver waits itself.
-      --rex-session=SESSION    The Rex session new sessions open in, started if it is not running;
-                               defaults to the configuration's, then $REX_SESSION.
+      --rex-session=SESSION    The Rex session new sessions open in, recorded by its label and
+                               started whenever it is not running; defaults to the configuration's,
+                               then the one drive runs in.
       --tz=ZONE                The zone drive prints the batch's times in, such as Europe/London;
                                defaults to the configuration's, then the machine's.
       --after-wake=COMMAND     A shell command to run after each wake is posted, such as archiving

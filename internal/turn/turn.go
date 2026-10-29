@@ -134,6 +134,7 @@ type row struct {
 	Error            string                 `json:"error"`
 	Origin           *struct{ Kind string } `json:"origin"`
 	Message          *struct {
+		Model   string          `json:"model"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 	Operation  string          `json:"operation"`
@@ -239,6 +240,13 @@ func Read(r io.Reader) (Frontier, error) {
 				}
 			}
 			entry := &Entry{ID: e.UUID, At: e.at(), Text: strings.Join(texts, "\n")}
+			if e.Message != nil && e.Message.Model == "<synthetic>" && entry.Text == "No response requested." {
+				// Claude Code writes this on resuming a session whose turn its
+				// process ended mid-way, as a Rex restart ends it: the turn was
+				// cut short, and nothing answered it (2.1.312).
+				f.Interrupted = true
+				continue
+			}
 			// Whatever ended the turn before, the session has moved on since.
 			f.Last, f.Interrupted = entry, false
 			if e.IsAPIError {

@@ -1,0 +1,5 @@
+$ drive --driver session-driver open S1 --dir $ROOT/work --resume sid-1 --account acct@example.com
+exit 0
+--- stdout
+opened S1 in block a00004 on account acct@example.com (session sid-1)
+--- stderr

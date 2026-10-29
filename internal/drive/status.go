@@ -57,10 +57,8 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 	}
 	o, err := d.observe(b, members, ref)
 	if err != nil {
-		if m != nil {
-			if _, lerr := session.Locate(d.Term, d.Host, m.Block); errors.Is(lerr, session.ErrNoClaude) {
-				return d.readEnded(b, m, "gone", mode, n)
-			}
+		if m != nil && gone(err) {
+			return d.readEnded(b, m, "gone", mode, n)
 		}
 		return nil, err
 	}
@@ -109,6 +107,9 @@ func (d *Driver) readEnded(b *batch.Batch, m *batch.Member, state State, mode Re
 		return nil, fmt.Errorf("reading %s's transcript: %w", m.Label, err)
 	}
 	r := &Reading{Label: m.Label, SID: m.SID, Goal: m.Goal, State: state, Account: m.Account}
+	if state == "gone" {
+		r.Next = d.reopen(m)
+	}
 	return r, d.readText(r, f, mode, n, zoneOf(b))
 }
 
@@ -185,6 +186,7 @@ type Row struct {
 	DrivenBy string          // for a session outside the batch, the live batch that drives it: its label there, the batch and its driver
 	Goal     string          // what a member sets out to do, as recorded
 	Error    string          // what kept the row from being read
+	Next     string          // for a member that is gone, how to bring it back
 	Jobs     []session.Shell // background jobs it runs
 	Wake
 }
@@ -232,7 +234,14 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 		out.Batch, out.Dir, session = &b.Meta, b.Dir, b.Meta.RexSession
 	}
 	blocks, err := d.Term.Blocks(session)
-	if err != nil {
+	switch {
+	case errors.Is(err, rex.ErrNoServer):
+		return nil, serverDown(d.again())
+	case errors.Is(err, rex.ErrNoSession):
+		// Its Rex session ended, as on a server restart: its sessions read
+		// as gone below, each with the open that brings it back, which
+		// starts the Rex session again.
+	case err != nil:
 		return nil, err
 	}
 	// A parked waiter whose hold is free is due a wake, so the holds are
@@ -412,6 +421,8 @@ func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, zone *time.Locat
 		return Wake{Watch: fmt.Sprintf("armed, but its turn ended %s ago: stuck (%s restarts it)", ago(r.For), d.run("watch", m.Label)), Due: "stuck", Armed: true}
 	case alive:
 		return Wake{Watch: "armed", Armed: true}
+	case !m.Stopped.IsZero() && !m.Stopped.Before(m.Watched):
+		return Wake{Watch: "stopped " + m.Stopped.In(zone).Format("15:04") + " (" + d.run("watch", "--due") + " arms it again)", Due: "its wake was stopped"}
 	case m.Posting.After(m.Watched) && m.Posting.After(m.Woken) && m.Posting.After(m.WakeFailed):
 		return Wake{Watch: "posting since " + m.Posting.In(zone).Format("15:04")}
 	case woken && m.Woken.After(m.LastAction):
@@ -478,6 +489,9 @@ func (d *Driver) row(b *batch.Batch, members []*batch.Member, label string, with
 	o, err := d.observe(b, members, label)
 	if err != nil {
 		r.State, r.Error = "gone", firstLine(err.Error())
+		if m := batch.Find(members, label); m != nil && gone(err) {
+			r.Next = d.reopen(m)
+		}
 		return r
 	}
 	r.Block, r.SID, r.State, r.For, r.Account = o.Session.Block, o.Session.ID, o.State(), d.now().Sub(o.Session.Since()), o.Session.Account

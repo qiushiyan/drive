@@ -68,6 +68,14 @@ func (r *Refused) Error() string {
 	return r.Reason + "\nnext: " + r.Next
 }
 
+// serverDown refuses an action that found Rex's server not running: nothing
+// was done, and drive never starts the server, which would hand every pane
+// it opens this process's environment.
+func serverDown(again string) *Refused {
+	return &Refused{Reason: "Rex's server is not running, so no session in it can be read or reached; drive never starts it",
+		Next: "tell the owner if they did not stop it, and run this again once it runs: " + again, cause: rex.ErrNoServer}
+}
+
 // explain splits an error into what happened and the next it gives.
 func explain(err error) (why, next string) {
 	if r, ok := errors.AsType[*Refused](err); ok {
@@ -365,13 +373,15 @@ func (d *Driver) observe(b *batch.Batch, members []*batch.Member, ref string) (*
 	}
 	o.Label, o.Member = label, batch.Find(members, label)
 	s, err := session.Locate(d.Term, d.Host, block)
-	if errors.Is(err, session.ErrNoClaude) {
+	switch {
+	case errors.Is(err, rex.ErrNoServer):
+		return nil, serverDown(d.again())
+	case errors.Is(err, session.ErrNoClaude):
 		return nil, &Refused{Reason: fmt.Sprintf("%s (block %s) has no Claude Code session running", o.Label, rex.Short(block)),
-			Next: "it may have exited; " + d.run("status") + " lists the sessions that are running"}
-	}
-	if err != nil {
+			Next: "it may have exited; " + d.run("status") + " lists the sessions that are running", cause: err}
+	case err != nil:
 		return nil, &Refused{Reason: fmt.Sprintf("%s (block %s) cannot be read: %v", o.Label, rex.Short(block), err),
-			Next: "the block may be gone; " + d.run("status") + " lists what is running"}
+			Next: "the block may be gone; " + d.run("status") + " lists what is running", cause: err}
 	}
 	o.Session = s
 	if o.Frontier, err = s.Frontier(); err != nil {
@@ -390,6 +400,9 @@ func (d *Driver) observe(b *batch.Batch, members []*batch.Member, ref string) (*
 
 func (d *Driver) findBlock(ref string) (string, error) {
 	blocks, err := d.Term.Blocks("")
+	if errors.Is(err, rex.ErrNoServer) {
+		return "", serverDown(d.again())
+	}
 	if err != nil {
 		return "", err
 	}

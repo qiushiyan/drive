@@ -1,0 +1,58 @@
+$ drive --driver session-driver status --quick --json
+exit 0
+--- stdout
+{
+  "batch": {
+    "name": "2026-10-28",
+    "driver": "session-driver",
+    "started": "2026-10-23T01:00:00Z",
+    "wake": "webhook",
+    "webhook": "session-driver",
+    "rex_session": "work",
+    "tz": "Europe/London"
+  },
+  "sessions": [
+    {
+      "label": "S1",
+      "sid": "",
+      "block": "",
+      "window": "",
+      "state": "gone",
+      "for_seconds": 0,
+      "account": "",
+      "input": "",
+      "stage": "",
+      "last_sent": "build it",
+      "watch": "ended without a wake (watches.log says why)",
+      "unhandled_wake": false,
+      "wake_due": "its watch ended without a wake",
+      "error": "S1 (block a00001) cannot be read: rex block: Error: block target \"block:00000000-0000-0000-0000-000000a00001\" not found",
+      "next": "bring it back under its label, its conversation resumed where it stopped: drive --batch 2026-10-28 open S1 --dir $ROOT/work --resume sid-1 --account acct@example.com",
+      "jobs": []
+    },
+    {
+      "label": "S2",
+      "sid": "",
+      "block": "",
+      "window": "",
+      "state": "gone",
+      "for_seconds": 0,
+      "account": "",
+      "input": "",
+      "stage": "",
+      "last_sent": "write the design",
+      "watch": "parked: waits for the owner's call on D2",
+      "unhandled_wake": false,
+      "error": "S2 (block a00002) cannot be read: rex block: Error: block target \"block:00000000-0000-0000-0000-000000a00002\" not found",
+      "next": "bring it back under its label, its conversation resumed where it stopped: drive --batch 2026-10-28 open S2 --dir $ROOT/work --resume sid-2 --account acct@example.com",
+      "jobs": []
+    }
+  ],
+  "closed": 0,
+  "others": [],
+  "holds": [],
+  "open_asks": [],
+  "grants": [],
+  "in_flight": []
+}
+--- stderr

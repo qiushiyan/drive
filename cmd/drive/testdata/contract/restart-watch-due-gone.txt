@@ -1,0 +1,7 @@
+$ drive --driver session-driver watch --due
+exit 0
+--- stdout
+no session needs its wake armed
+S1 is gone: bring it back under its label, its conversation resumed where it stopped: drive --batch 2026-10-28 open S1 --dir $ROOT/work --resume sid-1 --account acct@example.com
+S2 is gone: bring it back under its label, its conversation resumed where it stopped: drive --batch 2026-10-28 open S2 --dir $ROOT/work --resume sid-2 --account acct@example.com
+--- stderr

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/rex"
 	"github.com/qiushiyan/drive/internal/session"
 	"github.com/qiushiyan/drive/internal/turn"
@@ -48,6 +49,13 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 	misses := 0
 	for {
 		o, err := d.observe(b, members, ref)
+		if errors.Is(err, rex.ErrNoServer) {
+			// Rex's server is down, as while it restarts: whether the session
+			// outlived it is known once one runs again, which drive never starts.
+			misses = 0
+			d.sleep(5 * d.poll() / 2)
+			continue
+		}
 		if err != nil {
 			// One unreadable look is often Rex busy for a moment; three in a row is a session gone.
 			var r *Refused
@@ -58,8 +66,15 @@ func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 				d.sleep(d.poll())
 				continue
 			}
-			return &Ending{Label: ref, State: "gone", Msg: r.Reason,
-				Next: fmt.Sprintf("%s lists what runs; if %s still runs there, watch it again: %s", d.run("status"), ref, d.run("watch", ref))}, nil
+			e := &Ending{Label: ref, State: "gone", Msg: r.Reason,
+				Next: fmt.Sprintf("%s lists what runs; if %s still runs there, watch it again: %s", d.run("status"), ref, d.run("watch", ref))}
+			if m := batch.Find(members, ref); m != nil {
+				e.Block = m.Block
+				if gone(err) {
+					e.Next = d.reopen(m)
+				}
+			}
+			return e, nil
 		}
 		misses = 0
 		st := o.Session.Status

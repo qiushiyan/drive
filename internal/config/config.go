@@ -39,8 +39,9 @@ type Config struct {
 	LaunchEnv map[string]string `toml:"launch_env"`
 	// Notice is the text a session reads before the first step drive sends it.
 	Notice string `toml:"notice"`
-	// RexSession is where new batches open their sessions: $REX_SESSION when
-	// unset, and Rex's default when that is empty too.
+	// RexSession is where new batches open their sessions: the session drive
+	// runs in ($REX_SESSION, an id a batch records by its label) when unset,
+	// and Rex's default when that is empty too.
 	RexSession string `toml:"rex_session"`
 	// TZ is the zone times are shown in, such as "Europe/London"; empty is local.
 	TZ string `toml:"tz"`

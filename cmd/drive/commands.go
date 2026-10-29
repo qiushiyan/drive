@@ -79,8 +79,8 @@ sessions    a row per session in the batch; others, a row per Claude session out
             suggested line), stage, pr (number, state, draft, merge, review, passed, failed,
             pending), last_sent, watch (the WAKE column's words), unhandled_wake (a wake was
             posted and nothing done since), wake_due (why --due would arm its wake; left out
-            when nothing is due), view, error (why the row could not be read), jobs (started,
-            command)
+            when nothing is due), view, error (why the row could not be read), next (for a
+            session that is gone, the open that brings it back), jobs (started, command)
 closed      the batch's sessions closed since
 holds       a line per hold, as the table prints it
 open_asks   id, session, at, question, recommendation, if_unanswered
@@ -115,8 +115,9 @@ func (c *ReadCmd) Help() string {
 	return `
 Every mode prints what it read, then where the session stands, its goal as
 recorded, its view and next:; a session another driver drives says so, with
-no next:. A closed or gone session is read from its
-transcript as it ended, with no view, since there is nothing left to act on.`
+no next:. A closed or gone session is read from its transcript as it ended,
+with no view, since there is nothing left to act on; a gone one's next: is
+the open that brings it back.`
 }
 
 func (c *ReadCmd) HelpSections() []clikit.Section {
@@ -285,10 +286,12 @@ type OpenCmd struct {
 
 func (c *OpenCmd) Help() string {
 	return `
-The session opens in a new Rex block in the batch's Rex session and joins
-the batch under LABEL; the step, if given, is its first. --goal is what the
-owner reads the session is for; an open without it, such as a relaunch,
-keeps the goal LABEL already has.`
+The session opens in a new Rex block in the batch's Rex session, started
+again if it no longer runs, and joins the batch under LABEL; the step, if
+given, is its first. --goal is what the owner reads the session is for; an
+open without it, such as a relaunch, keeps the goal LABEL already has.
+Resuming LABEL's own session, as the next: for a gone one does, carries it
+on: its park stands until its next step, and so does what was sent to it.`
 }
 
 func (c *OpenCmd) HelpSections() []clikit.Section { return stepSections }
@@ -329,6 +332,7 @@ type WatchCmd struct {
 	runs
 	Session string `arg:"" optional:"" help:"The session whose wake to arm."`
 	Due     bool   `help:"Arm every session whose wakes stopped coming, and post once more a wake nobody acted on: a chat driver's watchdog in one command."`
+	StopAll bool   `name:"stop-all" help:"Before Rex's server restarts: stop the wake of every session in every live batch, whichever driver drives it. Timers run on."`
 }
 
 func (c *WatchCmd) Help() string {
@@ -338,17 +342,35 @@ session's wake: a post to the webhook the batch names, the URL= and AUTH=
 lines in ~/.config/drive/webhooks/DRIVER. It comes about a minute after the
 turn ends, at once on an API error or an interrupt, and when the session
 stops on a prompt, and ends with next: where the ending decides what to do.
-A refused action armed nothing. Watch arms one by hand.`
+A refused action armed nothing. Watch arms one by hand.
+
+A restart of Rex's server ends every session in it. Stop the wakes first
+with --stop-all, so none wakes its driver mid-restart; it prints the
+watch --due that arms each batch's again once the server runs.`
 }
 
 func (c *WatchCmd) Validate() error {
-	if (c.Session == "") == !c.Due {
-		return errors.New("give a SESSION or --due")
+	if n := btoi(c.Session != "") + btoi(c.Due) + btoi(c.StopAll); n != 1 {
+		return errors.New("give a SESSION, --due or --stop-all")
 	}
 	return nil
 }
 
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func (c *WatchCmd) act(ctx *kong.Context, d *drive.Driver) error {
+	if c.StopAll {
+		stopped, err := d.StopAll()
+		if err == nil || len(stopped) > 0 {
+			_, _ = io.WriteString(ctx.Stdout, drive.StoppedText(stopped))
+		}
+		return err
+	}
 	if !c.Due {
 		w, err := d.Watch(c.Session)
 		if err != nil {
@@ -701,7 +723,7 @@ type BatchNewCmd struct {
 	runs
 	Name       string `arg:"" help:"The batch's name, such as the date."`
 	Webhook    string `placeholder:"DRIVER" help:"Wake this chat driver by its webhook, the file ~/.config/drive/webhooks/DRIVER that the owner writes; DRIVER is also the driver's name. Without it, the driver waits itself."`
-	RexSession string `placeholder:"SESSION" help:"The Rex session new sessions open in, started if it is not running; defaults to the configuration's, then $REX_SESSION."`
+	RexSession string `placeholder:"SESSION" help:"The Rex session new sessions open in, recorded by its label and started whenever it is not running; defaults to the configuration's, then the one drive runs in."`
 	TZ         string `name:"tz" placeholder:"ZONE" help:"The zone drive prints the batch's times in, such as Europe/London; defaults to the configuration's, then the machine's."`
 	AfterWake  string `placeholder:"COMMAND" help:"A shell command to run after each wake is posted, such as archiving the chat it went to."`
 }

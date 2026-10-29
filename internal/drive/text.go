@@ -1,6 +1,7 @@
 package drive
 
 import (
+	"cmp"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -42,6 +43,9 @@ func (s *Sent) Text() string {
 // Text is what an open prints: the block it opened, then its first step.
 func (o *Opened) Text() string {
 	s := fmt.Sprintf("opened %s in block %s on account %s (session %s)\n", o.Label, rex.Short(o.Block), o.Account, o.Session)
+	if o.Parked != "" {
+		s += fmt.Sprintf("%s stays parked, so no wake comes until a step is sent to it: %s\n", o.Label, o.Parked)
+	}
 	if o.Sent != nil && o.Sent.Outcome != "" {
 		s += o.Sent.Text()
 	}
@@ -77,8 +81,36 @@ func (r Rearmed) Text() string {
 	return s
 }
 
-// LaterText is the line --due prints for a wake not due yet.
+// StoppedText is what watch --stop-all prints: what it stopped in each live
+// batch, and what to run in each once Rex's server runs again.
+func StoppedText(stopped []Stopped) string {
+	if len(stopped) == 0 {
+		return "no batch is live, so no wake was running\n"
+	}
+	var b strings.Builder
+	for _, s := range stopped {
+		driver := cmp.Or(batch.DriverOf(s.Batch.Meta), "of no name")
+		switch len(s.Labels) {
+		case 0:
+			fmt.Fprintf(&b, "batch %s, driver %s: no wake was armed\n", s.Batch.Meta.Name, driver)
+		default:
+			fmt.Fprintf(&b, "batch %s, driver %s: stopped the wakes of %s\n", s.Batch.Meta.Name, driver, strings.Join(s.Labels, ", "))
+		}
+	}
+	b.WriteString("timers run on: they never reach Rex\n")
+	b.WriteString("once Rex's server runs again, run in each batch what arms its wakes again and names the open that brings back each session that is gone:\n")
+	for _, s := range stopped {
+		fmt.Fprintf(&b, "  %s\n", s.Due)
+	}
+	return b.String()
+}
+
+// LaterText is the line --due prints for a wake not due yet, or a session
+// that is gone.
 func (r Rearmed) LaterText() string {
+	if r.Gone != "" {
+		return fmt.Sprintf("%s is gone: %s\n", r.Label, r.Gone)
+	}
 	return fmt.Sprintf("%s is %s: a run that acts on it first makes that moot\n", r.Label, r.Why)
 }
 
@@ -160,6 +192,9 @@ func (st *Status) Text(now time.Time) string {
 		b.WriteString(st.NoGoal + "\n")
 	}
 	for _, r := range st.Rows {
+		if r.Next != "" {
+			fmt.Fprintf(&b, "%s is gone: %s\n", r.Label, r.Next)
+		}
 		if r.Input == "typed" {
 			fmt.Fprintf(&b, "%s's input box holds typed text nobody sent: %q\n", r.Label, r.Typed)
 		}
@@ -335,6 +370,8 @@ func describe(e batch.Event) string {
 		return e.Goal
 	case batch.KindRefused, batch.KindFailure, batch.KindPark:
 		return clip(e.Reason, 140)
+	case batch.KindWakeStop:
+		return "stopped by watch --stop-all"
 	}
 	return clip(e.Note+" "+e.Reason, 140)
 }

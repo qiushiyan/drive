@@ -461,7 +461,7 @@ func TestABatchStartRefusesBeforeItsFirstEffect(t *testing.T) {
 	if _, err := r.d.StartBatch(drive.BatchOptions{Name: "b1", Wake: "none", RexSession: "fresh"}); !isRefused(err) {
 		t.Fatalf("a taken name is refused: %v", err)
 	}
-	if started, _ := r.w.EnsureSession("fresh"); !started {
+	if _, started, _ := r.w.EnsureSession("fresh"); !started {
 		t.Fatal("the refused start started its Rex session")
 	}
 	if _, _, err := r.d.Store.New(batch.Meta{Name: "b2", Started: r.w.Clock.Now(), Wake: "none"}); err != nil {

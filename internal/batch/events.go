@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -10,15 +11,16 @@ import (
 // Event kinds.
 const (
 	KindBatch      = "batch"
-	KindOpenIntent = "open-intent" // a session is being opened under this label
-	KindOpen       = "open"        // it opened: its block, account, directory
-	KindAdopt      = "adopt"       // a session drive did not open joined the batch
-	KindSendIntent = "send-intent" // recorded before typing, so a crash leaves a trace
-	KindSend       = "send"        // a send that reached its session, or may have: Outcome arrived, queued, recovered, garbled, other (something else came) or unknown
-	KindRespond    = "respond"     // approve, deny or interrupt
-	KindWatch      = "watch"       // a wake was armed
-	KindPosting    = "posting"     // a watch began posting its wake
-	KindWake       = "wake"        // a wake was posted (HTTP set) or failed (Reason set)
+	KindOpenIntent = "open-intent"  // a session is being opened under this label
+	KindOpen       = "open"         // it opened: its block, account, directory
+	KindAdopt      = "adopt"        // a session drive did not open joined the batch
+	KindSendIntent = "send-intent"  // recorded before typing, so a crash leaves a trace
+	KindSend       = "send"         // a send that reached its session, or may have: Outcome arrived, queued, recovered, garbled, other (something else came) or unknown
+	KindRespond    = "respond"      // approve, deny or interrupt
+	KindWatch      = "watch"        // a wake was armed
+	KindWakeStop   = "wake-stopped" // a wake was stopped, as before Rex's server restarts
+	KindPosting    = "posting"      // a watch began posting its wake
+	KindWake       = "wake"         // a wake was posted (HTTP set) or failed (Reason set)
 	KindPark       = "park"
 	KindClose      = "close"
 	KindRefused    = "refused" // an action drive would not take, and why
@@ -92,6 +94,7 @@ type Member struct {
 	// arrived, queued or recovered. One left unknown or garbled may not have.
 	Noticed    bool
 	Watched    time.Time // when its wake was last armed
+	Stopped    time.Time // when its wake was last stopped by watch --stop-all
 	Posting    time.Time // when a watch last began posting
 	Woken      time.Time // when its wake was last posted
 	WokenView  string    // the view that wake carried
@@ -125,6 +128,13 @@ func Members(evs []Event) []*Member {
 			}
 			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Joined: e.At, Resumed: read[e.Ref]}
 			if old, ok := by[e.Session]; ok {
+				if e.Ref != "" && e.Ref == old.SID {
+					// Its own conversation resumed in a new block, as after Rex
+					// restarted: what its driver did with it stands, its park
+					// among it. Its wake is the new block's.
+					m.SID = cmp.Or(m.SID, old.SID)
+					m.Parked, m.ParkedAt, m.LastAction, m.LastSend, m.Noticed = old.Parked, old.ParkedAt, old.LastAction, old.LastSend, old.Noticed
+				}
 				*old = *m // reopened under the same label
 				m = old
 			} else {
@@ -153,6 +163,10 @@ func Members(evs []Event) []*Member {
 		case KindWatch:
 			if m != nil {
 				m.Watched = e.At
+			}
+		case KindWakeStop:
+			if m != nil {
+				m.Stopped = e.At
 			}
 		case KindPosting:
 			if m != nil {

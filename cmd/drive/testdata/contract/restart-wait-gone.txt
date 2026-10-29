@@ -1,0 +1,7 @@
+$ drive --driver session-driver wait S1
+exit 0
+--- stdout
+S1 (a00001): its session is gone
+why: S1 (block a00001) cannot be read: rex block: Error: block target "block:00000000-0000-0000-0000-000000a00001" not found
+next: bring it back under its label, its conversation resumed where it stopped: drive --batch 2026-10-28 open S1 --dir $ROOT/work --resume sid-1 --account acct@example.com
+--- stderr

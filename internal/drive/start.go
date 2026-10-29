@@ -10,6 +10,7 @@ import (
 
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/config"
+	"github.com/qiushiyan/drive/internal/rex"
 )
 
 // Started reports a batch that started.
@@ -113,12 +114,18 @@ func (d *Driver) StartBatch(opt BatchOptions) (*Started, error) {
 		}
 	}
 	if m.RexSession != "" {
-		started, err := d.Term.EnsureSession(m.RexSession)
-		if err != nil {
+		// Recorded by its label: an id, as $REX_SESSION gives it, dies with
+		// Rex's server, and a batch's sessions reopen under the label after
+		// a restart.
+		label, started, err := d.Term.EnsureSession(m.RexSession)
+		switch {
+		case errors.Is(err, rex.ErrNoServer):
+			return nil, serverDown(again)
+		case err != nil:
 			return nil, &Refused{Reason: fmt.Sprintf("Rex session %s could not be started: %v", m.RexSession, err),
 				Next: "try it again: " + again}
 		}
-		out.RexStarted = started
+		m.RexSession, out.RexStarted = label, started
 	}
 	b, prev, err := d.Store.New(m)
 	if err != nil {

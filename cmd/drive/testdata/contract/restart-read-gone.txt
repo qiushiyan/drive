@@ -1,0 +1,8 @@
+$ drive --driver session-driver read S2
+exit 0
+--- stdout
+ok
+
+S2 is gone on account acct@example.com (session sid-2)
+next: bring it back under its label, its conversation resumed where it stopped: drive --batch 2026-10-28 open S2 --dir $ROOT/work --resume sid-2 --account acct@example.com
+--- stderr

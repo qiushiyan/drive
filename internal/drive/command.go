@@ -25,6 +25,10 @@ func (d *Driver) run(words ...any) string {
 	return "drive " + join(words...)
 }
 
+// again is this run's own command, as its driver ran it, in its batch: what
+// to run once whatever stopped it has passed.
+func (d *Driver) again() string { return d.run(lineWords(d.Line)...) }
+
 // runIn is run for batch name, or for no batch when name is "".
 func (d *Driver) runIn(name string, words ...any) string {
 	if name == "" {

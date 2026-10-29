@@ -139,14 +139,16 @@ type Rearmed struct {
 	Why      string
 	Failures int       // times its watch ended without a wake in this batch
 	Again    time.Time // for a wake nobody acted on that is not due yet: when it is
+	Gone     string    // for a session that is gone: how to bring it back
 }
 
 // Due arms the wake of every session in a webhook batch that has none and
 // needs one: never watched, acted on with no wake armed, a watch that ended
-// without a wake or is stuck, a wake nothing was done about (once per view),
-// a parked session waiting for a hold that is free. It is a chat driver's
-// watchdog in one command. later are the wakes nobody acted on that it posts
-// again on a later run, with when.
+// without a wake, was stopped or is stuck, a wake nothing was done about
+// (once per view), a parked session waiting for a hold that is free. It is a
+// chat driver's watchdog in one command. later are the wakes nobody acted on
+// that it posts again on a later run, with when, and the sessions that are
+// gone, with the open that brings each back and arms its wake.
 func (d *Driver) Due() (armed, later []Rearmed, err error) {
 	b, err := d.Batch()
 	if err != nil {
@@ -168,6 +170,9 @@ func (d *Driver) Due() (armed, later []Rearmed, err error) {
 		if !r.Again.IsZero() {
 			later = append(later, Rearmed{Label: r.Label, Why: r.Watch, Again: r.Again})
 		}
+		if r.Next != "" {
+			later = append(later, Rearmed{Label: r.Label, Gone: r.Next})
+		}
 		if r.Due == "" || r.Error != "" {
 			continue
 		}
@@ -188,6 +193,45 @@ func (d *Driver) Due() (armed, later []Rearmed, err error) {
 		out = append(out, Rearmed{Label: r.Label, Why: r.Due, Failures: n})
 	}
 	return out, later, nil
+}
+
+// Stopped is a live batch whose wakes StopAll stopped, by its sessions' labels.
+type Stopped struct {
+	Batch  *batch.Batch
+	Labels []string
+	Due    string // the watch --due that arms them again
+}
+
+// StopAll stops the wake of every session in every live batch, whichever
+// driver drives it, before Rex's server restarts: a watch that meets the
+// restart wakes its driver about sessions the owner is bringing back. Timers
+// run on, as they never reach Rex. watch --due in each batch arms the wakes
+// again once a server runs.
+func (d *Driver) StopAll() ([]Stopped, error) {
+	live, err := d.Store.Live()
+	if err != nil || d.Watches == nil {
+		return nil, err
+	}
+	var out []Stopped
+	for _, b := range live {
+		evs, err := b.Events()
+		if err != nil {
+			return out, err
+		}
+		s := Stopped{Batch: b, Due: d.runIn(b.Meta.Name, "watch", "--due")}
+		for _, m := range batch.Members(evs) {
+			if name := watchName(b, m.Block); !m.Closed && d.Watches.Alive(name) {
+				if err := d.Watches.Stop(name); err != nil {
+					return out, &Failed{What: fmt.Sprintf("stopped the wakes above, then %s's in batch %s did not stop: %v", m.Label, b.Meta.Name, err),
+						Next: "try it again: " + d.runIn("", "watch", "--stop-all")}
+				}
+				_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindWakeStop, Session: m.Label, Block: m.Block})
+				s.Labels = append(s.Labels, m.Label)
+			}
+		}
+		out = append(out, s)
+	}
+	return out, nil
 }
 
 // StopWatches stops a batch's watches and timers once another batch has

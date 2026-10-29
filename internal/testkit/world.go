@@ -6,6 +6,9 @@
 // blocked through an approved command until its PostToolUse, reads done
 // through a queued turn, hears nothing of a /compact, a deny or an
 // interrupt, and can be told of a held message the session does not show.
+// Its server can be down, when every call fails and none starts it, and can
+// restart, ending every block and Rex session; a session resumed after its
+// turn was cut short there finds "No response requested." in its place.
 // A slash command typed while busy is queued without its text, one behind
 // spaces is words, an expired login answers with an API error and no Stop,
 // typing can lose a line's head, which comes back as a line break, and a
@@ -51,8 +54,12 @@ type World struct {
 	// BlocksFail makes the next listings of Rex's blocks fail, as they do
 	// while the Rex server is down.
 	BlocksFail int
-	sessions   map[string]bool // Rex sessions by label
-	closed     []*Claude       // sessions whose blocks were closed: their transcripts remain
+	// Down counts the next calls to Rex that find its server not running, as
+	// while it restarts: each fails, and none starts it.
+	Down     int
+	sessions map[string]int  // Rex sessions by label, how many have it: Rex lets two share one
+	cut      map[string]bool // sessions whose turn a restart cut short, by id
+	closed   []*Claude       // sessions whose blocks were closed: their transcripts remain
 	// Primary is the name the owner's shell gives the primary account's
 	// launcher: x-<Primary> starts a session under ~/.claude, which its
 	// session reports as account "primary".
@@ -82,6 +89,7 @@ type Claude struct {
 	Msg     string
 	Updated time.Time
 	Running bool
+	Rex     string // the Rex session its block is in
 	// What Claude Code's own registry says: idle, busy or waiting. It moves
 	// the moment the session does; Rex moves only when a hook fires.
 	Activity   string
@@ -144,7 +152,7 @@ func (w *World) add(label, cwd, account string) *Claude {
 		config = filepath.Join(w.Root, ".claude")
 	}
 	c := &Claude{w: w, Block: id, Label: label, PID: w.nextPID, SID: fmt.Sprintf("sid-%d", w.seq),
-		Config: config, Cwd: cwd,
+		Config: config, Cwd: cwd, Rex: "work",
 		State: "idle", Updated: w.now(), Running: true,
 		Activity: "idle", ActivityAt: w.now(), ProcStart: w.now().UTC().Format("Mon Jan _2 15:04:05 2006")}
 	_ = os.MkdirAll(cwd, 0o755)
@@ -370,12 +378,79 @@ func (c *Claude) Seen() (typed, keys []string) {
 
 // --- rex.Terminal ---
 
+// rexError is a rex call that failed as the CLI's does: its message, and
+// the kind drive tells apart.
+type rexError struct {
+	msg  string
+	kind error
+}
+
+func (e *rexError) Error() string { return e.msg }
+func (e *rexError) Unwrap() error { return e.kind }
+
+// down is a call with no server to answer it, the error rex prints.
+func down(cmd string) error {
+	return &rexError{"rex " + cmd + ": Error: rex server is not running", rex.ErrNoServer}
+}
+
+// isDown says whether a call finds no server, counting it; the world's lock is held.
+func (w *World) isDown() bool {
+	if w.Down > 0 {
+		w.Down--
+		return true
+	}
+	return false
+}
+
+// rexSessions is the Rex sessions that run, "work" until a restart.
+func (w *World) rexSessions() map[string]int {
+	if w.sessions == nil {
+		w.sessions = map[string]int{"work": 1}
+	}
+	return w.sessions
+}
+
+func noBlock(cmd, block string) error {
+	return &rexError{fmt.Sprintf("rex %s: Error: block target %q not found", cmd, block), rex.ErrNoBlock}
+}
+
+func (w *World) noSession(cmd, label string) error {
+	if label == "" || w.rexSessions()[label] > 0 {
+		return nil
+	}
+	return &rexError{fmt.Sprintf("rex %s: Error: session target %q not found", cmd, label), rex.ErrNoSession}
+}
+
+// Restart is Rex's server restarting: every block ends with the Claude
+// Code in it, its transcript left on disk, and every Rex session with it. A
+// session that was mid-turn is cut short.
+func (w *World) Restart() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.cut == nil {
+		w.cut = map[string]bool{}
+	}
+	for _, id := range w.order {
+		if c, ok := w.blocks[id]; ok {
+			if c.Activity == "busy" {
+				w.cut[c.SID] = true
+			}
+			w.closed = append(w.closed, c)
+			delete(w.blocks, id)
+		}
+	}
+	w.sessions = map[string]int{}
+}
+
 func (w *World) Status(block string) (*rex.Status, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.isDown() {
+		return nil, down("block")
+	}
 	c, ok := w.blocks[block]
 	if !ok {
-		return nil, fmt.Errorf("rex block call: no block %s", block)
+		return nil, noBlock("block", block)
 	}
 	if w.StatusFails > 0 {
 		w.StatusFails--
@@ -387,9 +462,15 @@ func (w *World) Status(block string) (*rex.Status, error) {
 	return &rex.Status{State: c.State, Kind: c.Kind, Msg: c.Msg, UpdatedAt: c.Updated, PID: c.PID}, nil
 }
 
-func (w *World) Blocks(string) ([]rex.Block, error) {
+func (w *World) Blocks(session string) ([]rex.Block, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.isDown() {
+		return nil, down("block")
+	}
+	if err := w.noSession("block", session); err != nil {
+		return nil, err
+	}
 	if w.BlocksFail > 0 {
 		w.BlocksFail--
 		return nil, fmt.Errorf("rex block list: connection refused")
@@ -397,7 +478,7 @@ func (w *World) Blocks(string) ([]rex.Block, error) {
 	var out []rex.Block
 	for i, id := range w.order {
 		if c, ok := w.blocks[id]; ok {
-			out = append(out, rex.Block{ID: id, Label: c.Label, Window: fmt.Sprint(i + 1), Session: "work"})
+			out = append(out, rex.Block{ID: id, Label: c.Label, Window: fmt.Sprint(i + 1), Session: c.Rex})
 		}
 	}
 	return out, nil
@@ -413,9 +494,12 @@ func (w *World) Capture(block string, vt bool) (string, error) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.isDown() {
+		return "", down("capture")
+	}
 	c, ok := w.blocks[block]
 	if !ok {
-		return "", fmt.Errorf("no block")
+		return "", noBlock("capture", block)
 	}
 	switch {
 	case c.Screen != "":
@@ -458,6 +542,9 @@ func (w *World) Type(block, text string) error {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.isDown() {
+		return down("send")
+	}
 	if !ok {
 		return fmt.Errorf("no block")
 	}
@@ -486,6 +573,10 @@ func (w *World) Type(block, text string) error {
 
 func (w *World) Key(block string, keys ...string) error {
 	w.mu.Lock()
+	if w.isDown() {
+		w.mu.Unlock()
+		return down("send-key")
+	}
 	c, ok := w.blocks[block]
 	if !ok {
 		w.mu.Unlock()
@@ -609,10 +700,34 @@ func (w *World) Key(block string, keys ...string) error {
 }
 
 // Run opens a block running Claude Code. A --resume carries on the session
-// it names, in the same transcript, as accounts share one projects directory.
+// it names, in the same transcript, as accounts share one projects
+// directory; one whose turn a restart cut short reads "No response
+// requested." there, as Claude Code 2.1.312 writes on resuming it.
 func (w *World) Run(o rex.Open) (string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.isDown() {
+		return "", down("run")
+	}
+	if err := w.noSession("run", o.Session); err != nil {
+		return "", err
+	}
+	return w.open(o), nil
+}
+
+// New starts a Rex session with the block as its first. Like Rex, it
+// starts one under a label another session has.
+func (w *World) New(o rex.Open) (string, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.isDown() {
+		return "", down("new")
+	}
+	w.rexSessions()[o.Session]++
+	return w.open(o), nil
+}
+
+func (w *World) open(o rex.Open) string {
 	account := "acct@example.com"
 	for f := range strings.FieldsSeq(strings.Join(o.Command, " ")) {
 		if after, ok := strings.CutPrefix(f, "x-"); ok {
@@ -620,32 +735,54 @@ func (w *World) Run(o rex.Open) (string, error) {
 		}
 	}
 	c := w.add(o.Label, o.Dir, account)
+	if o.Session != "" {
+		c.Rex = o.Session
+	}
 	if cmd := strings.Join(o.Command, " "); strings.Contains(cmd, "--resume ") {
 		id := strings.Fields(strings.SplitN(cmd, "--resume ", 2)[1])[0]
 		c.SID = strings.Trim(strings.TrimSuffix(id, ";"), "'")
 		_ = os.WriteFile(filepath.Join(c.Config, "sessions", fmt.Sprint(c.PID)+".json"),
 			[]byte(fmt.Sprintf(`{"sessionId":%q}`, c.SID)), 0o644)
+		if w.cut[c.SID] {
+			delete(w.cut, c.SID)
+			c.Write(map[string]any{"type": "assistant", "uuid": w.uuid(), "message": map[string]any{"role": "assistant",
+				"model": "<synthetic>", "stop_reason": "stop_sequence", "content": []map[string]any{{"type": "text", "text": "No response requested."}}}})
+		}
 	}
-	return c.Block, nil
+	return c.Block
 }
 
-// EnsureSession records the Rex sessions a test's batches start in.
-func (w *World) EnsureSession(label string) (bool, error) {
+// RexSessions says how many Rex sessions run under label.
+func (w *World) RexSessions(label string) int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.sessions == nil {
-		w.sessions = map[string]bool{"work": true}
+	return w.rexSessions()[label]
+}
+
+// EnsureSession records the Rex sessions a test's batches start in. An id
+// names none: the fake's sessions have only labels.
+func (w *World) EnsureSession(ref string) (string, bool, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.isDown() {
+		return "", false, down("session")
 	}
-	if w.sessions[label] {
-		return false, nil
+	if rex.IsSessionID(ref) {
+		return "", false, fmt.Errorf("no Rex session has id %s: %w", ref, rex.ErrNoSession)
 	}
-	w.sessions[label] = true
-	return true, nil
+	if w.rexSessions()[ref] > 0 {
+		return ref, false, nil
+	}
+	w.rexSessions()[ref] = 1
+	return ref, true, nil
 }
 
 func (w *World) Close(block string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.isDown() {
+		return down("block")
+	}
 	c, ok := w.blocks[block]
 	if !ok {
 		return fmt.Errorf("no block")

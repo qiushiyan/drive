@@ -2,10 +2,12 @@ Usage: drive open <label> [<line> ...] [flags]
 
 Open a new Claude Code session in Rex, in the batch, with an optional first step.
 
-The session opens in a new Rex block in the batch's Rex session and joins
-the batch under LABEL; the step, if given, is its first. --goal is what the
-owner reads the session is for; an open without it, such as a relaunch,
-keeps the goal LABEL already has.
+The session opens in a new Rex block in the batch's Rex session, started
+again if it no longer runs, and joins the batch under LABEL; the step, if
+given, is its first. --goal is what the owner reads the session is for; an
+open without it, such as a relaunch, keeps the goal LABEL already has.
+Resuming LABEL's own session, as the next: for a gone one does, carries it
+on: its park stands until its next step, and so does what was sent to it.
 
 Arguments:
   <label>               The label the new session gets in the batch.

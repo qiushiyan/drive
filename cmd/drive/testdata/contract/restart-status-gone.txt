@@ -1,0 +1,12 @@
+$ drive --driver session-driver status --quick
+exit 0
+--- stdout
+batch 2026-10-28 · driver session-driver · wakes: webhook · Rex session work · times Europe/London (BST, UTC+01:00)
+SESSION  WIN  BLOCK  STATE  FOR  INPUT  STAGE  PR  LAST SENT         WAKE                                         VIEW
+S1       -           gone                          build it          ended without a wake (watches.log says why)  S1 (block a00001) cannot be read: rex block: Error: block target "block:00000000-0000-0000-0000-000000a00001" not found
+S2       -           gone                          write the design  parked: waits for the owner's call on D2     S2 (block a00002) cannot be read: rex block: Error: block target "block:00000000-0000-0000-0000-000000a00002" not found
+no goal recorded for S1, S2; the owner's page shows each session's goal: drive --batch 2026-10-28 record goal S1 '…'
+S1 is gone: bring it back under its label, its conversation resumed where it stopped: drive --batch 2026-10-28 open S1 --dir $ROOT/work --resume sid-1 --account acct@example.com
+S2 is gone: bring it back under its label, its conversation resumed where it stopped: drive --batch 2026-10-28 open S2 --dir $ROOT/work --resume sid-2 --account acct@example.com
+what each watch printed: $HOME/state/batches/2026-10-28/watches.log
+--- stderr

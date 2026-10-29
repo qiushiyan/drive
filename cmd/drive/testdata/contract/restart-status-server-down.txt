@@ -1,0 +1,6 @@
+$ drive --driver session-driver status --quick
+exit 1
+--- stdout
+--- stderr
+drive: error: Rex's server is not running, so no session in it can be read or reached; drive never starts it
+next: tell the owner if they did not stop it, and run this again once it runs: drive --batch 2026-10-28 status --quick

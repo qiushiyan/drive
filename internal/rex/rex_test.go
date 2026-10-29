@@ -2,6 +2,7 @@ package rex
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +41,16 @@ func TestCLIAgainstAPrivateServer(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	_ = os.MkdirAll(filepath.Join(home, ".config/rex"), 0o755)
 
+	// With no server running, a call fails and starts none: a server takes
+	// the caller's environment into every pane it opens.
+	c := CLI{Bin: bin}
+	if _, err := c.Blocks(""); !errors.Is(err, ErrNoServer) {
+		t.Fatalf("a call with no server says so: %v", err)
+	}
+	if exec.Command(bin, "--autostart=false", "server", "status").Run() == nil {
+		t.Fatal("a call started a server")
+	}
+
 	server := exec.Command(bin, "--autostart=false", "server", "run")
 	server.Dir = home
 	if err := server.Start(); err != nil {
@@ -70,7 +81,6 @@ func TestCLIAgainstAPrivateServer(t *testing.T) {
 	}
 	block := created.Windows[0].Blocks[0]
 
-	c := CLI{Bin: bin}
 	blocks, err := c.Blocks("drive-test")
 	if err != nil || len(blocks) != 1 || blocks[0].ID != block || blocks[0].Window == "" {
 		t.Fatalf("blocks: %+v %v", blocks, err)
@@ -118,6 +128,54 @@ func TestCLIAgainstAPrivateServer(t *testing.T) {
 	if _, err := c.Status(opened); err == nil {
 		t.Fatal("a closed block reads as an error")
 	}
+
+	// Run from a pane in another session, whose variables scope the rex
+	// CLI's lookups to that pane, drive still finds its blocks.
+	other, err := c.New(Open{Session: "elsewhere", Dir: home, Label: "pane", Command: []string{"/bin/sh"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocks, _ := c.Blocks("elsewhere"); len(blocks) != 1 || blocks[0].ID != other || blocks[0].Label != "pane" {
+		t.Fatalf("a new session's first block is the one asked for, under its label: %+v", blocks)
+	}
+	label, started, err := c.EnsureSession(sessionOf(t, bin, "elsewhere"))
+	if err != nil || started || label != "elsewhere" {
+		t.Fatalf("a session's id resolves to its label: %q %v %v", label, started, err)
+	}
+	t.Setenv("REX_SESSION", sessionOf(t, bin, "elsewhere"))
+	t.Setenv("REX_BLOCK", other)
+	if _, err := c.Capture(block, false); err != nil {
+		t.Fatalf("a block in another session than the pane's: %v", err)
+	}
+	if _, err := c.Run(Open{Session: "gone", Dir: home, Label: "x", Command: []string{"/bin/sh"}}); !errors.Is(err, ErrNoSession) {
+		t.Fatalf("a session that does not run: %v", err)
+	}
+	if _, _, err := c.EnsureSession("session:01a00000-0000-7000-8000-000000000000"); !errors.Is(err, ErrNoSession) {
+		t.Fatalf("an id names only a session that runs: %v", err)
+	}
+}
+
+// sessionOf is the id of the Rex session label.
+func sessionOf(t *testing.T, bin, label string) string {
+	t.Helper()
+	out, err := exec.Command(bin, "--autostart=false", "session", "ls", "--json").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ls struct {
+		Sessions []struct {
+			ID    string `json:"session_id"`
+			Label string `json:"label"`
+		} `json:"sessions"`
+	}
+	_ = json.Unmarshal(out, &ls)
+	for _, s := range ls.Sessions {
+		if s.Label == label {
+			return s.ID
+		}
+	}
+	t.Fatalf("no session %s: %s", label, out)
+	return ""
 }
 
 func eventually(t *testing.T, what string, ok func() bool) {
