@@ -41,6 +41,37 @@ func TestStepsListsEveryPullRequestTheSessionLinked(t *testing.T) {
 	}
 }
 
+// Every stage the configuration names comes back in its order, the ones the
+// session has no step under among them, and the newest is its stage.
+func TestStepsListsEveryStageInTheConfigurationsOrder(t *testing.T) {
+	bin := t.TempDir()
+	out := `{"branch":"b","labels":[{"name":"onboard","latest":{"at":"2026-10-28T16:59:46Z"}},{"name":"spec","latest":null},` +
+		`{"name":"build","latest":{"at":"2026-10-29T11:46:53Z"}},{"name":"verify","latest":{"at":"2026-10-29T12:57:51Z"}},{"name":"docs"}],` +
+		`"pull_requests":[],"events":[]}`
+	shim := "#!/bin/sh\necho '" + out + "'\n"
+	if err := os.WriteFile(filepath.Join(bin, "claude-steps"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	s, err := Tools{}.Steps("s-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, l := range s.Labels {
+		names = append(names, l.Name)
+	}
+	if strings.Join(names, ",") != "onboard,spec,build,verify,docs" {
+		t.Fatalf("every stage, in the configuration's order: %v", names)
+	}
+	if !s.Labels[1].At.IsZero() || !s.Labels[4].At.IsZero() || s.Labels[2].At.IsZero() {
+		t.Fatalf("a stage with no step has no time: %+v", s.Labels)
+	}
+	if s.Stage != "verify" || !s.StageAt.Equal(s.Labels[3].At) {
+		t.Fatalf("the newest step's stage is the session's: %s %v", s.Stage, s.StageAt)
+	}
+}
+
 // gwt exits 1 when one branch cannot be judged, such as one already
 // removed, and still prints its verdict on the rest.
 func TestLandedReadsVerdictsWhenOneBranchCannotBeJudged(t *testing.T) {

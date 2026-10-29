@@ -19,12 +19,22 @@ import (
 type Steps struct {
 	Stage   string    // the label whose latest step is newest, such as "review"
 	StageAt time.Time // when that step happened
-	Branch  string
-	PR      *PRRef  // the newest pull request the session opened or named
-	PRs     []PRRef // every one it opened or named, each once, in the order first named
+	// Labels are every stage the configuration names, in its order, each
+	// with when its newest step was taken: zero for one the session has no
+	// step under.
+	Labels []Label
+	Branch string
+	PR     *PRRef  // the newest pull request the session opened or named
+	PRs    []PRRef // every one it opened or named, each once, in the order first named
 	// Commits are the commits the session made, oldest first, each in the
 	// checkout it was made in: its worktree, however it reached it.
 	Commits []Commit
+}
+
+// Label is a stage and when the session's newest step under it was taken.
+type Label struct {
+	Name string
+	At   time.Time
 }
 
 // Commit is a commit a session made, as its transcript shows it.
@@ -227,8 +237,13 @@ func (Tools) Steps(id string) (Steps, error) {
 	}
 	sort.SliceStable(s.Commits, func(i, j int) bool { return s.Commits[i].At.Before(s.Commits[j].At) })
 	for _, l := range v.Labels {
-		if l.Latest != nil && l.Latest.At.After(s.StageAt) {
-			s.Stage, s.StageAt = l.Name, l.Latest.At
+		label := Label{Name: l.Name}
+		if l.Latest != nil {
+			label.At = l.Latest.At
+		}
+		s.Labels = append(s.Labels, label)
+		if label.At.After(s.StageAt) {
+			s.Stage, s.StageAt = label.Name, label.At
 		}
 	}
 	var newest time.Time
