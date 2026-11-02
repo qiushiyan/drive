@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -90,6 +91,7 @@ type Claude struct {
 	Updated time.Time
 	Running bool
 	Rex     string // the Rex session its block is in
+	Front   string // the program in front of the block's shell, when Claude Code is not
 	// What Claude Code's own registry says: idle, busy or waiting. It moves
 	// the moment the session does; Rex moves only when a hook fires.
 	Activity   string
@@ -442,6 +444,68 @@ func (w *World) Restart() {
 	w.sessions = map[string]int{}
 }
 
+// Restore is a restart of a Rex server that saves its sessions: every Rex
+// session, block id and label comes back, but a block holds a plain shell
+// where its program ran, and Rex keeps no record of what that program
+// reported. Each conversation's transcript stands.
+func (w *World) Restore() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.cut == nil {
+		w.cut = map[string]bool{}
+	}
+	for _, id := range w.order {
+		if c, ok := w.blocks[id]; ok {
+			if c.Activity == "busy" {
+				w.cut[c.SID] = true
+			}
+			c.Running, c.Input = false, ""
+		}
+	}
+}
+
+// BackInBlock is Claude Code coming back in a restored block: its shell's
+// launcher resuming the conversation, as rex-resume enters it.
+func (w *World) BackInBlock(block string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.resumeIn(w.blocks[block], w.blocks[block].SID)
+}
+
+// resumeIn runs the conversation SID in c's block.
+func (w *World) resumeIn(c *Claude, sid string) {
+	c.SID, c.Running, c.Input = sid, true, ""
+	c.State, c.Activity, c.Kind, c.Msg = "idle", "idle", "", ""
+	_ = os.WriteFile(filepath.Join(c.Config, "sessions", fmt.Sprint(c.PID)+".json"),
+		[]byte(fmt.Sprintf(`{"sessionId":%q}`, c.SID)), 0o644)
+	if w.cut[c.SID] {
+		delete(w.cut, c.SID)
+		c.Write(map[string]any{"type": "assistant", "uuid": w.uuid(), "message": map[string]any{"role": "assistant",
+			"model": "<synthetic>", "stop_reason": "stop_sequence", "content": []map[string]any{{"type": "text", "text": "No response requested."}}}})
+	}
+}
+
+// Foreground names the program in front in a block: a shell where Claude Code
+// no longer runs, unless c.Front says another program is.
+func (w *World) Foreground(block string) (string, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.isDown() {
+		return "", down("block")
+	}
+	c, ok := w.blocks[block]
+	if !ok {
+		return "", noBlock("block", block)
+	}
+	switch {
+	case c.Front != "":
+		return c.Front, nil
+	case c.Running:
+		return "2.1.312", nil
+	}
+	return "zsh", nil
+}
+
 func (w *World) Status(block string) (*rex.Status, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -586,6 +650,18 @@ func (w *World) Key(block string, keys ...string) error {
 		w.KeyFails--
 		w.mu.Unlock()
 		return fmt.Errorf("rex send-key: connection refused")
+	}
+	if !c.Running {
+		// A shell: enter runs the line typed at it.
+		c.Keys = append(c.Keys, keys...)
+		if slices.Contains(keys, "enter") && c.Front == "" {
+			if _, after, ok := strings.Cut(c.Input, "--resume "); ok {
+				w.resumeIn(c, strings.Trim(strings.Fields(after)[0], "'"))
+			}
+			c.Input = ""
+		}
+		w.mu.Unlock()
+		return nil
 	}
 	var taken []string
 	compact, interrupted := false, false

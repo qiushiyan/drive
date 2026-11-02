@@ -87,6 +87,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		}
 	}
 	intent := newIntent()
+	var own *batch.Member // the label's session, whose conversation this open may bring back
 	err = b.Locked(func(evs []batch.Event) error {
 		if err := d.settleOpen(b, evs, label); err != nil {
 			return err
@@ -95,6 +96,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 			return err
 		}
 		if m := batch.Find(batch.Members(evs), label); m != nil && !m.Closed {
+			own = m
 			if st, err := d.Term.Status(m.Block); err == nil && st != nil {
 				return &Refused{Reason: fmt.Sprintf("%s is already open as block %s (since %s)", label, rex.Short(m.Block), m.Joined.In(b.Zone()).Format("15:04")),
 					Next: "send to it instead: " + d.run("read", label)}
@@ -113,7 +115,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return nil, unsent(err, whole)
 	}
 
-	block, err = d.openBlock(rex.Open{Session: b.Meta.RexSession, Dir: opt.Dir, Label: label, Command: d.launch(opt)})
+	block, err = d.placeBlock(own, opt, rex.Open{Session: b.Meta.RexSession, Dir: opt.Dir, Label: label, Command: d.launch(opt)})
 	if err != nil {
 		f := &Failed{What: fmt.Sprintf("Rex did not open a block for %s: %v", label, err),
 			Next: d.run("status") + " lists the blocks; if none opened for it, try it again: " + whole}
@@ -172,6 +174,53 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	return out, err
 }
 
+// placeBlock is the block an open runs in: the label's own, when its own
+// conversation comes back and Rex restored that block, else a new one.
+func (d *Driver) placeBlock(own *batch.Member, opt OpenOptions, o rex.Open) (string, error) {
+	if own != nil && opt.Resume != "" && opt.Resume == own.SID {
+		if here, err := d.resumeInBlock(own.Block, opt); err != nil || here {
+			return own.Block, err
+		}
+	}
+	return d.openBlock(o)
+}
+
+// restoredShellGrace is how long a restored block's shell gets to enter the
+// resume itself (rex-resume), before drive enters it instead: a second line
+// typed while the first starts would reach Claude Code as a prompt.
+const restoredShellGrace = 15 * time.Second
+
+// resumeInBlock resumes a conversation in block, whose shell a Rex restore
+// left where Claude Code ran, and says whether it did. A block that no longer
+// runs says no. Any other program in front has the block already, so nothing
+// is typed: the wait for Claude Code to start says what happened.
+func (d *Driver) resumeInBlock(block string, opt OpenOptions) (bool, error) {
+	for end := d.now().Add(restoredShellGrace); ; d.sleep(d.poll()) {
+		front, err := d.Term.Foreground(block)
+		if err != nil {
+			return false, nil
+		}
+		if !isShell(front) {
+			return true, nil
+		}
+		if !d.now().Before(end) {
+			break
+		}
+	}
+	if err := d.Term.Type(block, "cd "+shell.Quote(opt.Dir)+" && "+d.launchLine(opt)); err != nil {
+		return false, err
+	}
+	return true, d.Term.Key(block, "enter")
+}
+
+func isShell(program string) bool {
+	switch strings.TrimPrefix(program, "-") {
+	case "zsh", "bash", "sh", "login":
+		return true
+	}
+	return false
+}
+
 // openBlock opens o's block in its Rex session, starting that session again
 // under its label when it no longer runs, as after Rex restarted, with the
 // block as its first. Rex lets two sessions share a label, so drivers here
@@ -213,6 +262,11 @@ func (d *Driver) unrecorded(label, block string, err error) *Failed {
 // zsh, so its functions exist, then a shell that keeps the block open after
 // Claude Code exits.
 func (d *Driver) launch(opt OpenOptions) []string {
+	return []string{"/bin/zsh", "-lic", d.launchLine(opt) + "; exec zsh -l"}
+}
+
+// launchLine is the owner's launcher with what this open asks of it.
+func (d *Driver) launchLine(opt OpenOptions) string {
 	var env []string
 	for k, v := range d.Cfg.LaunchEnv {
 		env = append(env, k+"="+shell.Quote(v))
@@ -232,7 +286,7 @@ func (d *Driver) launch(opt OpenOptions) []string {
 	if opt.Resume != "" {
 		cmd += " --resume " + shell.Quote(opt.Resume)
 	}
-	return []string{"/bin/zsh", "-lic", cmd + "; exec zsh -l"}
+	return cmd
 }
 
 // awaitSession waits for Claude Code to start in a block and register its session.

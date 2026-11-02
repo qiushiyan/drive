@@ -114,9 +114,9 @@ func (d *Driver) StartBatch(opt BatchOptions) (*Started, error) {
 		}
 	}
 	if m.RexSession != "" {
-		// Recorded by its label: an id, as $REX_SESSION gives it, dies with
-		// Rex's server, and a batch's sessions reopen under the label after
-		// a restart.
+		// Recorded by its label: an id, as $REX_SESSION gives it, names only
+		// the session that holds it, and a batch's sessions reopen under the
+		// label once that session is gone.
 		label, started, err := d.Term.EnsureSession(m.RexSession)
 		switch {
 		case errors.Is(err, rex.ErrNoServer):

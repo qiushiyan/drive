@@ -104,6 +104,61 @@ func TestARestartedSessionComesBackUnderItsLabel(t *testing.T) {
 	}
 }
 
+// A server that saves its sessions gives each block back as a plain shell, with
+// its id and label. rex-resume normally resumes the conversation there; when it
+// did not, the open a gone session names brings it back in that block, where
+// the owner's tab is, instead of leaving the shell beside a new one.
+func TestARestoredBlockResumesInPlace(t *testing.T) {
+	r := newRig(t, "webhook")
+	inRexSession(t, r)
+	busy := adopted(t, r, "T1")
+	busy.Busy("build it")
+	back := adopted(t, r, "T2")
+	front := adopted(t, r, "T3")
+	r.w.Restore()
+	front.Front = "nvim"
+
+	// Its shell resumed it: nothing is gone, and no open is needed.
+	r.w.BackInBlock(back.Block)
+	if rd, err := r.d.Read("T2", drive.ReadLast, 10); err != nil || rd.State == "gone" {
+		t.Fatalf("a conversation its shell resumed reads as running: %+v %v", rd, err)
+	}
+	if _, err := r.d.Open("T2", drive.Step{}, drive.OpenOptions{Dir: back.Cwd, Resume: back.SID}); err == nil {
+		t.Fatal("an open of a session already back is refused")
+	}
+
+	e, err := r.d.Wait("T1", time.Minute, 10*time.Minute)
+	if err != nil || e.State != "gone" {
+		t.Fatalf("no conversation in the block yet: %+v %v", e, err)
+	}
+	o, err := r.d.Open("T1", drive.Step{}, reopenOf(t, e.Next, "T1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Block != busy.Block {
+		t.Fatalf("it comes back in its own block, %s: %s", busy.Block, o.Block)
+	}
+	typed := busy.Typed[len(busy.Typed)-1]
+	if !strings.HasPrefix(typed, "cd ") || !strings.Contains(typed, "--resume "+busy.SID) || strings.Contains(typed, "exec zsh") {
+		t.Fatalf("the shell gets the launch as a line: %q", typed)
+	}
+	if n := r.w.RexSessions("work"); n != 1 {
+		t.Fatalf("no Rex session starts: %d", n)
+	}
+	if e, err := r.d.Wait("T1", time.Minute, 10*time.Minute); err != nil || e.State != "interrupted" {
+		t.Fatalf("a turn the restart cut short reads as interrupted: %+v %v", e, err)
+	}
+
+	// Another program in front: nothing is typed into it.
+	before := len(front.Typed)
+	if _, err := r.d.Open("T3", drive.Step{}, drive.OpenOptions{Dir: front.Cwd, Resume: front.SID}); err == nil {
+		t.Fatal("Claude Code does not start behind another program")
+	}
+	if len(front.Typed) != before {
+		t.Fatalf("nothing is typed into another program: %q", front.Typed)
+	}
+}
+
 // While Rex's server is down nothing in it can be read, and drive starts
 // none: a server a watch started on 10-29 gave every pane the watch's
 // NO_COLOR=1 and TERM=dumb. A watch waits the restart out and wakes on

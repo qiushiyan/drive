@@ -91,6 +91,13 @@ func TestCLIAgainstAPrivateServer(t *testing.T) {
 	if st, err := c.Status(block); err != nil || st != nil {
 		t.Fatalf("a shell has no Claude record: %+v %v", st, err)
 	}
+	eventually(t, "the program in front", func() bool {
+		front, err := c.Foreground(block)
+		return err == nil && front != ""
+	})
+	if _, err := c.Foreground("block:00000000-0000-0000-0000-000000000000"); !errors.Is(err, ErrNoBlock) {
+		t.Fatalf("a block that no longer runs says so: %v", err)
+	}
 	// What rex-agent writes for a Claude Code hook.
 	if err := c.Type(block, `printf '\033]7501;state=blocked:kind=auth:id=claude:app=claude\033\\'`); err != nil {
 		t.Fatal(err)

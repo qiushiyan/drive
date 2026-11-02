@@ -31,8 +31,8 @@ var ErrNoSession = errors.New("no such Rex session")
 // server.
 var ErrNoBlock = errors.New("no such Rex block")
 
-// IsSessionID says whether ref names a Rex session by its id, which dies
-// with its server, rather than by its label, which a new session can take.
+// IsSessionID says whether ref names a Rex session by its id, which ends with
+// the session, rather than by its label, which a new session can take.
 func IsSessionID(ref string) bool { return strings.HasPrefix(ref, "session:") }
 
 // Status is what Claude Code last published for a block through its hooks:
@@ -75,6 +75,8 @@ type Terminal interface {
 	Status(block string) (*Status, error)
 	// Blocks lists the blocks of a session, or of every session when it is "".
 	Blocks(session string) ([]Block, error)
+	// Foreground names the program in front in the block.
+	Foreground(block string) (string, error)
 	// Capture is the screen as text, or with its terminal sequences when vt.
 	Capture(block string, vt bool) (string, error)
 	// Type writes text into the block as if typed.
@@ -145,7 +147,7 @@ func (c CLI) run(args ...string) ([]byte, error) {
 		}
 		e := &callError{msg: fmt.Sprintf("rex %s: %s", args[0], firstLine(msg))}
 		switch {
-		case strings.Contains(msg, "server is not running"):
+		case strings.Contains(msg, "server is not running"), strings.Contains(msg, "no Rex server is running"):
 			e.kind = ErrNoServer
 		case strings.Contains(msg, "session target") && strings.Contains(msg, "not found"):
 			e.kind = ErrNoSession
@@ -340,6 +342,22 @@ func (c CLI) EnsureSession(ref string) (string, bool, error) {
 }
 
 // Close implements Terminal.
+func (c CLI) Foreground(block string) (string, error) {
+	out, err := c.run("block", "call", "-b", block, "process")
+	if err != nil {
+		return "", err
+	}
+	var p struct {
+		Foreground struct {
+			Name string `json:"name"`
+		} `json:"foreground"`
+	}
+	if err := json.Unmarshal(out, &p); err != nil {
+		return "", fmt.Errorf("rex block call process: %w", err)
+	}
+	return p.Foreground.Name, nil
+}
+
 func (c CLI) Close(block string) error {
 	_, err := c.run("block", "close", block)
 	return err
