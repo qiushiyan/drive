@@ -64,7 +64,7 @@ The grammar runs on clikit (`~/dev/clikit`): help is rendered from each command'
 
 The suite drives a fake Rex and fake Claude Code sessions (`internal/testkit`) that write real transcript files and keep a registry status. A bug hides wherever the fake is kinder than the real thing, so it models what real sessions were seen to do:
 
-- **The registry moves with the session, Rex only with a hook:** Rex lags a permission prompt (`AskQuietly`), reads blocked through an approved slow command (`SlowTool`, `ToolDone`), reads done through a queued turn, hears nothing of a `/compact` (`SlowCompact`, `Compacted`), a deny or an interrupt, and can be told of a held message the session does not show (`HoldMessage`); a job left running reads `shell` (`Job`); a crash leaves Rex's record behind (`Crash`).
+- **The registry moves with the session, Rex only with a hook:** Rex lags a permission prompt (`AskQuietly`), reads blocked through an approved slow command (`SlowTool`, `ToolDone`), reads done through a queued turn, hears nothing of a `/compact` (`SlowCompact`, `Compacted`), a deny or an interrupt, and can be told of a held message the session does not show (`HoldMessage`); a job left running reads `shell` (`Job`), and its end resumes the session by a turn no one typed (`JobDone`); a crash leaves Rex's record behind (`Crash`).
 - **A slash command typed while busy** is queued without its text; one behind spaces is words.
 - **A resume** carries on in the shared transcript, on the account the launch names; one after a turn a restart cut short finds "No response requested." there.
 - **A rejected login** answers with an API error row and no Stop.
@@ -72,5 +72,7 @@ The suite drives a fake Rex and fake Claude Code sessions (`internal/testkit`) t
 - **Rex's server** can be down, every call failing and none starting it (`Down`), and can restart, ending every block and Rex session (`Restart`); Rex lets two sessions share a label.
 - **A watch name** already running is refused, and one watch can fail to start while others do (`Watches.Refuse`).
 - **A closed block** leaves its transcript behind, as the real one does.
+
+Time is the test's: `Clock.Sleep` moves it at once, and `Clock.At` runs what happens to a session at a set time on whichever goroutine's sleep reaches it, so a test runs a watch for hours on its own goroutine with nothing left to outlive it.
 
 `TestMain` points `HOME`, `DRIVE_STATE_DIR` and `DRIVE_CONFIG_DIR` at a temporary directory, so no test reaches live state. The command tests run drive as `main` does, through clikit's App with the driver's wiring bound to the fake world (`fake` in `cmd/drive/main_test.go`). The contract runs on a fixed clock (`NewClockAt`) under a home of its own, and each fake world counts its own transcript entries, so a view's hash, and the output that prints it, never depends on which tests ran first.
