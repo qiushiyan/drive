@@ -39,6 +39,8 @@ type Config struct {
 	LaunchEnv map[string]string `toml:"launch_env"`
 	// Notice is the text a session reads before the first step drive sends it.
 	Notice string `toml:"notice"`
+	// Brief is how a chat driver talks, which every wake points its run at.
+	Brief string `toml:"brief"`
 	// RexSession is where new batches open their sessions: the session drive
 	// runs in ($REX_SESSION, an id a batch records by its label) when unset,
 	// and Rex's default when that is empty too.
@@ -72,12 +74,14 @@ func Load() (Config, error) {
 		PrimaryName: envOr("CLAUDE_PRIMARY_NAME", os.Getenv("HEADROOM_PRIMARY_NAME")),
 		LaunchEnv:   map[string]string{"PLANLAB_AGENT_NUDGES": "off"},
 		Notice:      filepath.Join(home, ".agents/skills/drive-session/NOTICE.md"),
+		Brief:       filepath.Join(home, ".agents/skills/drive-session/BOT.md"),
 	}
 	path := filepath.Join(c.ConfigDir, "config.toml")
 	if _, err := toml.DecodeFile(path, &c); err != nil && !os.IsNotExist(err) {
 		return Config{}, fmt.Errorf("%s does not load, so none of its settings can be trusted: %w", path, err)
 	}
 	c.Notice = Expand(home, c.Notice)
+	c.Brief = Expand(home, c.Brief)
 	if c.RexSession == "" {
 		c.RexSession = os.Getenv("REX_SESSION") // the Rex session drive runs in
 	}

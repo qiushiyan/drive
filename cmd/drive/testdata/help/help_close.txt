@@ -9,6 +9,9 @@ the session stop its job.
 Arguments:
   <view>               The view the close was decided on.
 
+Flags:
+      --cleanup        Then remove its branch and worktree once merged, as drive cleanup does.
+
 Inherited flags:
   -h, --help           Show context-sensitive help.
       --batch=NAME     Act in this batch, as drive prints its name, instead of the driver's current

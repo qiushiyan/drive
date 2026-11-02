@@ -22,4 +22,7 @@ exit 0
 02:02  send         J1       arrived: Review the spec in docs/spec.md (the notice attached)
 02:02  refused      J1       J1 is already open as block a00003 (since 02:02)
 02:02  close        T1       
+02:02  cleanup      T1       branch pool-drain: removed
+02:02  cleanup      T1       branch pool-drain-spike: unmerged
+02:02  cleanup      T1       branch pool-drain-spike: unmerged
 --- stderr

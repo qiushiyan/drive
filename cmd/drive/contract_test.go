@@ -160,6 +160,8 @@ func TestContracts(t *testing.T) {
 	c.run("record-ask-batch", "record", "ask", "-", "--question", "Release tonight?", "--if-unanswered", "it waits")
 	c.run("record-answer", "record", "answer", "A1", "--source", "yes", "--took", "amended", "--explained")
 	c.run("record-answer-unknown-took", "record", "answer", "A2", "--source", "no", "--took", "maybe")
+	c.run("record-answer-step-batch-ask", "record", "answer", "A2", "--source", "no", "--took", "recommended", "go on")
+	c.run("record-answer-step-answered", "record", "answer", "A1", "--source", "yes", "--took", "amended", "go on")
 	c.run("record-note", "record", "note", "plan: T1 land-pr; T2 approve and build")
 	c.run("record-note-session", "record", "note", "--session", "T2", "told the user")
 
@@ -175,9 +177,13 @@ func TestContracts(t *testing.T) {
 	c.run("open-goal-empty", "open", "J1", "--dir", work, "--goal", " ", "Review the spec in docs/spec.md")
 	c.run("open", "open", "J1", "--dir", work, "--goal", "Check docs/spec.md against the code it describes.", "Review the spec in docs/spec.md")
 	c.run("open-label-taken", "open", "J1", "--dir", work, "again")
+	t1.Write(map[string]any{"type": "attachment", "gitBranch": "pool-drain"}, map[string]any{"type": "attachment", "gitBranch": "pool-drain-spike"})
 	v1 = view(t, c.run("read-label-parked", "read", "T1"))
+	c.run("cleanup-open", "cleanup", "T1")
 	c.run("close", "close", v1)
 	c.run("read-closed", "read", "T1")
+	c.run("cleanup-session", "cleanup", "T1")
+	c.run("cleanup", "cleanup")
 
 	c.run("log", "log")
 	c.run("log-since", "log", "--since", "2026-10-23 09:02")
@@ -261,6 +267,7 @@ func TestContractDrivers(t *testing.T) {
 	on.Busy("onboard")
 	on.Done("eight decisions for you")
 
+	c.run("drivers-watch-due-all-none", "watch", "--due-all")
 	c.run("drivers-batch-new", "batch", "new", "2026-10-27", "--webhook", "session-driver", "--tz", "Europe/London")
 	v := view(t, c.run("drivers-read-block", "--driver", "session-driver", "read", on.Block[len(on.Block)-6:]))
 	c.run("drivers-send", "--driver", "session-driver", "send", v, "--as", "ON", "go on")
@@ -275,6 +282,9 @@ func TestContractDrivers(t *testing.T) {
 	c.run("drivers-status-ended", "--driver", "itell", "status", "--quick")
 	c.run("drivers-batch-session-driver", "--driver", "session-driver", "batch")
 	c.run("drivers-batch-list-after-end", "batch", "list")
+	c.run("drivers-watch-due-all", "watch", "--due-all")
+	c.run("drivers-record-ask", "--driver", "session-driver", "record", "ask", "ON", "--question", "Go on?", "--recommendation", "yes", "--if-unanswered", "it waits")
+	c.run("drivers-answer-with-step", "--driver", "session-driver", "record", "answer", "A1", "--source", "yes", "--took", "recommended", "--", "Go on, as you recommend.")
 }
 
 // A step a rejected login answers exits 4 and prints the relaunch.

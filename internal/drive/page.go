@@ -314,7 +314,7 @@ func askOf(ov *Overview, a *batch.Ask, now time.Time) askView {
 func batchOf(ov *Overview, title string, now time.Time) batchView {
 	at := func(t time.Time) string { return when(t, now, ov.Zone) }
 	m := ov.Batch
-	bv := batchView{Name: m.Name, Title: title, Eyebrow: "Batch " + m.Name + " · started " + pageClock(m.Started, now, ov.Zone), Holds: ov.Holds}
+	bv := batchView{Name: m.Name, Title: title, Eyebrow: "Batch " + m.Name + " · started " + pageClock(m.Started, now, ov.Zone), Holds: append(append([]string{}, ov.Holds...), ov.Leftovers...)}
 	driver := batch.DriverOf(*m)
 	switch {
 	case driver != "" && ov.Wakes:
@@ -446,6 +446,9 @@ func healthOf(ov *Overview, now time.Time) []healthView {
 				sub = append(sub, "every open session")
 			}
 			wakes.Sub = strings.Join(sub, ", ")
+		}
+		if ov.Unheard != "" {
+			wakes.Value, wakes.Sub, wakes.Alert = "Not answered", ov.Unheard, true
 		}
 		out = append(out, wakes)
 	}
@@ -652,6 +655,8 @@ func stripOf(ov *Overview, c Card, group string, now time.Time) stripView {
 			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "The driver was woken " + at(m.Woken) + " and has done nothing since.", Error: true})
 			s.Alerts = append(s.Alerts, "woken "+pageClock(m.Woken, now, ov.Zone)+", nothing done since")
 		case !ov.Wakes || m.Parked != "":
+		case r.Armed && r.HoldsUntil.After(now):
+			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "Armed: it says it waits on its own job, so its driver hears when that turn ends, or " + at(r.HoldsUntil) + " at the latest."})
 		case r.Due == "" && r.Armed:
 			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "Armed: its driver hears when its turn ends."})
 		case r.Due == "":

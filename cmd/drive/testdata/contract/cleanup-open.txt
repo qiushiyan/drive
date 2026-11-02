@@ -1,0 +1,6 @@
+$ drive cleanup T1
+exit 1
+--- stdout
+--- stderr
+drive: error: T1 is still open: its branch may be in use
+next: close it first, on the view it stands at: drive --batch b1 read T1

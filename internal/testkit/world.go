@@ -996,6 +996,17 @@ func (w *Watches) Retire(name string) bool {
 	return ok
 }
 
+// JobDone ends the session's background jobs and resumes it, as Claude Code
+// does: a task notification starts a turn no one typed, whose reply ends it.
+func (c *Claude) JobDone(reply string) {
+	c.Edit(func(c *Claude) { c.Shells = nil })
+	c.Write(map[string]any{"type": "user", "uuid": c.w.uuid(), "origin": map[string]any{"kind": "task-notification"},
+		"message": map[string]any{"role": "user", "content": "<task-notification><status>completed</status></task-notification>"}})
+	c.Set("working", "", "")
+	c.Say(reply)
+	c.Set("done", "", "")
+}
+
 // Job leaves a background job running, started now, as a Bash call run in
 // the background does.
 func (c *Claude) Job(command string) {

@@ -14,6 +14,7 @@ import (
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/config"
 	"github.com/qiushiyan/drive/internal/drive"
+	"github.com/qiushiyan/drive/internal/progress"
 	"github.com/qiushiyan/drive/internal/testkit"
 )
 
@@ -30,11 +31,31 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// gwtWorld answers as gwt does for the branches the contract's sessions were
+// on: pool-drain merged, pool-drain-spike not. A removed branch has no verdict
+// any more. Nothing has steps or pull requests to read.
+type gwtWorld struct{ removed map[string]bool }
+
+func (gwtWorld) Steps(string) (progress.Steps, error)   { return progress.Steps{}, nil }
+func (gwtWorld) PR(progress.PRRef) (progress.PR, error) { return progress.PR{}, nil }
+func (g gwtWorld) Remove(_, branch string) error {
+	g.removed[branch] = true
+	return nil
+}
+func (g gwtWorld) Landed(_ string, branches []string, _ []progress.Commit) (progress.Landing, error) {
+	merged := map[string]bool{"pool-drain-spike": false}
+	if !g.removed["pool-drain"] {
+		merged["pool-drain"] = true
+	}
+	return progress.Landing{Trunk: "main", Branches: branches, Merged: merged}, nil
+}
+
 // fake is drive wired to a fake world, as main wires it to this machine.
 func fake(w *testkit.World) clikit.App {
 	a := app
+	gwt := gwtWorld{removed: map[string]bool{}}
 	a.Options = append(slices.Clone(app.Options), kong.Bind(wiring(func(cfg config.Config) *drive.Driver {
-		return &drive.Driver{Term: w, Host: w, Store: batch.Store{Dir: cfg.StateDir}, Cfg: cfg,
+		return &drive.Driver{Term: w, Host: w, Store: batch.Store{Dir: cfg.StateDir}, Cfg: cfg, Progress: gwt,
 			Watches: &testkit.Watches{}, Self: "/bin/drive", Now: w.Clock.Now, Sleep: w.Clock.Sleep}
 	})))
 	return a

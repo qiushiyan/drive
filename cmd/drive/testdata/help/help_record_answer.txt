@@ -1,9 +1,15 @@
-Usage: drive record answer --took=TOOK <ask> [flags]
+Usage: drive record answer --took=TOOK <ask> [<line> ...] [flags]
 
 Record the owner's answer to an ask.
 
+A step given here goes to the session the ask is about, at the view it stands
+at now, so one command answers an ask and sends what follows from it. Refused,
+it records nothing and sends nothing.
+
 Arguments:
   <ask>                  The ask it answers, such as A3.
+  <line> ...             The step as one line, typed as is, a slash command too; with --snippet, the
+                         text the owner would type after the key (optional).
 
 Flags:
       --source=SOURCE    The owner's words, or what showed the ask no longer holds.
@@ -11,6 +17,11 @@ Flags:
                          to someone else, or it stopped mattering (required; one of: recommended,
                          amended, delegated, moot).
       --explained        The owner needed the question explained before answering.
+      --file=PATH        Send this file instead: your own request, or anything longer than a line.
+      --snippet=KEY      Send the owner's TabType snippet KEY, as it resolves in the session's
+                         directory.
+      --hold=NAME        With a step: name what it uses that only one session may use at a time, as
+                         send's --hold does.
 
 Inherited flags:
   -h, --help             Show context-sensitive help.
@@ -18,6 +29,22 @@ Inherited flags:
                          current one. It may stand anywhere on the line.
       --driver=NAME      Act in the batch this driver drives now; a chat driver's name is its
                          webhook's. It may stand anywhere on the line.
+
+Constraints:
+  At most one of --file, --snippet.
+
+Steps:
+  A step is one of:
+    'one short line'        typed as is, a slash command too; an @PATH in it attaches
+                            that file, as the owner's would ('/write-spec @/tmp/answers.md'),
+                            except in a step queued mid-turn, where it stays a path
+    --file PATH             typed as @<copy>, which attaches it, drive keeping the copy;
+                            queued mid-turn, a line asks the session to read the copy
+    --snippet KEY 'TEXT'    the owner's snippet for the session's directory, with the
+                            step's words, TEXT, where the owner would type after it
+  Text that starts with a dash goes after --, which ends the flags.
+  The first step a session gets in a batch carries the owner's notice: at the head
+  of its file, or attached after its line.
 
 Exit codes:
   0    success

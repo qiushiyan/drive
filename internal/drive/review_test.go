@@ -338,6 +338,8 @@ func (p prs) Landed(string, []string, []progress.Commit) (progress.Landing, erro
 	return progress.Landing{}, errors.New("gwt: not here")
 }
 
+func (p prs) Remove(string, string) error { return errors.New("gwt: not here") }
+
 // landing is prs with what git and gwt answer: the branch each directory
 // has checked out, the id of each commit by its subject, and the branches
 // and commits merged into main. A branch absent from both maps was removed.

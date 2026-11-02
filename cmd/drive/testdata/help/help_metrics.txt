@@ -17,7 +17,7 @@ JSON:
   amended, delegated, moot), explained; owner_wait_seconds, median_answer_seconds,
   per_merge_seconds; merged (repo, number or branch and commit, at, sessions), unread;
   sends, snippets, by_key, commands, own_words, recovered, garbled, other, unknown;
-  refusals (counts by kind), failures; wakes, timers, wake_fails, unhandled, unwatched
+  refusals (counts by kind), failures; wakes, timers, wake_fails, carried, unhandled, unwatched
 
 Exit codes:
   0    success

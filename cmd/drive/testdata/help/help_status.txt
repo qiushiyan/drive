@@ -27,10 +27,13 @@ Columns:
          A background job a session still runs is listed under the table.
   INPUT  empty | suggestion (Claude Code's dimmed guess; typing replaces it)
          | typed (a line left unsent) | prompt (a prompt's options) | unknown (no box on screen)
-  WAKE   armed | stuck | posting | woken HH:MM (nothing done since: act on it or park it,
+  WAKE   armed, or armed while it waits on its own job, by the time it says | stuck | posting
+         | woken HH:MM (nothing done since: act on it or park it,
          or drive watch --due posts it once more, at the time it says)
          | none, or ended without a wake: no wake comes until drive watch --due | parked: why
   Hold lines name who holds each hold, and who waits for it with the step it was refused.
+  "left by" lines name what a closed session left that stays, and why; each is a fact
+  to know, not a question for the owner. Run without --quick.
 
 JSON:
   batch       name, driver (left out for a driver of no name), started, wake, webhook,
@@ -51,6 +54,10 @@ JSON:
   grants      id, at, scope, source
   in_flight   actions admitted with no outcome yet: kind, session, at, text, driver_pid (left
               out once that driver has gone)
+  unheard     that the driver has stopped answering its wakes and when the next try is; left
+              out while it answers
+  leftovers   a line per branch a closed session left that stays, and how many closed sessions
+              are not yet checked; left out with --quick or when there are none
 
 Exit codes:
   0    success

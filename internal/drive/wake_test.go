@@ -139,6 +139,8 @@ func TestDueArmsWhatHasNoWake(t *testing.T) {
 	r.watches.Retire(watchOf(a))
 	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "B", HTTP: 204, View: view})
 	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "A", HTTP: 204, View: r.view("A")})
+	r.w.Clock.Sleep(time.Second)
+	r.d.Seen() // a run read them, and acted on neither
 	r.w.Clock.Sleep(11 * time.Minute)
 	if armed, _, _ := r.d.Due(); len(armed) != 1 || armed[0].Label != "A" {
 		t.Fatalf("a wake is re-posted once per view: %+v", armed)
@@ -423,6 +425,8 @@ func TestAWakeNobodyActedOnSaysWhenItComesAgain(t *testing.T) {
 		t.Fatalf("due now: %+v", armed)
 	}
 	wake()
+	r.w.Clock.Sleep(time.Second)
+	r.d.Seen() // a run read it, and did nothing
 	mu.Lock()
 	defer mu.Unlock()
 	if len(outputs) != 2 || strings.HasPrefix(outputs[0], "posted again") || !strings.HasPrefix(outputs[1], "posted again: nothing was done after its wake at") {

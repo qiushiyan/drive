@@ -1,0 +1,6 @@
+$ drive record answer A1 --source yes --took amended go on
+exit 1
+--- stdout
+--- stderr
+drive: error: A1 was answered at 02:02, and its step, if any, went then
+next: read the session before sending anything more: drive --batch b1 read T1

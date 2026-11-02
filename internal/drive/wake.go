@@ -2,18 +2,21 @@ package drive
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/rex"
+	"github.com/qiushiyan/drive/internal/turn"
 	"github.com/qiushiyan/drive/internal/webhook"
 )
 
@@ -99,7 +102,7 @@ func (d *Driver) Watch(ref string) (*Watched, error) {
 		if m := batch.Find(members, o.Session.Block); m != nil {
 			watched = m.Watched
 		}
-		if !stuck(o.State(), o.Session.Since(), watched, d.now()) {
+		if d.holdsUntil(o, d.wakesOf(b, o.Label)).After(d.now()) || !stuck(o.State(), o.Session.Since(), watched, d.now()) {
 			return &Watched{Label: o.Label, Already: true}, nil
 		}
 		if err := d.Watches.Stop(name); err != nil {
@@ -312,27 +315,196 @@ func (d *Driver) WatchFailed(label string, err error) {
 
 // Notify is a watch's own run: wait for the session's turn to end, take the
 // watch off the books so a step sent from now on arms a fresh one, then wake
-// the driver. watch is the watch's name, "" when run by hand.
+// the driver. A turn that ended while its jobs run keeps its watch: the job's
+// end usually resumes the session, and that turn's end is what the driver is
+// waiting to hear, so nobody has to arm it again. watch is the watch's name,
+// "" when run by hand.
 func (d *Driver) Notify(watch, ref string, quiet, bgCap time.Duration) (*Ending, error) {
-	e, err := d.Wait(ref, quiet, bgCap)
-	if watch != "" && d.Watches != nil {
-		d.Watches.Retire(watch)
-	}
+	b, err := d.Batch()
 	if err != nil {
-		d.WatchFailed(ref, err)
 		return nil, err
 	}
-	if err := d.Wake(e.Label, e, ""); err != nil {
-		d.WatchFailed(e.Label, err)
-		return e, err
+	woke := false // this watch woke the driver while a job ran
+	for {
+		var ready time.Time
+		e, err := d.wait(ref, quiet, bgCap, func(e *Ending) bool {
+			if ready.IsZero() {
+				ready = d.now()
+			}
+			return d.claim(b, e, ready, woke)
+		})
+		stays := err == nil && e.State == "done" && len(e.Jobs) > 0 && !e.Covered
+		if watch != "" && d.Watches != nil && !stays {
+			d.Watches.Retire(watch)
+		}
+		if err != nil {
+			d.WatchFailed(ref, err)
+			return nil, err
+		}
+		if e.Covered {
+			return e, nil
+		}
+		err = d.Wake(e.Label, e, "")
+		if !stays {
+			if err != nil {
+				d.WatchFailed(e.Label, err)
+			}
+			return e, err
+		}
+		woke = woke || err == nil
 	}
-	return e, nil
 }
 
-// Ring is a timer's own run once its delay is over.
+// The pacing of a batch's wakes, each post a model run that costs tokens.
+const (
+	// wakeGap keeps a run from being followed at once by another about what
+	// it has probably just read: a run's actions land within two minutes.
+	wakeGap = 3 * time.Minute
+	// runQuiet is how long since a driver's last trace before a run counts as
+	// over.
+	runQuiet = time.Minute
+	// mostHeld bounds how long pacing holds a wake back.
+	mostHeld = 10 * time.Minute
+	// postLimit is how long a post can take, with its retries, before one
+	// that recorded no result is taken to have died.
+	postLimit = 12 * time.Minute
+	// stallAfter is how many wakes in a row failed or went unheard before a
+	// batch's wakes back off, as while the bot's usage is out.
+	stallAfter = 3
+)
+
+// stallRetry is how long a stalled batch waits before its next try: a
+// quarter of an hour, doubling to two hours.
+func stallRetry(strikes int) time.Duration {
+	return min(15*time.Minute<<min(max(strikes-stallAfter, 0), 3), 2*time.Hour)
+}
+
+// stalled says when a batch's next post may go while its driver is not
+// answering; zero while it is.
+func stalled(h batch.Hearing) time.Time {
+	if h.Strikes < stallAfter {
+		return time.Time{}
+	}
+	return h.Last.Add(stallRetry(h.Strikes))
+}
+
+// wakeHeld says whether a session's wake, ready since ready, waits: while the
+// driver is not answering any wake, until another post has had its run, and
+// while a run is under way. Nothing is dropped: the watch that holds a wake
+// still runs and looks again.
+func wakeHeld(evs []batch.Event, now, ready time.Time) bool {
+	if next := stalled(batch.Hearings(evs, now)); now.Before(next) {
+		return true
+	}
+	if now.Sub(ready) >= mostHeld {
+		return false
+	}
+	var posted, posting, heard time.Time
+	for _, e := range evs {
+		switch {
+		case batch.Heard(e):
+			heard = e.At
+		case e.Kind == batch.KindPosting:
+			posting = e.At
+		case e.Kind == batch.KindWake && e.Via == "":
+			posting, posted = time.Time{}, e.At
+		}
+	}
+	return !posting.IsZero() && now.Sub(posting) < postLimit ||
+		!posted.IsZero() && now.Sub(posted) < wakeGap ||
+		!heard.IsZero() && now.Sub(heard) < runQuiet
+}
+
+// claim says whether e's wake posts now, which only one watch of a batch does
+// at a time. It leaves e carrying the other sessions whose turns have ended,
+// so they share the post, and marks an ending another's wake already carried.
+// A job that ended with the session idle at the view this watch already woke
+// the driver about (woke) is news, not a repeat: the driver last heard the
+// job still ran, and nothing else will tell it.
+func (d *Driver) claim(b *batch.Batch, e *Ending, ready time.Time, woke bool) bool {
+	evs, err := b.Events()
+	if err != nil {
+		return true // an unreadable log costs an extra wake, never a lost one
+	}
+	if m := batch.Find(batch.Members(evs), e.Label); !woke && m != nil && m.Woken.After(m.Watched) && m.WokenTimes > 0 && m.WokenView == e.View.String() && (e.State.onPrompt() || len(e.Jobs) == 0) {
+		e.Covered = true
+		return true
+	}
+	if wakeHeld(evs, d.now(), ready) {
+		return false
+	}
+	also := d.carried(b, evs, e)
+	posts := false
+	err = b.Locked(func(evs []batch.Event) error {
+		if wakeHeld(evs, d.now(), ready) {
+			return nil
+		}
+		posts = true
+		view := ""
+		if e.View.Session != "" {
+			view = e.View.String()
+		}
+		rows := []batch.Event{{At: d.now(), Kind: batch.KindPosting, Session: e.Label, Block: e.Block, View: view}}
+		for _, c := range also {
+			rows = append(rows, batch.Event{At: d.now(), Kind: batch.KindPosting, Session: c.Label, Block: c.Block, View: c.View, Via: e.Label})
+		}
+		return b.Append(rows...)
+	})
+	if err != nil {
+		return true
+	}
+	if posts {
+		e.Also, e.claimed = also, true
+	}
+	return posts
+}
+
+// carried is the other sessions whose turns are over at a view no wake has
+// carried, each with its own watch armed: this post tells the driver of them
+// all. A turn whose job still runs goes along only when it asks.
+func (d *Driver) carried(b *batch.Batch, evs []batch.Event, e *Ending) []Carried {
+	var out []Carried
+	members := batch.Members(evs)
+	for _, m := range members {
+		if m.Label == e.Label || m.Closed || m.Parked != "" || d.Watches == nil || !d.Watches.Alive(watchName(b, m.Block)) {
+			continue
+		}
+		o, err := d.observe(b, members, m.Label)
+		if err != nil {
+			continue
+		}
+		view := o.View.String()
+		var at time.Time
+		if p := o.Frontier.Newest(); p != nil {
+			at = p.At
+		}
+		t := d.turnOf(o.Session, o.Frontier, at)
+		switch {
+		case !t.Over, m.WokenTimes > 0 && m.WokenView == view:
+			continue
+		case !t.State.onPrompt() && t.Shells+t.Orphans > 0 && replyReads(o) != turn.ReadsAsking:
+			continue
+		}
+		next := d.nextFor(o, t.State, d.Host.Shells(o.Session.Status.PID))
+		out = append(out, Carried{Label: m.Label, Block: m.Block, State: t.State, View: view, Next: cmp.Or(next, d.run("read", m.Label))})
+	}
+	return out
+}
+
+// Ring is a timer's own run once its delay is over. While the driver is not
+// answering it waits too: a timer posted into that is a timer lost.
 func (d *Driver) Ring(watch, note string) error {
 	if watch != "" && d.Watches != nil {
 		d.Watches.Retire(watch)
+	}
+	if b, err := d.Batch(); err == nil {
+		for {
+			evs, err := b.Events()
+			if err != nil || !d.now().Before(stalled(batch.Hearings(evs, d.now()))) {
+				break
+			}
+			d.sleep(d.poll() * 15)
+		}
 	}
 	if err := d.Wake("", nil, note); err != nil {
 		d.WatchFailed("", err)
@@ -387,17 +559,37 @@ func (d *Driver) Wake(label string, e *Ending, note string) error {
 			}
 		}
 		e.Waiting = d.waiterLines(b, e.Label) // ahead of next:, which the wake ends on
-		payload["output"] = tail(again+e.Text(), 6000)
-		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindPosting, Session: label, Block: e.Block, View: view})
+		if e.Next == "" && e.State == "done" {
+			reply := "its reply above"
+			if strings.HasPrefix(e.Reply, "…") {
+				reply = fmt.Sprintf("its whole reply (%s)", d.run("read", e.Label))
+			}
+			e.Next = fmt.Sprintf("decide from %s: %s, %s or %s", reply,
+				d.run("send", view, text("…")), d.run("park", view, text("…")), d.run("close", view))
+		}
+		first := d.briefLine() + again
+		payload["output"] = first + tail(e.Text(), 6000-len(first))
+		if !e.claimed {
+			_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindPosting, Session: label, Block: e.Block, View: view})
+		}
+		if len(e.Also) > 0 {
+			var also []string
+			for _, c := range e.Also {
+				also = append(also, c.Label)
+			}
+			payload["also"] = also
+		}
+	} else if what, ok := strings.CutPrefix(note, watchdogNote); ok {
+		payload["kind"], payload["output"] = "watchdog", d.briefLine()+what
 	} else {
-		payload["kind"], payload["output"] = "timer", "timer done: "+note
+		payload["kind"], payload["output"] = "timer", d.briefLine()+"timer done: "+note
 	}
 	body, _ := json.Marshal(payload)
 	hook, _ := d.Cfg.LoadWebhook(b.Meta.Webhook)
 	poster := webhook.Poster{URL: hook.URL, Auth: hook.Auth, Sleep: d.Sleep}
 	var last webhook.Attempt
 	err = poster.Post(body, func(a webhook.Attempt) { last = a })
-	ev := batch.Event{At: d.now(), Kind: batch.KindWake, Session: label, HTTP: last.HTTP, Try: last.Try, Note: note}
+	ev := batch.Event{At: d.now(), Kind: batch.KindWake, Session: label, HTTP: last.HTTP, Try: last.Try, Note: clip(note, 300)}
 	if e != nil {
 		ev.Block, ev.Outcome, ev.View = e.Block, string(e.State), e.View.String()
 	}
@@ -411,12 +603,59 @@ func (d *Driver) Wake(label string, e *Ending, note string) error {
 	if err != nil {
 		return err // no wake reached the chat, so there is nothing to follow up
 	}
-	for _, c := range append(append([]string{}, b.Meta.AfterWake...), d.Cfg.AfterWake...) {
+	if e != nil {
+		for _, c := range e.Also {
+			_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindWake, Session: c.Label, Block: c.Block, HTTP: last.HTTP, Try: last.Try,
+				Outcome: string(c.State), View: c.View, Via: e.Label})
+		}
+	}
+	d.runAfterWake(b)
+	return nil
+}
+
+// briefLine heads every wake: a routine's prompt, not the bot's persona,
+// starts the run a wake starts, so without this it may never read how a chat
+// driver talks. It says so while the file it names exists.
+func (d *Driver) briefLine() string {
+	if d.Cfg.Brief == "" {
+		return ""
+	}
+	if _, err := os.Stat(d.Cfg.Brief); err != nil {
+		return ""
+	}
+	return fmt.Sprintf("Before you message anyone, read %s § The chat: one message per event, the result and never that you are starting.\n", d.Cfg.Brief)
+}
+
+// AfterWakeEvery is how often a batch's after-wake commands run: they archive
+// a chat whose window holds 200 entries, which no wake's own run has even
+// added to yet, so they need no run per wake.
+const AfterWakeEvery = time.Hour
+
+// runAfterWake runs the batch's after-wake commands, unless they ran within
+// AfterWakeEvery.
+func (d *Driver) runAfterWake(b *batch.Batch) {
+	cmds := append(append([]string{}, b.Meta.AfterWake...), d.Cfg.AfterWake...)
+	if len(cmds) == 0 {
+		return
+	}
+	evs, err := b.Events()
+	if err != nil {
+		return
+	}
+	for _, e := range slices.Backward(evs) {
+		if e.Kind == batch.KindAfterWake {
+			if d.now().Sub(e.At) < AfterWakeEvery {
+				return
+			}
+			break
+		}
+	}
+	_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindAfterWake})
+	for _, c := range cmds {
 		if out, cerr := afterWake(c, AfterWakeLimit); cerr != nil {
 			_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindNote, Note: fmt.Sprintf("after_wake %q failed: %v: %s", c, cerr, clip(out, 200))})
 		}
 	}
-	return nil
 }
 
 // AfterWakeLimit bounds each after-wake command: a watch that has posted
@@ -444,3 +683,116 @@ func afterWake(c string, limit time.Duration) (string, error) {
 		return out.String(), fmt.Errorf("still running after %s, killed", limit)
 	}
 }
+
+// A batch with open asks wakes its driver this often to recheck them, since
+// the session an ask holds is parked and wakes no one. The rest of what the
+// watchdog finds is posted as it is found.
+const askRecheck = 6 * time.Hour
+
+// DueReport is what the machine's watchdog did for one live batch.
+type DueReport struct {
+	Batch  string
+	Armed  []Rearmed
+	Later  []Rearmed
+	Posted string // what it woke the driver about; "" when nothing needed a model
+	Held   string // what needs the driver and waits, since the driver is not answering
+	Err    error
+}
+
+// DueAll is a machine's watchdog, which runs no model: for every live batch
+// that wakes its driver, it arms what is due, and posts a wake only for what
+// needs the driver's judgment and no session's own wake will carry: a session
+// that is gone, a watch that keeps failing, open asks to recheck. Nothing due
+// means no post, so it can run every few minutes for free.
+func (d *Driver) DueAll() ([]DueReport, error) {
+	live, err := d.Store.Live()
+	if err != nil {
+		return nil, err
+	}
+	var out []DueReport
+	for _, b := range live {
+		if b.Meta.Wake != "webhook" {
+			continue
+		}
+		in := *d
+		in.BatchName, in.DriverName, in.bound, in.boundFor = b.Meta.Name, "", nil, ""
+		r := DueReport{Batch: b.Meta.Name}
+		r.Armed, r.Later, r.Err = in.Due()
+		r.Posted, r.Held = in.postDue(b, r.Armed, r.Later)
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// postDue wakes the driver about what the watchdog cannot settle itself, each
+// thing once, on a post of its own. It reports what it posted, or what waits.
+func (d *Driver) postDue(b *batch.Batch, armed, later []Rearmed) (posted, held string) {
+	evs, err := b.Events()
+	if err != nil {
+		return "", ""
+	}
+	members := batch.Members(evs)
+	told := func(label, outcome string, since time.Time) bool {
+		for _, e := range evs {
+			if e.Kind == batch.KindTold && e.Session == label && e.Outcome == outcome && !e.At.Before(since) {
+				return true
+			}
+		}
+		return false
+	}
+	var lines []string
+	var rows []batch.Event
+	for _, r := range later {
+		m := batch.Find(members, r.Label)
+		if r.Gone != "" && m != nil && !told(m.Label, "gone", m.Joined) {
+			lines = append(lines, fmt.Sprintf("%s is gone: %s", r.Label, r.Gone))
+			rows = append(rows, batch.Event{Kind: batch.KindTold, Session: m.Label, Block: m.Block, Outcome: "gone"})
+		}
+	}
+	for _, r := range armed {
+		if m := batch.Find(members, r.Label); r.Failures >= 2 && m != nil && !told(m.Label, "watch-failing", m.Joined) {
+			lines = append(lines, fmt.Sprintf("%s's watch has ended without a wake %d times this batch; %s says why, so tell the owner once and record that you did: %s", r.Label, r.Failures,
+				filepath.Join(b.Dir, "watches.log"), d.run("record", "note", "--session", r.Label, text("told the owner: …"))))
+			rows = append(rows, batch.Event{Kind: batch.KindTold, Session: m.Label, Block: m.Block, Outcome: "watch-failing"})
+		}
+	}
+	_, asks, _ := batch.Records(evs)
+	var open []string
+	newest := b.Meta.Started
+	for _, a := range asks {
+		if a.Answer == nil {
+			open = append(open, a.ID)
+		}
+		if a.At.After(newest) {
+			newest = a.At
+		}
+	}
+	for _, e := range evs {
+		if e.Kind == batch.KindWake && e.At.After(newest) {
+			newest = e.At
+		}
+	}
+	if len(open) > 0 && d.now().Sub(newest) >= askRecheck {
+		lines = append(lines, fmt.Sprintf("no wake for %s while %s stay open: recheck each, since another session or a teammate may have settled it, and record what no longer holds: %s",
+			ago(d.now().Sub(newest)), strings.Join(open, ", "), d.run("status")))
+	}
+	if len(lines) == 0 {
+		return "", ""
+	}
+	what := strings.Join(lines, "\n")
+	if wakeHeld(evs, d.now(), d.now()) {
+		return "", what
+	}
+	if err := d.Wake("", nil, watchdogNote+what); err != nil {
+		return "", what
+	}
+	for i := range rows {
+		rows[i].At = d.now()
+	}
+	_ = b.Append(rows...)
+	return what, ""
+}
+
+// watchdogNote heads what the watchdog wakes a driver about, which a timer's
+// note never does.
+const watchdogNote = "watchdog: "

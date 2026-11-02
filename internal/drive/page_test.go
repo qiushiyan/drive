@@ -67,6 +67,8 @@ func (p *pageProgress) Landed(string, []string, []progress.Commit) (progress.Lan
 	return progress.Landing{}, errors.New("gwt: not here")
 }
 
+func (p *pageProgress) Remove(string, string) error { return errors.New("gwt: not here") }
+
 // holdSteps makes reads of steps wait until the returned release.
 func (p *pageProgress) holdSteps() (release func()) {
 	p.mu.Lock()

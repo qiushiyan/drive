@@ -1,0 +1,5 @@
+$ drive watch --due-all
+exit 0
+--- stdout
+batch 2026-10-27: watching ON: its watch ended without a wake
+--- stderr

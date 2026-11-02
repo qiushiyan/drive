@@ -1,6 +1,8 @@
 package drive
 
 import (
+	"cmp"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -53,6 +55,71 @@ func (d *Driver) Answer(ask, source, took string, explained bool) (string, error
 		return &Refused{Reason: fmt.Sprintf("no ask %s in batch %s", ask, b.Meta.Name), Next: d.run("status") + " lists the open asks"}
 	})
 	return ask, err
+}
+
+// AnswerAndSend records the owner's answer to an ask and sends the session the
+// ask is about the step that answer leads to: the one command it takes, the
+// session's current view read for it. The step goes first, so a refusal means
+// nothing happened and it can all be run again.
+func (d *Driver) AnswerAndSend(ask, source, took string, explained bool, step Step, opt SendOptions) (*Sent, string, error) {
+	if !tookWords[took] {
+		return nil, "", &Refused{Reason: fmt.Sprintf("--took %q: one of recommended, amended, delegated, moot", took)}
+	}
+	b, evs, members, err := d.members()
+	if err != nil {
+		return nil, "", err
+	}
+	if b == nil {
+		return nil, "", &Refused{Reason: batch.ErrNoBatch.Error(), cause: batch.ErrNoBatch}
+	}
+	_, asks, _ := batch.Records(evs)
+	var a *batch.Ask
+	for _, x := range asks {
+		if x.ID == ask {
+			a = x
+		}
+	}
+	switch {
+	case a == nil:
+		return nil, "", &Refused{Reason: fmt.Sprintf("no ask %s in batch %s", ask, b.Meta.Name), Next: d.run("status") + " lists the open asks"}
+	case a.Answer != nil:
+		return nil, "", &Refused{Reason: fmt.Sprintf("%s was answered at %s, and its step, if any, went then", ask, a.Answer.At.In(b.Zone()).Format("15:04")),
+			Next: "read the session before sending anything more: " + d.run("read", cmp.Or(a.Session, "SESSION"))}
+	case a.Session == "":
+		return nil, "", &Refused{Reason: ask + " is about the batch, so it names no session to send a step to",
+			Next: "record the answer alone (" + d.run("record", "answer", ask, "--took", took) + "), then send the step to the session it is for"}
+	}
+	o, err := d.observe(b, members, a.Session)
+	if err != nil {
+		return nil, "", err
+	}
+	sent, err := d.Send(o.View.String(), step, opt)
+	if _, ok := errors.AsType[*Refused](err); ok {
+		return sent, "", err
+	}
+	if _, rerr := d.Answer(ask, source, took, explained); rerr != nil {
+		return sent, "", &Failed{What: fmt.Sprintf("the step reached %s, but the answer to %s was not recorded: %v", a.Session, ask, rerr),
+			Next: "record it: " + d.run("record", "answer", ask, "--took", took)}
+	}
+	return sent, ask, err
+}
+
+// Seen notes that a driver read the batch, which is how a run that changes
+// nothing is heard: a wake that leaves no trace reads as one no run answered.
+// One note a minute is plenty.
+func (d *Driver) Seen() {
+	b, err := d.Batch()
+	if err != nil || b.Meta.Wake != "webhook" {
+		return
+	}
+	evs, err := b.Events()
+	if err != nil {
+		return
+	}
+	if h := batch.Hearings(evs, d.now()); !h.Heard.IsZero() && d.now().Sub(h.Heard) < time.Minute {
+		return
+	}
+	_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindSeen})
 }
 
 // Note records something the driver wants the batch to remember.

@@ -192,6 +192,9 @@ type Row struct {
 	Next     string          // for a member that is gone, how to bring it back
 	Jobs     []session.Shell // background jobs it runs
 	Wake
+	// HoldsUntil is when its wake comes at the latest while it waits on its
+	// own job; zero when no such hold stands.
+	HoldsUntil time.Time
 }
 
 // Wake is how a member's wake stands.
@@ -216,6 +219,10 @@ type Status struct {
 	Grants   []batch.Event
 	InFlight []InFlight
 	NoGoal   string // which open sessions have no goal recorded, and how to record one
+	Unheard  string // that the batch's driver is not answering its wakes, and what is held for it
+	// Leftovers are what closed sessions of this driver's batches left: a line
+	// each, with what becomes of it. Read only with progress, like the rows' stage.
+	Leftovers []string
 }
 
 // InFlight is an action admitted with no outcome yet.
@@ -250,7 +257,14 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 	// A parked waiter whose hold is free is due a wake, so the holds are
 	// read before the rows.
 	holds := d.holdsNow(evs, members)
-	out.Rows, out.Others, out.Closed = d.rows(b, members, blocks, holds, out.Zone, withProgress)
+	hearing := batch.Hearings(evs, d.now())
+	out.Rows, out.Others, out.Closed = d.rows(b, members, blocks, holds, hearing, out.Zone, withProgress)
+	if b != nil && b.Meta.Wake == "webhook" {
+		out.Unheard = unheardLine(hearing, out.Zone)
+	}
+	if withProgress && b != nil {
+		out.Leftovers = d.leftoverLines(b)
+	}
 	if withProgress {
 		d.readNewestPRs(out.Rows)
 	}
@@ -279,7 +293,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 // rows reads every open session of the batch, and the other Claude
 // sessions among blocks, at once, each reader filling a slot of its own;
 // closed counts the batch's sessions closed since.
-func (d *Driver) rows(b *batch.Batch, members []*batch.Member, blocks []rex.Block, holds []holdNow, zone *time.Location, withProgress bool) (rows, others []Row, closed int) {
+func (d *Driver) rows(b *batch.Batch, members []*batch.Member, blocks []rex.Block, holds []holdNow, hearing batch.Hearing, zone *time.Location, withProgress bool) (rows, others []Row, closed int) {
 	window := map[string]string{}
 	seen := map[string]bool{}
 	for _, bl := range blocks {
@@ -312,7 +326,7 @@ func (d *Driver) rows(b *batch.Batch, members []*batch.Member, blocks []rex.Bloc
 			outside[i] = &r
 		})
 	}
-	rows = d.memberRows(b, members, window, holds, zone, withProgress)
+	rows = d.memberRows(b, members, window, holds, hearing, zone, withProgress)
 	wg.Wait()
 	for _, r := range outside {
 		if r != nil {
@@ -325,7 +339,7 @@ func (d *Driver) rows(b *batch.Batch, members []*batch.Member, blocks []rex.Bloc
 // memberRows reads every open member of the batch at once, each reader
 // filling a slot of its own: its turn, its wake, and with withProgress its
 // stage and the pull requests it named. window places each block in Rex.
-func (d *Driver) memberRows(b *batch.Batch, members []*batch.Member, window map[string]string, holds []holdNow, zone *time.Location, withProgress bool) []Row {
+func (d *Driver) memberRows(b *batch.Batch, members []*batch.Member, window map[string]string, holds []holdNow, hearing batch.Hearing, zone *time.Location, withProgress bool) []Row {
 	free := map[string]string{} // a session waiting for a hold that is free, to that hold
 	for _, h := range holds {
 		for _, w := range h.waiting {
@@ -349,7 +363,7 @@ func (d *Driver) memberRows(b *batch.Batch, members []*batch.Member, window map[
 			if m.LastSend != nil {
 				r.LastSent, r.SentAt = sentLabel(m.LastSend), m.LastSend.At
 			}
-			r.Wake = d.wakeOf(b, m, r, zone, free[m.Label])
+			r.Wake = d.wakeOf(b, m, r, hearing, zone, free[m.Label])
 			rows[i] = r
 		})
 	}
@@ -410,9 +424,10 @@ const repostAfter = 10 * time.Minute
 // then what the log says came of the last one, and why the watchdog should
 // arm it again. free is the hold a parked member waits for, when that hold
 // is free.
-func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, zone *time.Location, free string) Wake {
+func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, hearing batch.Hearing, zone *time.Location, free string) Wake {
 	alive := d.Watches != nil && b != nil && d.Watches.Alive(watchName(b, m.Block))
 	woken := !m.Woken.IsZero() && !m.Woken.Before(m.Watched)
+	unheard := hearing.Strikes >= stallAfter
 	switch {
 	case m.Parked != "" && free != "":
 		// A parked waiter whose hold is free wakes no one unless its watch is armed again.
@@ -420,6 +435,10 @@ func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, zone *time.Locat
 			Due: "waits for " + free + ", which is free"}
 	case m.Parked != "":
 		return Wake{Watch: "parked: " + m.Parked}
+	case alive && r.HoldsUntil.After(d.now()):
+		return Wake{Watch: "armed: it waits on its own job, so the wake comes when that turn ends, by " + r.HoldsUntil.In(zone).Format("15:04") + " at the latest", Armed: true}
+	case alive && unheard:
+		return Wake{Watch: "armed: what it has to say waits until the driver answers", Armed: true}
 	case alive && stuck(r.State, d.now().Add(-r.For), m.Watched, d.now()):
 		return Wake{Watch: fmt.Sprintf("armed, but its turn ended %s ago: stuck (%s restarts it)", ago(r.For), d.run("watch", m.Label)), Due: "stuck", Armed: true}
 	case alive:
@@ -437,6 +456,8 @@ func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, zone *time.Locat
 		switch {
 		case r.View.Session != "" && m.WokenView != "" && r.View.String() != m.WokenView:
 			w.Due = "it moved on by itself since its last wake"
+		case !hearing.Heard.After(m.Woken) && d.now().Sub(m.Woken) > repostAfter:
+			w.Due = "woken " + ago(d.now().Sub(m.Woken)) + " ago, and no driver has run since" // a wake no run answered told no one
 		case m.WokenView == m.PrevView:
 			w.Watch += ", and posted again already"
 		case d.now().Sub(m.Woken) > repostAfter:
@@ -455,10 +476,22 @@ func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, zone *time.Locat
 	return Wake{Watch: "none", Due: "never watched"}
 }
 
+// unheardLine says a batch's driver is not answering its wakes: the bot's
+// usage ran out, most often. "" while it answers.
+func unheardLine(h batch.Hearing, zone *time.Location) string {
+	next := stalled(h)
+	if next.IsZero() {
+		return ""
+	}
+	return fmt.Sprintf("the driver has not answered its last %d wakes, since %s: wakes wait, none is lost, and the next try is at %s",
+		h.Strikes, h.Since.In(zone).Format("15:04"), next.In(zone).Format("15:04"))
+}
+
 // stuck says a watch still runs long after the turn it waits on ended: a
 // wait returns a minute after a turn ends, or ten after one that left its
 // own background jobs running, counted from when the watch was armed if
-// that was later.
+// that was later. A turn its own job holds longer than that is no stuck
+// watch (holdsUntil).
 func stuck(state State, since, watched, now time.Time) bool {
 	ended := state == "done" || state == "idle" || state == "error" || state == "interrupted" || state.blocked()
 	if watched.After(since) {
@@ -501,6 +534,9 @@ func (d *Driver) row(b *batch.Batch, members []*batch.Member, label string, with
 	r.For = d.now().Sub(r.Since)
 	r.Input, r.Typed, r.View = o.Input, o.Typed, o.View
 	r.Jobs = d.Host.Shells(o.Session.Status.PID)
+	if b != nil && o.Member != nil && b.Meta.Wake == "webhook" {
+		r.HoldsUntil = d.holdsUntil(o, d.wakesOf(b, label))
+	}
 	if withProgress && d.Progress != nil && o.Session.ID != "" {
 		if s, err := d.Progress.Steps(o.Session.ID); err != nil {
 			r.StepsErr = firstLine(err.Error())

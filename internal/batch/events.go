@@ -30,6 +30,15 @@ const (
 	KindAnswer     = "answer"
 	KindNote       = "note"
 	KindGoal       = "goal" // what a session sets out to do, for the owner; the latest per label stands
+	KindSeen       = "seen" // a driver read the batch, which is how a run that changes nothing is heard
+	// KindCleanup is what became of a branch a closed session left: Outcome
+	// removed, unmerged, left (Reason says why) or none (it left nothing).
+	KindCleanup = "cleanup"
+	// KindAfterWake is the batch's after-wake commands having run.
+	KindAfterWake = "after-wake"
+	// KindTold is something the watchdog told the driver of, on a post of its
+	// own, so it tells it once: Outcome gone or watch-failing.
+	KindTold = "told"
 )
 
 // ByDriver says a driver's command wrote e: a step or its intent, a prompt
@@ -59,6 +68,20 @@ func Acted(e Event) bool {
 		return e.Session == "" // a timer
 	case KindRespond, KindAdopt, KindPark, KindClose:
 		return true
+	}
+	return false
+}
+
+// Heard says e shows a driver is running: it read the batch, or did or
+// recorded something. A wake armed proves nothing, since the watchdog arms
+// them with no driver running, nor does anything a watch writes.
+func Heard(e Event) bool {
+	switch e.Kind {
+	case KindSeen, KindSendIntent, KindSend, KindRespond, KindPark, KindClose, KindOpenIntent, KindOpen, KindAdopt,
+		KindRefused, KindAsk, KindAnswer, KindGrant, KindGoal, KindCleanup:
+		return true
+	case KindNote:
+		return e.ID != "" // drive's own notes have no id
 	}
 	return false
 }
@@ -99,6 +122,10 @@ type Event struct {
 	Goal           string `json:"goal,omitempty"` // on a goal, or an open-intent that sets one
 	HTTP           int    `json:"http,omitempty"`
 	Try            int    `json:"try,omitempty"`
+	// Via, on a posting or wake, is the session whose wake carried this one:
+	// several endings at once make one post.
+	Via    string `json:"via,omitempty"`
+	Branch string `json:"branch,omitempty"` // on a cleanup, the branch it judged
 }
 
 // Member is a session that belongs to the batch.
@@ -129,6 +156,7 @@ type Member struct {
 	Posting    time.Time // when a watch last began posting
 	Woken      time.Time // when its wake was last posted
 	WokenView  string    // the view that wake carried
+	WokenTimes int       // how many wakes were posted for that view
 	PrevView   string    // the view the wake before it carried
 	WakeFailed time.Time // when a watch last ended without a wake
 }
@@ -207,7 +235,11 @@ func Members(evs []Event) []*Member {
 			switch {
 			case m == nil:
 			case e.HTTP != 0:
+				if e.View != m.WokenView {
+					m.WokenTimes = 0
+				}
 				m.Woken, m.PrevView, m.WokenView = e.At, m.WokenView, e.View
+				m.WokenTimes++
 			default:
 				m.WakeFailed = e.At
 			}
@@ -221,6 +253,69 @@ func Members(evs []Event) []*Member {
 		m.Goal = goals[m.Label]
 	}
 	return order
+}
+
+// Hearing is whether a batch's driver is answering its wakes, read from the
+// log: a run a webhook started leaves a trace within minutes, so wakes posted
+// and followed by none were not heard, as when the bot's usage is out and the
+// webhook still answers 2xx. Posts that failed count alike.
+type Hearing struct {
+	Strikes int       // wakes in a row that failed or went unheard
+	Since   time.Time // when the first of them went out
+	Last    time.Time // when the newest wake went out, one too recent to count yet included
+	Heard   time.Time // when a driver last left a trace
+}
+
+// HeardWithin is how long a posted wake has to show its driver running
+// before it counts as unheard.
+const HeardWithin = 10 * time.Minute
+
+// Hearings reads how a batch's wakes are being heard as of now.
+func Hearings(evs []Event, now time.Time) Hearing {
+	var h Hearing
+	for _, e := range evs {
+		switch {
+		case Heard(e):
+			h.Heard, h.Strikes, h.Since, h.Last = e.At, 0, time.Time{}, time.Time{}
+		case e.Kind == KindWake && e.Via == "":
+			h.Last = e.At
+			if e.HTTP == 0 || now.Sub(e.At) >= HeardWithin {
+				if h.Strikes == 0 {
+					h.Since = e.At
+				}
+				h.Strikes++
+			}
+		}
+	}
+	return h
+}
+
+// Cleanup is what the log last says of a branch a closed session left.
+type Cleanup struct {
+	Session, Branch, Outcome, Reason string
+	At                               time.Time
+}
+
+// Cleanups lists, for each session and branch, the newest cleanup recorded,
+// in the order first judged. A session with an outcome of none or removed has
+// nothing left of that branch.
+func Cleanups(evs []Event) []Cleanup {
+	var out []Cleanup
+	at := map[[2]string]int{}
+	for _, e := range evs {
+		if e.Kind != KindCleanup {
+			continue
+		}
+		c := Cleanup{Session: e.Session, Branch: e.Branch, Outcome: e.Outcome, Reason: e.Reason, At: e.At}
+		key := [2]string{e.Session, e.Branch}
+		if i, ok := at[key]; ok {
+			out[i] = c
+			continue
+		}
+		at[key] = len(out)
+		out = append(out, c)
+	}
+	return out
 }
 
 // Find resolves a label or a block id (its last six characters are enough)

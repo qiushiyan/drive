@@ -1,0 +1,6 @@
+$ drive cleanup T1
+exit 0
+--- stdout
+T1: removed branch pool-drain and its worktree: it is merged
+T1: branch pool-drain-spike is not merged, so it stays: gwt remove refuses an unmerged branch
+--- stderr

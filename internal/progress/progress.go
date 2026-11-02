@@ -6,6 +6,7 @@ package progress
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"slices"
@@ -83,6 +84,10 @@ type Source interface {
 	// of: its newest commit, and its branches, those it names then those
 	// checked out where it committed and still are.
 	Landed(dir string, branches []string, commits []Commit) (Landing, error)
+	// Remove removes a merged branch and its worktree, from the repository
+	// dir is a checkout of. gwt refuses an unmerged branch, a checkout with
+	// uncommitted work, and the one a process stands in.
+	Remove(dir, branch string) error
 }
 
 // Tools runs claude-steps and gh.
@@ -165,6 +170,26 @@ func (Tools) Landed(dir string, branches []string, commits []Commit) (Landing, e
 		l.Repo = strings.TrimSuffix(strings.TrimSpace(string(common)), "/.git")
 	}
 	return l, nil
+}
+
+// Remove implements Source through gwt, which owns when a checkout may go.
+func (Tools) Remove(dir, branch string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*lookupLimit)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gwt", "remove", branch)
+	cmd.Dir = dir
+	cmd.WaitDelay = 2 * time.Second
+	if _, err := cmd.Output(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+			msg := strings.TrimSpace(string(ee.Stderr))
+			if i := strings.LastIndex(msg, "\n"); i >= 0 {
+				msg = msg[i+1:]
+			}
+			return errors.New(strings.TrimPrefix(msg, "gwt: error: "))
+		}
+		return fmt.Errorf("gwt remove %s: %w", branch, err)
+	}
+	return nil
 }
 
 // commitID finds the id of the newest of commits in the repository dir is a

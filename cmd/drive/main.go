@@ -34,6 +34,7 @@ type CLI struct {
 	Timer   TimerCmd   `cmd:"" help:"Wake the driver after a delay, with a note: a veto window, a check that is due later."`
 	Park    ParkCmd    `cmd:"" help:"Stop a session's wakes until a step is sent to it, keeping why."`
 	Close   CloseCmd   `cmd:"" help:"Close a session's block after its last step."`
+	Cleanup CleanupCmd `cmd:"" help:"Remove what closed sessions left once it is merged, and say plainly what stays."`
 	Record  RecordCmd  `cmd:"" help:"Record what drive cannot see: the owner's grants, asks and answers, notes, and each session's goal."`
 	Log     LogCmd     `cmd:"" help:"Print the batch's timeline: what was sent, answered, opened, parked and closed, and every wake."`
 	Metrics MetricsCmd `cmd:"" help:"Print the batch's measures: asks and the owner's wait, merges, sends, wakes, refusals."`

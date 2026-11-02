@@ -15,14 +15,16 @@ import (
 // can change without the other; each help page with --json names every key.
 
 type statusDoc struct {
-	Batch    *batchDoc     `json:"batch"` // null when there is no current batch
-	Sessions []rowDoc      `json:"sessions"`
-	Closed   int           `json:"closed"`
-	Others   []rowDoc      `json:"others"`
-	Holds    []string      `json:"holds"`
-	OpenAsks []askDoc      `json:"open_asks"`
-	Grants   []grantDoc    `json:"grants"`
-	InFlight []inFlightDoc `json:"in_flight"`
+	Batch     *batchDoc     `json:"batch"` // null when there is no current batch
+	Sessions  []rowDoc      `json:"sessions"`
+	Closed    int           `json:"closed"`
+	Others    []rowDoc      `json:"others"`
+	Holds     []string      `json:"holds"`
+	OpenAsks  []askDoc      `json:"open_asks"`
+	Grants    []grantDoc    `json:"grants"`
+	InFlight  []inFlightDoc `json:"in_flight"`
+	Unheard   string        `json:"unheard,omitempty"`
+	Leftovers []string      `json:"leftovers,omitempty"`
 }
 
 type batchDoc struct {
@@ -114,7 +116,7 @@ func (st *Status) JSON() any {
 		return out
 	}
 	doc := statusDoc{Sessions: rows(st.Rows), Closed: st.Closed, Others: rows(st.Others), Holds: list(st.Holds),
-		OpenAsks: []askDoc{}, Grants: []grantDoc{}, InFlight: []inFlightDoc{}}
+		OpenAsks: []askDoc{}, Grants: []grantDoc{}, InFlight: []inFlightDoc{}, Unheard: st.Unheard, Leftovers: st.Leftovers}
 	if m := st.Batch; m != nil {
 		doc.Batch = &batchDoc{Name: m.Name, Driver: batch.DriverOf(*m), Started: m.Started, Wake: m.Wake, Webhook: m.Webhook, RexSession: m.RexSession, TZ: m.TZ}
 	}
@@ -222,6 +224,7 @@ type metricsDoc struct {
 	Wakes               int            `json:"wakes"`
 	Timers              int            `json:"timers"`
 	WakeFails           int            `json:"wake_fails"`
+	Carried             int            `json:"carried"`
 	Unhandled           int            `json:"unhandled"`
 	Unwatched           int            `json:"unwatched"`
 }
@@ -249,7 +252,7 @@ func (m *Metrics) JSON() any {
 		MedianAnswerSeconds: seconds(m.MedianAnswer), Merged: []mergedDoc{}, PerMergeSeconds: seconds(m.PerMerge), Unread: m.Unread,
 		Sends: m.Sends, Snippets: m.Snippets, ByKey: counts(m.ByKey), Commands: m.Commands, OwnWords: m.OwnWords,
 		Recovered: m.Recovered, Garbled: m.Garbled, Other: m.Other, Unknown: m.Unknown, Refusals: counts(m.Refusals),
-		Failures: list(m.Failures), Wakes: m.Wakes, Timers: m.Timers, WakeFails: m.WakeFails, Unhandled: m.Unhandled, Unwatched: m.Unwatched}
+		Failures: list(m.Failures), Wakes: m.Wakes, Timers: m.Timers, WakeFails: m.WakeFails, Carried: m.Carried, Unhandled: m.Unhandled, Unwatched: m.Unwatched}
 	for _, p := range m.Merged {
 		d.Merged = append(d.Merged, mergedDoc{Repo: p.Repo, Number: p.Number, Branch: p.Branch, Commit: p.Commit, At: p.At, Sessions: list(p.Sessions)})
 	}

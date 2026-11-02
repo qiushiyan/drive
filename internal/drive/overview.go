@@ -26,6 +26,11 @@ type Overview struct {
 	Asks   []*batch.Ask  // questions put to the owner with no answer yet
 	Groups []Group       // the sessions, by where each stands, in the order the page shows them
 	Holds  []string
+	// Unheard says the batch's driver is not answering its wakes, and what
+	// that holds back.
+	Unheard string
+	// Leftovers are what closed sessions left and what becomes of each.
+	Leftovers []string
 
 	Answered []*batch.Ask  // questions the owner answered, or that stopped mattering, in the order asked
 	Grants   []batch.Event // authority the owner handed over
@@ -104,6 +109,10 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 		return nil, err
 	}
 	members := batch.Members(evs)
+	hearing := batch.Hearings(evs, d.now())
+	if ov.Wakes {
+		ov.Unheard = unheardLine(hearing, ov.Zone)
+	}
 	grants, asks, notes := batch.Records(evs)
 	for _, a := range asks {
 		if a.Answer == nil {
@@ -150,7 +159,8 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 		default:
 			holds := d.holdsNow(evs, members)
 			ov.Holds = holdLines(holds, ov.Zone)
-			read := d.memberRows(b, members, nil, holds, ov.Zone, true)
+			read := d.memberRows(b, members, nil, holds, hearing, ov.Zone, true)
+			ov.Leftovers = d.leftoverLines(b)
 			for i := range read {
 				rows[read[i].Label] = &read[i]
 			}

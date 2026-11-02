@@ -64,10 +64,13 @@ STATE  working | done | idle (no prompt yet) | interrupted (an interrupt or a de
        A background job a session still runs is listed under the table.
 INPUT  empty | suggestion (Claude Code's dimmed guess; typing replaces it)
        | typed (a line left unsent) | prompt (a prompt's options) | unknown (no box on screen)
-WAKE   armed | stuck | posting | woken HH:MM (nothing done since: act on it or park it,
+WAKE   armed, or armed while it waits on its own job, by the time it says | stuck | posting
+       | woken HH:MM (nothing done since: act on it or park it,
        or drive watch --due posts it once more, at the time it says)
        | none, or ended without a wake: no wake comes until drive watch --due | parked: why
-Hold lines name who holds each hold, and who waits for it with the step it was refused.`},
+Hold lines name who holds each hold, and who waits for it with the step it was refused.
+"left by" lines name what a closed session left that stays, and why; each is a fact
+to know, not a question for the owner. Run without --quick.`},
 		{Title: "JSON", Body: `
 batch       name, driver (left out for a driver of no name), started, wake, webhook,
             rex_session, tz; null with no current batch
@@ -86,7 +89,11 @@ holds       a line per hold, as the table prints it
 open_asks   id, session, at, question, recommendation, if_unanswered
 grants      id, at, scope, source
 in_flight   actions admitted with no outcome yet: kind, session, at, text, driver_pid (left
-            out once that driver has gone)`}}
+            out once that driver has gone)
+unheard     that the driver has stopped answering its wakes and when the next try is; left
+            out while it answers
+leftovers   a line per branch a closed session left that stays, and how many closed sessions
+            are not yet checked; left out with --quick or when there are none`}}
 }
 
 func (c *StatusCmd) act(ctx *kong.Context, d *drive.Driver) error {
@@ -94,6 +101,7 @@ func (c *StatusCmd) act(ctx *kong.Context, d *drive.Driver) error {
 	if err != nil {
 		return err
 	}
+	d.Seen() // after the read, which still says what this run missed
 	if c.JSON {
 		return writeJSON(ctx.Stdout, st.JSON())
 	}
@@ -151,6 +159,7 @@ func (c *ReadCmd) act(ctx *kong.Context, d *drive.Driver) error {
 	if err != nil {
 		return err
 	}
+	d.Seen()
 	if c.JSON {
 		return writeJSON(ctx.Stdout, r.JSON())
 	}
@@ -162,17 +171,20 @@ type WaitCmd struct {
 	runs
 	Session string `arg:"" help:"The session to wait for."`
 	Quiet   uint   `default:"60" placeholder:"SECONDS" help:"How long the turn must stay over before the wait ends, so a session that pauses between tools is not taken for done."`
-	Bg      uint   `default:"600" placeholder:"SECONDS" help:"How long to wait on a turn that ended while background jobs it started still run; such a turn usually resumes when they finish."`
+	Bg      uint   `default:"600" placeholder:"SECONDS" help:"How long to wait on a turn that ended while background jobs it started still run, when its reply neither asks anything nor says it waits on them."`
 	JSON    bool   `help:"Print one JSON document instead of text."`
 }
 
 func (c *WaitCmd) Help() string {
 	return `
 The wait ends when the turn has stayed over for --quiet, or the session
-stops on a prompt; at once on an API error or an interrupt. It prints the
-end of the reply, the view to act on, and next: where the ending decides
-what to do. A driver that waits itself runs it in the background; a chat
-driver is woken instead (drive watch).`
+stops on a prompt; at once on an API error or an interrupt. A turn that ended
+while its background jobs run usually resumes when they finish, so its reply
+decides: one that asks ends the wait after --quiet, one that says it waits
+holds up to two hours, and any other after --bg. It prints the end of the
+reply, the view to act on, and next: where the ending decides what to do. A
+driver that waits itself runs it in the background; a chat driver is woken
+instead (drive watch).`
 }
 
 func (c *WaitCmd) HelpSections() []clikit.Section {
@@ -332,6 +344,7 @@ type WatchCmd struct {
 	runs
 	Session string `arg:"" optional:"" help:"The session whose wake to arm."`
 	Due     bool   `help:"Arm every session whose wakes stopped coming, and post once more a wake nobody acted on: a chat driver's watchdog in one command."`
+	DueAll  bool   `name:"due-all" help:"Do what --due does in every live batch that wakes a driver, and post only what needs a driver's judgment: the machine's watchdog, which runs no model when nothing is due."`
 	StopAll bool   `name:"stop-all" help:"Before Rex's server restarts: stop the wake of every session in every live batch, whichever driver drives it. Timers run on."`
 }
 
@@ -344,14 +357,27 @@ turn ends, at once on an API error or an interrupt, and when the session
 stops on a prompt, and ends with next: where the ending decides what to do.
 A refused action armed nothing. Watch arms one by hand.
 
+A turn that ended while its own background jobs run wakes no one while its
+reply says it waits on them: the wake comes when that turn ends, or by two
+hours on, and then at ever longer marks. A reply that asks something wakes
+the driver about a minute on, and any other reply ten minutes on, each once
+per view. Either way the watch stays armed, and watch on it says the run
+heard the wake. Endings close together share one post, about three minutes
+apart at most; every wake a driver does not answer pushes the next further
+off, up to two hours, until a drive command shows it runs.
+
+--due-all runs from the machine's scheduler, every few minutes, and costs no
+model run unless something needs a driver: a session that is gone, a watch
+that keeps failing, or open asks after six hours with no wake.
+
 A restart of Rex's server ends every session in it. Stop the wakes first
 with --stop-all, so none wakes its driver mid-restart; it prints the
 watch --due that arms each batch's again once the server runs.`
 }
 
 func (c *WatchCmd) Validate() error {
-	if n := btoi(c.Session != "") + btoi(c.Due) + btoi(c.StopAll); n != 1 {
-		return errors.New("give a SESSION, --due or --stop-all")
+	if n := btoi(c.Session != "") + btoi(c.Due) + btoi(c.DueAll) + btoi(c.StopAll); n != 1 {
+		return errors.New("give a SESSION, --due, --due-all or --stop-all")
 	}
 	return nil
 }
@@ -364,6 +390,15 @@ func btoi(b bool) int {
 }
 
 func (c *WatchCmd) act(ctx *kong.Context, d *drive.Driver) error {
+	if c.DueAll {
+		reports, err := d.DueAll()
+		if err != nil {
+			return err
+		}
+		_, err = io.WriteString(ctx.Stdout, drive.DueText(reports))
+		return err
+	}
+	d.Seen() // the driver's own run, armed or not
 	if c.StopAll {
 		stopped, err := d.StopAll()
 		if err == nil || len(stopped) > 0 {
@@ -444,7 +479,8 @@ func (c *ParkCmd) act(ctx *kong.Context, d *drive.Driver) error {
 
 type CloseCmd struct {
 	runs
-	View string `arg:"" help:"The view the close was decided on."`
+	View    string `arg:"" help:"The view the close was decided on."`
+	Cleanup bool   `help:"Then remove its branch and worktree once merged, as drive cleanup does."`
 }
 
 func (c *CloseCmd) Help() string {
@@ -455,11 +491,44 @@ the session stop its job.`
 }
 
 func (c *CloseCmd) act(ctx *kong.Context, d *drive.Driver) error {
+	label := sessionOf(c.View)
 	if err := d.Close(c.View); err != nil {
 		return err
 	}
-	fmt.Fprintf(ctx.Stdout, "closed %s\n", sessionOf(c.View))
-	return nil
+	fmt.Fprintf(ctx.Stdout, "closed %s\n", label)
+	if !c.Cleanup {
+		return nil
+	}
+	return cleanup(ctx, d, label)
+}
+
+// cleanup runs a cleanup and prints what became of it. A refusal did nothing,
+// so it prints only the refusal.
+func cleanup(ctx *kong.Context, d *drive.Driver, session string) error {
+	cleaned, err := d.Cleanup(session)
+	if err == nil || len(cleaned) > 0 {
+		_, _ = io.WriteString(ctx.Stdout, drive.CleanedText(cleaned))
+	}
+	return err
+}
+
+type CleanupCmd struct {
+	runs
+	Session string `arg:"" optional:"" help:"One closed session of the batch, instead of every closed session of the driver's batches."`
+}
+
+func (c *CleanupCmd) Help() string {
+	return `
+A closed session's merged branch goes with its worktree. One that is not
+merged stays, as does one gwt will not remove, such as a checkout with
+uncommitted work or a branch an open session is on: it prints why, status
+lists it once as a fact, and nobody is asked. What stays is judged again on
+the next run, since a pull request can merge after its session closed. gwt
+keeps a recovery ref for anything it discards.`
+}
+
+func (c *CleanupCmd) act(ctx *kong.Context, d *drive.Driver) error {
+	return cleanup(ctx, d, c.Session)
 }
 
 type RecordCmd struct {
@@ -522,11 +591,34 @@ type AnswerCmd struct {
 	Source    string `help:"The owner's words, or what showed the ask no longer holds."`
 	Took      string `required:"" enum:"recommended,amended,delegated,moot" help:"Whether the owner took the recommendation, amended it, handed the question to someone else, or it stopped mattering."`
 	Explained bool   `help:"The owner needed the question explained before answering."`
+	Step      `embed:""`
+	Hold      string `placeholder:"NAME" help:"With a step: name what it uses that only one session may use at a time, as send's --hold does."`
 }
 
+func (c *AnswerCmd) Help() string {
+	return `
+A step given here goes to the session the ask is about, at the view it stands
+at now, so one command answers an ask and sends what follows from it. Refused,
+it records nothing and sends nothing.`
+}
+
+func (c *AnswerCmd) HelpSections() []clikit.Section { return stepSections }
+
+func (c *AnswerCmd) Validate() error { return c.atMostOne() }
+
 func (c *AnswerCmd) act(ctx *kong.Context, d *drive.Driver) error {
-	id, err := d.Answer(c.Ask, c.Source, c.Took, c.Explained)
-	return recorded(ctx.Stdout, "answer", id, err)
+	if c.File == "" && c.Snippet == "" && len(c.Line) == 0 {
+		id, err := d.Answer(c.Ask, c.Source, c.Took, c.Explained)
+		return recorded(ctx.Stdout, "answer", id, err)
+	}
+	sent, id, err := d.AnswerAndSend(c.Ask, c.Source, c.Took, c.Explained, c.step(), drive.SendOptions{Hold: c.Hold})
+	if sent != nil && sent.Outcome != "" {
+		_, _ = io.WriteString(ctx.Stdout, sent.Text())
+	}
+	if id != "" {
+		_ = recorded(ctx.Stdout, "answer", id, nil)
+	}
+	return err
 }
 
 type NoteCmd struct {
@@ -573,7 +665,7 @@ func (c *LogCmd) HelpSections() []clikit.Section {
 The batch's events, oldest first, as recorded: at, kind, and the fields its kind carries,
 among session, block, sid, account, dir, intent, mode, key, path, text, notice, outcome,
 reason, hold, view, action, call, id, ref, source, scope, question, recommendation,
-if_unanswered, took, explained, note, goal, http, try.`}}
+if_unanswered, took, explained, note, goal, http, try, via, branch.`}}
 }
 
 func (c *LogCmd) act(ctx *kong.Context, d *drive.Driver) error {
@@ -593,6 +685,7 @@ func (c *LogCmd) act(ctx *kong.Context, d *drive.Driver) error {
 	if err != nil {
 		return err
 	}
+	d.Seen()
 	if c.JSON {
 		return writeJSON(ctx.Stdout, drive.LogJSON(evs))
 	}
@@ -685,7 +778,7 @@ batch, from, to, sessions; asks, answered, unanswered, took (counts of recommend
 amended, delegated, moot), explained; owner_wait_seconds, median_answer_seconds,
 per_merge_seconds; merged (repo, number or branch and commit, at, sessions), unread;
 sends, snippets, by_key, commands, own_words, recovered, garbled, other, unknown;
-refusals (counts by kind), failures; wakes, timers, wake_fails, unhandled, unwatched`}}
+refusals (counts by kind), failures; wakes, timers, wake_fails, carried, unhandled, unwatched`}}
 }
 
 func (c *MetricsCmd) act(ctx *kong.Context, d *drive.Driver) error {
@@ -879,6 +972,10 @@ func (c *NotifyCmd) act(ctx *kong.Context, d *drive.Driver) error {
 	e, err := d.Notify(watch, c.Label, time.Minute, 10*time.Minute)
 	if err != nil {
 		return err
+	}
+	if e.Covered {
+		fmt.Fprintf(ctx.Stdout, "%s another session's wake carried %s (%s)\n", d.Time().Format(time.RFC3339), e.Label, e.State)
+		return nil
 	}
 	fmt.Fprintf(ctx.Stdout, "%s woke the driver for %s (%s)\n", d.Time().Format(time.RFC3339), e.Label, e.State)
 	_, err = io.WriteString(ctx.Stdout, e.Text())

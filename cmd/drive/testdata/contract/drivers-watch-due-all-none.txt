@@ -1,0 +1,5 @@
+$ drive watch --due-all
+exit 0
+--- stdout
+no live batch wakes a driver
+--- stderr

@@ -1,0 +1,6 @@
+$ drive --driver session-driver record answer A1 --source yes --took recommended -- Go on, as you recommend.
+exit 0
+--- stdout
+arrived ON: Go on, as you recommend.; wake armed
+recorded answer A1
+--- stderr

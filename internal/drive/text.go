@@ -72,6 +72,38 @@ func (w *Watched) Text() string {
 	return "watching " + w.Label + ": the driver is woken when its turn ends\n"
 }
 
+// DueText is what --due-all prints for each live batch: what it armed, what it
+// woke the driver about, or that nothing was due.
+func DueText(reports []DueReport) string {
+	if len(reports) == 0 {
+		return "no live batch wakes a driver\n"
+	}
+	var b strings.Builder
+	for _, r := range reports {
+		quiet := true
+		for _, a := range r.Armed {
+			fmt.Fprintf(&b, "batch %s: %s", r.Batch, a.Text())
+			quiet = false
+		}
+		if r.Err != nil {
+			fmt.Fprintf(&b, "batch %s: %s\n", r.Batch, firstLine(r.Err.Error()))
+			quiet = false
+		}
+		if r.Posted != "" {
+			fmt.Fprintf(&b, "batch %s: woke the driver: %s\n", r.Batch, r.Posted)
+			quiet = false
+		}
+		if r.Held != "" {
+			fmt.Fprintf(&b, "batch %s: waits for the driver to answer: %s\n", r.Batch, r.Held)
+			quiet = false
+		}
+		if quiet {
+			fmt.Fprintf(&b, "batch %s: nothing due\n", r.Batch)
+		}
+	}
+	return b.String()
+}
+
 // Text is the line --due prints for a session whose wake it armed.
 func (r Rearmed) Text() string {
 	s := fmt.Sprintf("watching %s: %s\n", r.Label, r.Why)
@@ -188,6 +220,9 @@ func (st *Status) Text(now time.Time) string {
 	} else if st.Batch != nil {
 		b.WriteString("no sessions in this batch yet\n")
 	}
+	if st.Unheard != "" {
+		b.WriteString(st.Unheard + "\n")
+	}
 	if st.NoGoal != "" {
 		b.WriteString(st.NoGoal + "\n")
 	}
@@ -230,6 +265,9 @@ func (st *Status) Text(now time.Time) string {
 			fmt.Fprintf(&b, "left unfinished: %s to %s since %s, by a driver that has gone (%s); the next send, respond, park or close on %s settles it\n",
 				p.Kind, p.Session, clock(p.At, st.Zone, now), clip(p.Text, 60), p.Session)
 		}
+	}
+	for _, l := range st.Leftovers {
+		b.WriteString(l + "\n")
 	}
 	for _, g := range st.Grants {
 		fmt.Fprintf(&b, "grant %s (%s): %s — %s\n", g.ID, clock(g.At, st.Zone, now), g.Scope, g.Source)
@@ -307,6 +345,9 @@ func LogText(b *batch.Batch, evs []batch.Event, now time.Time) string {
 	var out strings.Builder
 	zone := b.Zone()
 	for _, e := range evs {
+		if e.Kind == batch.KindSeen || e.Kind == batch.KindAfterWake {
+			continue // bookkeeping, not what happened to a session
+		}
 		fmt.Fprintf(&out, "%s  %-12s %-8s %s\n", clock(e.At, zone, now), e.Kind, e.Session, describe(e))
 	}
 	return out.String()
@@ -349,11 +390,26 @@ func describe(e batch.Event) string {
 		what := orDash(e.Outcome)
 		if e.Session == "" {
 			what = "timer " + e.Note
+			if strings.HasPrefix(e.Note, watchdogNote) {
+				what = clip(e.Note, 140)
+			}
 		}
 		if e.HTTP == 0 && e.Reason != "" {
 			return what + ", post failed: " + e.Reason
 		}
+		if e.Via != "" {
+			return fmt.Sprintf("%s, carried by %s's wake", what, e.Via)
+		}
 		return fmt.Sprintf("%s, posted (http %d, try %d)", what, e.HTTP, e.Try)
+	case batch.KindCleanup:
+		what := "branch " + e.Branch + ": " + e.Outcome
+		if e.Branch == "" {
+			what = "left nothing"
+		}
+		if e.Reason != "" {
+			what += " (" + clip(e.Reason, 120) + ")"
+		}
+		return what
 	case batch.KindGrant:
 		return e.ID + " " + e.Scope + " — " + e.Source
 	case batch.KindAsk:
@@ -413,8 +469,8 @@ func (m *Metrics) Text() string {
 		sort.Strings(keys)
 		fmt.Fprintf(&b, "snippets: %s\n", strings.Join(keys, ", "))
 	}
-	fmt.Fprintf(&b, "wakes: %d posted for sessions and %d for timers, %d failed; %d followed by no action on the session before its next wake or the batch's end\n",
-		m.Wakes, m.Timers, m.WakeFails, m.Unhandled)
+	fmt.Fprintf(&b, "wakes: %d posted for sessions and %d for timers or the watchdog, %d failed; %d carried by another session's post; %d followed by no action on the session before its next wake or the batch's end\n",
+		m.Wakes, m.Timers, m.WakeFails, m.Carried, m.Unhandled)
 	fmt.Fprintf(&b, "turns left unwatched: %d (a send or respond that no wake, park or close of its session followed)\n", m.Unwatched)
 	if len(m.Refusals) > 0 {
 		var rs []string

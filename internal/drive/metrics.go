@@ -44,7 +44,8 @@ type Metrics struct {
 	Garbled   int // lines that arrived without their start and stayed so
 	Other     int // lines the session received as something other than what was typed
 	Wakes     int // a session's wakes posted
-	Timers    int // a timer's wakes posted
+	Timers    int // a timer's or the watchdog's wakes posted
+	Carried   int // endings another session's post carried, which took no post of their own
 	WakeFails int // wakes, a session's or a timer's, whose post failed
 	// Unhandled counts wakes posted that no driver action on their session
 	// followed before its next wake or the batch's end: a send, respond,
@@ -185,7 +186,11 @@ func (m *Metrics) actions(evs []batch.Event, wakes bool) {
 				continue
 			}
 			unwatched[e.Session] = 0
-			m.Wakes++
+			if e.Via != "" {
+				m.Carried++
+			} else {
+				m.Wakes++
+			}
 			if woken[e.Session] {
 				m.Unhandled++
 			}
@@ -321,6 +326,20 @@ func (d *Driver) landed(dir, sid string, branches []string) (workLanding, bool) 
 	merged, judged := l.Merged[w.branch]
 	w.merged = merged
 	return w, w.branch != "" && judged
+}
+
+// judged is how a closed session's work stands against its trunk: its branches
+// and which merged.
+func (d *Driver) judged(m *batch.Member, branches []string) (progress.Landing, bool) {
+	if m.Dir == "" {
+		return progress.Landing{}, false
+	}
+	var commits []progress.Commit
+	if s, err := d.Progress.Steps(m.SID); err == nil {
+		commits = s.Commits
+	}
+	l, err := d.Progress.Landed(m.Dir, branches, commits)
+	return l, err == nil
 }
 
 // refusalKind groups refusal reasons by what stopped the action.

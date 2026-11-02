@@ -173,6 +173,27 @@ exit 0
     "session": "T1",
     "block": "block:00000000-0000-0000-0000-000000a00001",
     "view": "T1@fefb9f5c"
+  },
+  {
+    "at": "2026-10-23T01:02:07Z",
+    "kind": "cleanup",
+    "session": "T1",
+    "outcome": "removed",
+    "branch": "pool-drain"
+  },
+  {
+    "at": "2026-10-23T01:02:07Z",
+    "kind": "cleanup",
+    "session": "T1",
+    "outcome": "unmerged",
+    "branch": "pool-drain-spike"
+  },
+  {
+    "at": "2026-10-23T01:02:07Z",
+    "kind": "cleanup",
+    "session": "T1",
+    "outcome": "unmerged",
+    "branch": "pool-drain-spike"
   }
 ]
 --- stderr
