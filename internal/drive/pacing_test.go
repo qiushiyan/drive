@@ -670,20 +670,65 @@ func TestUnansweredWakesGetFurtherApart(t *testing.T) {
 	}
 }
 
+// An older drive's runs left no trace of a read, so wakes it posted, with a run
+// that only read and armed the watch again behind each, say nothing of whether
+// its driver answers. A batch carried across an install reads as heard, and its
+// next wake goes when due. A post that failed is evidence whichever drive made it.
+func TestWakesAnOlderDrivePostedSayNothingOfHearing(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r)
+	c := adopted(t, r, "T1")
+	older := func(http int, reason string) {
+		now := r.w.Clock.Now()
+		_ = r.b.Append(batch.Event{At: now, Kind: batch.KindPosting, Session: "T1"},
+			batch.Event{At: now, Kind: batch.KindWake, Session: "T1", HTTP: http, Reason: reason},
+			batch.Event{At: now, Kind: batch.KindWatch, Session: "T1"})
+		r.w.Clock.Sleep(11 * time.Minute)
+	}
+	for range 8 { // as the mini's log read at the install
+		older(200, "")
+	}
+	if st, _ := r.d.Status(false); st.Unheard != "" {
+		t.Fatalf("%q", st.Unheard)
+	}
+	c.Busy("work")
+	c.Done("finished")
+	start := r.w.Clock.Now()
+	watch(t, r, c, "T1")
+	if took := l.after(0, start); took > 2*time.Minute {
+		t.Fatalf("its first wake after the install waited %s on wakes nobody can judge", took)
+	}
+	// A wake this drive posts counts from here on.
+	r.w.Clock.Sleep(11 * time.Minute)
+	evs, err := r.b.Events()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := batch.Hearings(evs, r.w.Clock.Now()); h.Strikes != 1 {
+		t.Fatalf("%+v", h)
+	}
+	for range 3 {
+		older(0, "http 429 no usage")
+	}
+	if st, _ := r.d.Status(false); !strings.Contains(st.Unheard, "has not answered its last 4 wakes") {
+		t.Fatalf("%q", st.Unheard)
+	}
+}
+
 // How wakes are heard, from the log alone.
 func TestHearingIsReadFromTheLog(t *testing.T) {
 	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	var evs []batch.Event
 	h := func() batch.Hearing { return batch.Hearings(evs, now) }
 	for range 3 {
-		evs = append(evs, batch.Event{At: now, Kind: batch.KindWake, Session: "A", HTTP: 204})
+		evs = append(evs, batch.Event{At: now, Kind: batch.KindWake, Session: "A", HTTP: 204, Why: "turn-ended"})
 		now = now.Add(11 * time.Minute)
 	}
 	if h().Strikes != 3 {
 		t.Fatalf("%+v", h())
 	}
 	// A wake posted a moment ago has not had the time to be answered.
-	evs = append(evs, batch.Event{At: now, Kind: batch.KindWake, Session: "A", HTTP: 204})
+	evs = append(evs, batch.Event{At: now, Kind: batch.KindWake, Session: "A", HTTP: 204, Why: "turn-ended"})
 	if h().Strikes != 3 {
 		t.Fatalf("a wake just posted is not unheard yet: %+v", h())
 	}
@@ -731,7 +776,7 @@ func TestATimerWaitsWhileNobodyAnswers(t *testing.T) {
 	l := hook(t, r)
 	now := r.w.Clock.Now()
 	for i := range 3 {
-		_ = r.b.Append(batch.Event{At: now.Add(time.Duration(i) * time.Second), Kind: batch.KindWake, Session: "A", HTTP: 204})
+		_ = r.b.Append(batch.Event{At: now.Add(time.Duration(i) * time.Second), Kind: batch.KindWake, Session: "A", HTTP: 204, Why: "turn-ended"})
 	}
 	r.w.Clock.Sleep(11 * time.Minute)
 	name := "drive-b1-timer-veto"
@@ -774,7 +819,7 @@ func TestATimerStoppedWhileItWaitsIsNoLongerShown(t *testing.T) {
 	hook(t, r)
 	now := r.w.Clock.Now()
 	for i := range 3 {
-		_ = r.b.Append(batch.Event{At: now.Add(time.Duration(i) * time.Second), Kind: batch.KindWake, Session: "A", HTTP: 204})
+		_ = r.b.Append(batch.Event{At: now.Add(time.Duration(i) * time.Second), Kind: batch.KindWake, Session: "A", HTTP: 204, Why: "turn-ended"})
 	}
 	r.w.Clock.Sleep(11 * time.Minute)
 	name := "drive-b1-timer-veto"
@@ -1269,7 +1314,7 @@ func TestWhatIsHeldBackShowsOnThePageAndInStatus(t *testing.T) {
 	}
 	// With nobody answering, the header says so, Rex down or not.
 	for range 3 {
-		_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "T1", HTTP: 204})
+		_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "T1", HTTP: 204, Why: "turn-ended"})
 	}
 	r.w.Clock.Sleep(11 * time.Minute)
 	ov, err = r.d.Overview(false)
@@ -1488,6 +1533,34 @@ func TestAPostRecordsWhyItWent(t *testing.T) {
 	})
 }
 
+// Hearing counts only wakes that carry a cause, so every post this drive makes
+// has one, a session that is gone included.
+func TestEveryPostCarriesItsCause(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r)
+	gone, done := adopted(t, r, "G"), adopted(t, r, "D")
+	done.Busy("work")
+	done.Done("finished")
+	r.w.Clock.Sleep(2 * time.Minute)
+	watch(t, r, done, "D")
+	r.w.Clock.Sleep(11 * time.Minute)
+	if err := r.w.Close(gone.Block); err != nil {
+		t.Fatal(err)
+	}
+	watch(t, r, gone, "G")
+	if err := r.d.Ring("", "veto"); err != nil {
+		t.Fatal(err)
+	}
+	if l.count() != 3 {
+		t.Fatalf("%d posts", l.count())
+	}
+	for _, e := range r.events(batch.KindWake) {
+		if e.Why == "" {
+			t.Fatalf("a post with no cause reads as an older drive's: %+v", e)
+		}
+	}
+}
+
 // What held a post back is on its record, with the time it was due.
 func TestAPostRecordsWhatHeldItBack(t *testing.T) {
 	t.Run("the gap after another post", func(t *testing.T) {
@@ -1525,7 +1598,7 @@ func TestAPostRecordsWhatHeldItBack(t *testing.T) {
 		c := adopted(t, r, "T1")
 		now := r.w.Clock.Now()
 		for i := range 3 {
-			_ = r.b.Append(batch.Event{At: now.Add(time.Duration(i) * time.Second), Kind: batch.KindWake, Session: "A", HTTP: 204})
+			_ = r.b.Append(batch.Event{At: now.Add(time.Duration(i) * time.Second), Kind: batch.KindWake, Session: "A", HTTP: 204, Why: "turn-ended"})
 		}
 		c.Busy("work")
 		c.Done("finished")
@@ -1554,7 +1627,7 @@ func TestAPostRecordsWhatHeldItBack(t *testing.T) {
 		hook(t, r)
 		now := r.w.Clock.Now()
 		for i := range 3 {
-			_ = r.b.Append(batch.Event{At: now.Add(time.Duration(i) * time.Second), Kind: batch.KindWake, Session: "A", HTTP: 204})
+			_ = r.b.Append(batch.Event{At: now.Add(time.Duration(i) * time.Second), Kind: batch.KindWake, Session: "A", HTTP: 204, Why: "turn-ended"})
 		}
 		r.w.Clock.Sleep(11 * time.Minute)
 		if err := r.d.Ring("", "veto"); err != nil {

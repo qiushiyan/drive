@@ -326,7 +326,9 @@ func Members(evs []Event) []*Member {
 // Hearing is whether a batch's driver is answering its wakes, read from the
 // log: a run a webhook started leaves a trace within minutes, so wakes posted
 // and followed by none were not heard, as when the bot's usage is out and the
-// webhook still answers 2xx. Posts that failed count alike.
+// webhook still answers 2xx. Posts that failed count alike. A wake with no Why
+// was posted by an older drive, whose runs left no trace of a read, so only its
+// failure says anything.
 type Hearing struct {
 	Strikes int       // wakes in a row that failed or went unheard
 	Since   time.Time // when the first of them went out
@@ -355,6 +357,9 @@ func Hearings(evs []Event, now time.Time) Hearing {
 				continue // a run answered before its post returned
 			}
 			h.Last = e.At
+			if e.HTTP != 0 && e.Why == "" {
+				continue // an older drive posted it, and its runs left no trace of a read
+			}
 			if e.HTTP == 0 || now.Sub(e.At) >= HeardWithin {
 				if h.Strikes == 0 {
 					h.Since = e.At
