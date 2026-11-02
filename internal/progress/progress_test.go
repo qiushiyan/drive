@@ -1,6 +1,7 @@
 package progress
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -126,6 +127,51 @@ func TestLandedJudgesTheNewestCommitByItsId(t *testing.T) {
 	l, err := Tools{}.Landed(repo, nil, []Commit{{At: t0.Add(50 * time.Second), Text: "Add --shout", Dir: filepath.Join(repo, "gone")}})
 	if err != nil || l.Commit != sha || !l.Merged[sha] {
 		t.Fatalf("its newest commit, by id: %+v %v (want %s)", l, err, sha)
+	}
+}
+
+// A branch gwt failed on is no branch that has gone: only one it found no such
+// branch for has.
+func TestLandedTellsAFailureFromABranchThatHasGone(t *testing.T) {
+	bin := t.TempDir()
+	out := `{"trunk":{"name":"main"},"branches":[{"branch":"odd","merged":null,"error":"bad object"},{"branch":"gone","merged":null,"error":"no local branch gone"}]}`
+	shim := "#!/bin/sh\necho '" + out + "'\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "gwt"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	l, err := Tools{}.Landed(t.TempDir(), []string{"odd", "gone"}, nil)
+	if err != nil || l.Errors["odd"] != "bad object" || l.Errors["gone"] != "" {
+		t.Fatalf("%+v %v", l, err)
+	}
+}
+
+// Nothing to judge is an answer, not a failure: the session named no branch.
+func TestLandedWithNothingToJudgeSaysSo(t *testing.T) {
+	if _, err := (Tools{}).Landed(t.TempDir(), nil, nil); !errors.Is(err, ErrNothingToJudge) {
+		t.Fatalf("%v", err)
+	}
+}
+
+// Removing runs gwt in the session's checkout, and a refusal comes back as gwt's
+// own reason for it, without its prefix.
+func TestRemoveRunsGwtInTheCheckout(t *testing.T) {
+	bin, dir := t.TempDir(), t.TempDir()
+	log := filepath.Join(bin, "called")
+	shim := "#!/bin/sh\npwd > '" + log + "'\necho \"$@\" >> '" + log + "'\n[ \"$2\" = bad ] && { echo noise >&2; echo 'gwt: error: bad: has uncommitted work' >&2; exit 1; }\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "gwt"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := (Tools{}).Remove(dir, "fine"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(log)
+	if lines := strings.Split(strings.TrimSpace(string(got)), "\n"); len(lines) != 2 || lines[0] != dir || lines[1] != "remove fine" {
+		t.Fatalf("%q", got)
+	}
+	if err := (Tools{}).Remove(dir, "bad"); err == nil || err.Error() != "bad: has uncommitted work" {
+		t.Fatalf("%v", err)
 	}
 }
 

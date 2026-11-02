@@ -3,13 +3,10 @@ Usage: drive wait <session> [flags]
 Block until a session's turn ends, then print how it ended.
 
 The wait ends when the turn has stayed over for --quiet, or the session
-stops on a prompt; at once on an API error or an interrupt. A turn that ended
-while its background jobs run usually resumes when they finish, so its reply
-decides: one that asks ends the wait after --quiet, one that says it waits
-holds up to two hours, and any other after --bg. It prints the end of the
-reply, the view to act on, and next: where the ending decides what to do. A
-driver that waits itself runs it in the background; a chat driver is woken
-instead (drive watch).
+stops on a prompt; at once on an API error or an interrupt. It prints the
+end of the reply, the view to act on, and next: where the ending decides
+what to do. A driver that waits itself runs it in the background; a chat
+driver is woken instead (drive watch).
 
 Arguments:
   <session>              The session to wait for.
@@ -18,8 +15,7 @@ Flags:
       --quiet=SECONDS    How long the turn must stay over before the wait ends, so a session that
                          pauses between tools is not taken for done (default: 60).
       --bg=SECONDS       How long to wait on a turn that ended while background jobs it started
-                         still run, when its reply neither asks anything nor says it waits on them
-                         (default: 600).
+                         still run; such a turn usually resumes when they finish (default: 600).
       --json             Print one JSON document instead of text.
 
 Inherited flags:

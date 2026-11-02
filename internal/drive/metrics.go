@@ -330,16 +330,12 @@ func (d *Driver) landed(dir, sid string, branches []string) (workLanding, bool) 
 
 // judged is how a closed session's work stands against its trunk: its branches
 // and which merged.
-func (d *Driver) judged(m *batch.Member, branches []string) (progress.Landing, bool) {
-	if m.Dir == "" {
-		return progress.Landing{}, false
-	}
+func (d *Driver) judged(m *batch.Member, branches []string) (progress.Landing, error) {
 	var commits []progress.Commit
 	if s, err := d.Progress.Steps(m.SID); err == nil {
 		commits = s.Commits
 	}
-	l, err := d.Progress.Landed(m.Dir, branches, commits)
-	return l, err == nil
+	return d.Progress.Landed(m.Dir, branches, commits)
 }
 
 // refusalKind groups refusal reasons by what stopped the action.

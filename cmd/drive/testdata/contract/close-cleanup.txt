@@ -1,0 +1,6 @@
+$ drive close C1@12c8579c --cleanup
+exit 0
+--- stdout
+closed C1
+C1: removed branch pool-drain and its worktree: it is merged
+--- stderr

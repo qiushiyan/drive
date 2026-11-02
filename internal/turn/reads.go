@@ -2,6 +2,7 @@ package turn
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -28,22 +29,21 @@ var (
 	// A question mark closing a sentence, outside code.
 	questionMark = regexp.MustCompile(`\?["”')*_]*(\s|$)`)
 	// Who a session leaves something to: the driver stands in for that person.
-	askingWords = regexp.MustCompile(`(?i)\bsay\s+["“'*]|\bon your (word|go|ok)\b|\bwait(s|ing)?\s+(on|for)\s+(you|your)\b|\bneeds?\s+you\b` +
-		`|\byour\s+(call|decision|answer|go-ahead|approval|ok)\b|\bfor you to (decide|choose|pick|answer|approve)\b|\b(is|are)\s+(still\s+)?yours\b` +
-		`|\blet me know\b|\btell me\b|\b(once|when|after|if)\s+you\b|\byou('d| would) (like|prefer)\b`)
-	// What a session says of a job it is waiting on.
+	askingWords = regexp.MustCompile(`(?i)\bsay\s+["“'*]|\bon your (word|go|ok)\b|\bwait(s|ing)?\s+(on|for)\s+(you|your)\b|\bawaiting\s+(you|your|approval|sign)` +
+		`|\bneeds?\s+(you|your|approval|a decision|sign-?off)\b|\byour\s+(call|decision|answer|go-ahead|approval|ok)\b|\bfor you to (decide|choose|pick|answer|approve)\b` +
+		`|\b(is|are)\s+(still\s+)?yours\b|\blet me know\b|\btell me\b|\b(once|when|after|if)\s+you\b|\byou('d| would) (like|prefer)\b|\bplease\b` +
+		`|(^|[.!?:\n]\s*)(approve|confirm|decide|choose|sign off)\b`)
+	// What a session says of a job it is waiting on, as the whole of how it ends.
 	waitingWords = regexp.MustCompile(`(?i)\bwait(s|ing)?\s+(on|for|until)\b` +
 		`|\b(still|now|is|are)\s+(\w+\s+)?(re-?)?(running|going|driving|compiling|replaying|in progress|queued|pending)\b` +
 		`|\bwakes?\s+(me|this session)\b|\bbring(s)? me back\b|\bi'?m watching\b` +
 		`|\b(wait|waiter|watch|watcher|monitor|poll)\w*\b[^.\n]*\b(armed|set|running|watching|covers|reports?)\b` +
-		`|\b(once|when|after|as soon as)\b[^.\n]*\b(i'?ll|i will)\b|\b(i'?ll|i will)\b[^.\n]*\b(once|when|after|as soon as)\b` +
-		`|\bfollows?\s+(once|when|after)\b|\bnotification\b`)
+		`|\b(once|when|as soon as)\b[^.\n]*\b(i'?ll|i will)\b|\b(i'?ll|i will)\b[^.\n]*\b(once|when|as soon as)\b` +
+		`|\bfollows?\s+(once|when|after)\b|\bnext notification\b`)
+	// What says a wait is over, or was never this one.
+	notWaiting  = regexp.MustCompile(`(?i)\b(no longer|not|isn'?t|aren'?t|wasn'?t|weren'?t|never|stopped|finished|over|done|cancelled|canceled)\b`)
 	sentenceEnd = regexp.MustCompile(`[.!?:]\s+|\n+`)
 )
-
-// waitingTail is how many of a reply's last sentences say whether it waits:
-// a long report that mentions a wait along the way has not ended on one.
-const waitingTail = 3
 
 // askingTail bounds how far from its end a reply's asking words count, a
 // report's history of who decided what being no ask. A question mark counts
@@ -51,9 +51,10 @@ const waitingTail = 3
 const askingTail = 1500
 
 // ReadReply says what a reply says of its turn. It errs towards waking a
-// driver: asking wins over waiting, and only a reply that says it waits reads
-// as waiting. A wrong reading in that direction costs a run; the other way
-// costs a question nobody hears.
+// driver: asking wins over waiting, and a reply reads as waiting only when its
+// last sentence is that and nothing there says the wait is over. A wrong reading
+// in that direction costs a run; the other way holds a question back until the
+// job ends or the turn's backstop.
 func ReadReply(reply string) Reads {
 	prose := codeSpans.ReplaceAllString(reply, " ")
 	end := prose
@@ -63,21 +64,19 @@ func ReadReply(reply string) Reads {
 	if questionMark.MatchString(prose) || askingWords.MatchString(end) {
 		return ReadsAsking
 	}
-	if waitingWords.MatchString(lastSentences(prose, waitingTail)) {
+	if last := lastSentence(prose); waitingWords.MatchString(last) && !notWaiting.MatchString(last) {
 		return ReadsWaiting
 	}
 	return ReadsEnded
 }
 
-func lastSentences(s string, n int) string {
-	var kept []string
-	for _, p := range sentenceEnd.Split(strings.TrimSpace(s), -1) {
-		if strings.TrimSpace(p) != "" {
-			kept = append(kept, p)
+// lastSentence is the last sentence with words in it.
+func lastSentence(s string) string {
+	parts := sentenceEnd.Split(strings.TrimSpace(s), -1)
+	for _, part := range slices.Backward(parts) {
+		if strings.TrimSpace(part) != "" {
+			return part
 		}
 	}
-	if len(kept) > n {
-		kept = kept[len(kept)-n:]
-	}
-	return strings.Join(kept, ". ")
+	return ""
 }

@@ -26,7 +26,16 @@ func TestReadReply(t *testing.T) {
 		{"a final report with a job left behind", report + "\n\nI posted progress on the card, which stays in progress. The scratch worktrees are removed.", ReadsEnded},
 		{"a short report", "PR #41 is open and its description is written.", ReadsEnded},
 		{"a report that only mentions a wait early", "I was waiting on the CI run earlier.\n\n" + report + "\n\nEverything is pushed. Nothing else is open.", ReadsEnded},
+		{"a wait that ended in its last sentence", "CI was slow. Done waiting for it, and merged.", ReadsEnded},
+		{"a wait before the last sentence", "Waiting on the replays. The report is written.", ReadsEnded},
+		{"a decision in its imperative", "The fix is ready.\nApprove the migration to continue. Waiting on CI.", ReadsAsking},
+		{"what it needs", "The fix is ready, and it needs your sign-off. CI is still running.", ReadsAsking},
 		{"nothing to read", "", ReadsEnded},
+		{"a notification it sent", "Merged and deployed. I sent the notification.", ReadsEnded},
+		{"a wait that is over", "No longer waiting for CI. The change is merged and released.", ReadsEnded},
+		{"an approval it asks for", "Please approve the production migration. Waiting on CI meanwhile.", ReadsAsking},
+		{"a report that says what it did after a wait", "After waiting on CI I merged it. Everything is released.", ReadsEnded},
+		{"a wait mentioned before its last sentence", "Waiting on CI is over. Merged and released.", ReadsEnded},
 		{"a question mark inside code is no question", "Fixed the `?25h` left in the box. The rest passes.", ReadsEnded},
 
 		// What need not wake a driver: its job's end brings the session back.

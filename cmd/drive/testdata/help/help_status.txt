@@ -27,7 +27,7 @@ Columns:
          A background job a session still runs is listed under the table.
   INPUT  empty | suggestion (Claude Code's dimmed guess; typing replaces it)
          | typed (a line left unsent) | prompt (a prompt's options) | unknown (no box on screen)
-  WAKE   armed, or armed while it waits on its own job, by the time it says | stuck | posting
+  WAKE   armed, or armed while a job of its holds the wake, by the time it says | stuck | posting
          | woken HH:MM (nothing done since: act on it or park it,
          or drive watch --due posts it once more, at the time it says)
          | none, or ended without a wake: no wake comes until drive watch --due | parked: why

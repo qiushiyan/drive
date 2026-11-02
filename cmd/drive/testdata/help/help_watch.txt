@@ -9,14 +9,14 @@ turn ends, at once on an API error or an interrupt, and when the session
 stops on a prompt, and ends with next: where the ending decides what to do.
 A refused action armed nothing. Watch arms one by hand.
 
-A turn that ended while its own background jobs run wakes no one while its
-reply says it waits on them: the wake comes when that turn ends, or by two
-hours on, and then at ever longer marks. A reply that asks something wakes
-the driver about a minute on, and any other reply ten minutes on, each once
-per view. Either way the watch stays armed, and watch on it says the run
-heard the wake. Endings close together share one post, about three minutes
-apart at most; every wake a driver does not answer pushes the next further
-off, up to two hours, until a drive command shows it runs.
+A turn that ended while its own background jobs run wakes no one while the
+last sentence of its reply says it waits on them: the wake comes when that
+turn ends, or by two hours on, and then at ever longer marks. A reply that asks
+something wakes the driver about a minute on, and any other reply ten minutes
+on, each once per view a driver heard. Either way the watch stays armed, and
+watch on it says the run heard the wake. Endings close together share one post,
+at most one every three minutes; every wake a driver does not answer pushes the
+next further off, up to two hours, until a drive command shows it runs.
 
 --due-all runs from the machine's scheduler, every few minutes, and costs no
 model run unless something needs a driver: a session that is gone, a watch

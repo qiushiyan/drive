@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/qiushiyan/drive/internal/batch"
+	"github.com/qiushiyan/drive/internal/progress"
 	"github.com/qiushiyan/drive/internal/rex"
 	"github.com/qiushiyan/drive/internal/session"
 )
@@ -17,7 +18,7 @@ import (
 // session that left none (Branch "").
 type Cleaned struct {
 	Batch, Session, Branch string
-	Outcome                string // removed, unmerged, left or none
+	Outcome                string // removed, unmerged, left, unread or none
 	Reason                 string
 }
 
@@ -31,6 +32,8 @@ func (c Cleaned) Text() string {
 		return fmt.Sprintf("%s: branch %s is not merged, so it stays: gwt remove refuses an unmerged branch\n", c.Session, c.Branch)
 	case "left":
 		return fmt.Sprintf("%s: branch %s stays: %s\n", c.Session, c.Branch, c.Reason)
+	case "unread":
+		return fmt.Sprintf("%s: not checked: %s; the next cleanup checks it again\n", c.Session, c.Reason)
 	}
 	return fmt.Sprintf("%s: left nothing to clean up\n", c.Session)
 }
@@ -125,11 +128,11 @@ func (d *Driver) Cleanup(ref string) ([]Cleaned, error) {
 			if !m.Closed || ref != "" && m.Label != ref || ref == "" && resolved(done, m.Label) {
 				continue
 			}
-			found := d.cleanSession(o, m, inUse)
-			// A branch that stayed last time and has no verdict now is gone,
-			// removed by hand or by its own closeout.
+			found, judged := d.cleanSession(o, m, inUse)
+			// Judged, a branch that stayed last time and has no verdict now is
+			// gone, removed by hand or by its own closeout.
 			for _, c := range done {
-				if c.Session == m.Label && (c.Outcome == "unmerged" || c.Outcome == "left") &&
+				if judged && c.Session == m.Label && (c.Outcome == "unmerged" || c.Outcome == "left" || c.Outcome == "unread") &&
 					!slices.ContainsFunc(found, func(f Cleaned) bool { return f.Branch == c.Branch }) {
 					found = append(found, Cleaned{Batch: o.Meta.Name, Session: m.Label, Branch: c.Branch, Outcome: "none"})
 				}
@@ -145,30 +148,42 @@ func (d *Driver) Cleanup(ref string) ([]Cleaned, error) {
 	return out, nil
 }
 
-// cleanSession judges and removes what one closed session left.
-func (d *Driver) cleanSession(o *batch.Batch, m *batch.Member, inUse map[string]string) []Cleaned {
-	if m.Dir != "" {
-		if _, err := os.Stat(m.Dir); errors.Is(err, os.ErrNotExist) {
-			return []Cleaned{{Batch: o.Meta.Name, Session: m.Label, Outcome: "none"}} // its checkout went with its own closeout
-		}
+// cleanSession judges and removes what one closed session left. judged is false
+// when it could not be read at all, which says nothing of what it left, so the
+// record keeps it open to be read again. Nothing left is recorded only once that
+// is known: its checkout is gone, or it named no branch or commit to judge.
+func (d *Driver) cleanSession(o *batch.Batch, m *batch.Member, inUse map[string]string) (out []Cleaned, judged bool) {
+	none := []Cleaned{{Batch: o.Meta.Name, Session: m.Label, Outcome: "none"}}
+	if m.Dir == "" {
+		return none, true
+	}
+	if _, err := os.Stat(m.Dir); errors.Is(err, os.ErrNotExist) {
+		return none, true // its checkout went with its own closeout
 	}
 	var branches []string
 	if m.SID != "" {
 		branches = d.branchesOf(m.SID)
 	}
-	l, ok := d.judged(m, branches)
-	if !ok {
-		return []Cleaned{{Batch: o.Meta.Name, Session: m.Label, Outcome: "none"}}
+	l, err := d.judged(m, branches)
+	switch {
+	case errors.Is(err, progress.ErrNothingToJudge):
+		return none, true
+	case err != nil:
+		return []Cleaned{{Batch: o.Meta.Name, Session: m.Label, Outcome: "unread", Reason: firstLine(err.Error())}}, false
 	}
-	var out []Cleaned
 	for _, branch := range l.Branches {
-		merged, judged := l.Merged[branch]
-		if branch == l.Trunk || !judged || slices.ContainsFunc(out, func(c Cleaned) bool { return c.Branch == branch }) {
+		if branch == l.Trunk || slices.ContainsFunc(out, func(c Cleaned) bool { return c.Branch == branch }) {
 			continue
 		}
 		c := Cleaned{Batch: o.Meta.Name, Session: m.Label, Branch: branch}
+		merged, verdict := l.Merged[branch]
+		why, failed := l.Errors[branch]
 		who, used := inUse[branch]
 		switch {
+		case failed:
+			c.Outcome, c.Reason = "unread", why
+		case !verdict: // gwt found no such branch
+			continue
 		case !merged:
 			c.Outcome = "unmerged"
 		case used:
@@ -183,9 +198,9 @@ func (d *Driver) cleanSession(o *batch.Batch, m *batch.Member, inUse map[string]
 		out = append(out, c)
 	}
 	if len(out) == 0 {
-		return []Cleaned{{Batch: o.Meta.Name, Session: m.Label, Outcome: "none"}}
+		return none, true
 	}
-	return out
+	return out, true
 }
 
 // branchesInUse names the branch each Claude session running in Rex is on,
@@ -222,18 +237,18 @@ func (d *Driver) leftoverLines(b *batch.Batch) []string {
 		}
 		done := batch.Cleanups(evs)
 		for _, c := range done {
-			if c.Outcome != "unmerged" && c.Outcome != "left" {
-				continue
-			}
 			where := c.Session
 			if o.Meta.Name != b.Meta.Name {
 				where += " (batch " + o.Meta.Name + ")"
 			}
-			what := "it is not merged, and gwt remove refuses an unmerged branch"
-			if c.Outcome == "left" {
-				what = c.Reason
+			switch c.Outcome {
+			case "unmerged":
+				lines = append(lines, fmt.Sprintf("left by %s: branch %s stays: it is not merged, and gwt remove refuses an unmerged branch", where, c.Branch))
+			case "left":
+				lines = append(lines, fmt.Sprintf("left by %s: branch %s stays: %s", where, c.Branch, c.Reason))
+			case "unread":
+				lines = append(lines, fmt.Sprintf("what %s left could not be checked: %s; to check it again: %s", where, c.Reason, d.runIn(b.Meta.Name, "cleanup")))
 			}
-			lines = append(lines, fmt.Sprintf("left by %s: branch %s stays: %s", where, c.Branch, what))
 		}
 		for _, m := range batch.Members(evs) {
 			if m.Closed && !slices.ContainsFunc(done, func(c batch.Cleanup) bool { return c.Session == m.Label }) {
@@ -242,7 +257,7 @@ func (d *Driver) leftoverLines(b *batch.Batch) []string {
 		}
 	}
 	if unchecked > 0 {
-		lines = append(lines, fmt.Sprintf("%d closed sessions not yet checked for merged branches and worktrees; removes what merged, and says plainly what stays: %s", unchecked, d.run("cleanup")))
+		lines = append(lines, fmt.Sprintf("%d closed sessions not yet checked for merged branches and worktrees; removes what merged, and says plainly what stays: %s", unchecked, d.runIn(b.Meta.Name, "cleanup")))
 	}
 	return lines
 }

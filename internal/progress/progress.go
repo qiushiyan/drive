@@ -69,12 +69,16 @@ type PR struct {
 // Landing is how a session's work stands against its repository's trunk,
 // which is how a change merged without a pull request is known.
 type Landing struct {
-	Repo     string          // the repository's main checkout
-	Trunk    string          // the trunk's name, such as main
-	Branches []string        // the branches judged, the newest worked on last
-	Commit   string          // the id of the session's newest commit, when the repository has it
-	Merged   map[string]bool // each branch, and the commit, that could be judged: merged into the trunk or not
+	Repo     string            // the repository's main checkout
+	Trunk    string            // the trunk's name, such as main
+	Branches []string          // the branches judged, the newest worked on last
+	Commit   string            // the id of the session's newest commit, when the repository has it
+	Merged   map[string]bool   // each branch, and the commit, that could be judged: merged into the trunk or not
+	Errors   map[string]string // why a branch that may exist could not be judged; one with neither has gone
 }
+
+// ErrNothingToJudge is a session that named no branch or commit.
+var ErrNothingToJudge = errors.New("no branch or commit to judge")
 
 // Source answers these questions; tests substitute their own.
 type Source interface {
@@ -138,7 +142,7 @@ func (Tools) Landed(dir string, branches []string, commits []Commit) (Landing, e
 		targets = append(targets, commit)
 	}
 	if len(targets) == 0 {
-		return Landing{}, fmt.Errorf("no branch or commit to judge")
+		return Landing{}, ErrNothingToJudge
 	}
 	cmd := exec.Command("gwt", append(append([]string{"merged"}, targets...), "--json")...)
 	cmd.Dir = dir
@@ -150,6 +154,7 @@ func (Tools) Landed(dir string, branches []string, commits []Commit) (Landing, e
 		Branches []struct {
 			Branch string `json:"branch"`
 			Merged *bool  `json:"merged"`
+			Error  string `json:"error"`
 		} `json:"branches"`
 	}
 	if err := json.Unmarshal(out, &v); err != nil || v.Trunk.Name == "" {
@@ -158,10 +163,13 @@ func (Tools) Landed(dir string, branches []string, commits []Commit) (Landing, e
 		}
 		return Landing{}, fmt.Errorf("gwt merged --json: %v", err)
 	}
-	l := Landing{Trunk: v.Trunk.Name, Branches: branches, Commit: commit, Merged: map[string]bool{}}
+	l := Landing{Trunk: v.Trunk.Name, Branches: branches, Commit: commit, Merged: map[string]bool{}, Errors: map[string]string{}}
 	for _, b := range v.Branches {
-		if b.Merged != nil {
+		switch {
+		case b.Merged != nil:
 			l.Merged[b.Branch] = *b.Merged
+		case b.Error != "" && !strings.HasPrefix(b.Error, "no local branch"):
+			l.Errors[b.Branch] = b.Error
 		}
 	}
 	git := exec.Command("git", "rev-parse", "--path-format=absolute", "--git-common-dir")

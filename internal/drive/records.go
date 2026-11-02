@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -59,8 +60,9 @@ func (d *Driver) Answer(ask, source, took string, explained bool) (string, error
 
 // AnswerAndSend records the owner's answer to an ask and sends the session the
 // ask is about the step that answer leads to: the one command it takes, the
-// session's current view read for it. The step goes first, so a refusal means
-// nothing happened and it can all be run again.
+// session's current view read for it. The answer goes on record with the step's
+// intent, in one write under the batch's lock, so no command cut short can leave
+// a step sent with its ask still open, and no second run can send it again.
 func (d *Driver) AnswerAndSend(ask, source, took string, explained bool, step Step, opt SendOptions) (*Sent, string, error) {
 	if !tookWords[took] {
 		return nil, "", &Refused{Reason: fmt.Sprintf("--took %q: one of recommended, amended, delegated, moot", took)}
@@ -72,20 +74,11 @@ func (d *Driver) AnswerAndSend(ask, source, took string, explained bool, step St
 	if b == nil {
 		return nil, "", &Refused{Reason: batch.ErrNoBatch.Error(), cause: batch.ErrNoBatch}
 	}
-	_, asks, _ := batch.Records(evs)
-	var a *batch.Ask
-	for _, x := range asks {
-		if x.ID == ask {
-			a = x
-		}
+	a, refused := d.openAsk(b, evs, ask)
+	if refused != nil {
+		return nil, "", refused
 	}
-	switch {
-	case a == nil:
-		return nil, "", &Refused{Reason: fmt.Sprintf("no ask %s in batch %s", ask, b.Meta.Name), Next: d.run("status") + " lists the open asks"}
-	case a.Answer != nil:
-		return nil, "", &Refused{Reason: fmt.Sprintf("%s was answered at %s, and its step, if any, went then", ask, a.Answer.At.In(b.Zone()).Format("15:04")),
-			Next: "read the session before sending anything more: " + d.run("read", cmp.Or(a.Session, "SESSION"))}
-	case a.Session == "":
+	if a.Session == "" {
 		return nil, "", &Refused{Reason: ask + " is about the batch, so it names no session to send a step to",
 			Next: "record the answer alone (" + d.run("record", "answer", ask, "--took", took) + "), then send the step to the session it is for"}
 	}
@@ -93,15 +86,39 @@ func (d *Driver) AnswerAndSend(ask, source, took string, explained bool, step St
 	if err != nil {
 		return nil, "", err
 	}
+	opt.Answer = &AskAnswer{Ask: ask, Source: source, Took: took, Explained: explained}
 	sent, err := d.Send(o.View.String(), step, opt)
-	if _, ok := errors.AsType[*Refused](err); ok {
+	evs, rerr := b.Events()
+	if rerr != nil {
 		return sent, "", err
 	}
-	if _, rerr := d.Answer(ask, source, took, explained); rerr != nil {
-		return sent, "", &Failed{What: fmt.Sprintf("the step reached %s, but the answer to %s was not recorded: %v", a.Session, ask, rerr),
-			Next: "record it: " + d.run("record", "answer", ask, "--took", took)}
+	_, asks, _ := batch.Records(evs)
+	answered := slices.ContainsFunc(asks, func(x *batch.Ask) bool { return x.ID == ask && x.Answer != nil })
+	if !answered {
+		return sent, "", err
+	}
+	if r, ok := errors.AsType[*Refused](err); ok {
+		// Admitted and then refused, so the answer stands though the step did not go.
+		return sent, ask, &Failed{What: fmt.Sprintf("recorded the answer to %s, but the step did not go: %s", ask, r.Reason), Next: r.Next}
 	}
 	return sent, ask, err
+}
+
+// openAsk finds an ask no one has answered, or refuses saying why it cannot be
+// answered.
+func (d *Driver) openAsk(b *batch.Batch, evs []batch.Event, ask string) (*batch.Ask, *Refused) {
+	_, asks, _ := batch.Records(evs)
+	for _, a := range asks {
+		if a.ID != ask {
+			continue
+		}
+		if a.Answer != nil {
+			return nil, &Refused{Reason: fmt.Sprintf("%s was answered at %s, and its step, if any, went then", ask, a.Answer.At.In(b.Zone()).Format("15:04")),
+				Next: "read the session before sending anything more: " + d.run("read", cmp.Or(a.Session, "SESSION"))}
+		}
+		return a, nil
+	}
+	return nil, &Refused{Reason: fmt.Sprintf("no ask %s in batch %s", ask, b.Meta.Name), Next: d.run("status") + " lists the open asks"}
 }
 
 // Seen notes that a driver read the batch, which is how a run that changes

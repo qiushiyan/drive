@@ -48,29 +48,32 @@ type Carried struct {
 	State State
 	View  string
 	Next  string
+	Jobs  int // the background jobs it still runs
 }
-
-// jobHold is how long a turn that says it waits on its own background job
-// stays quiet: such a turn resumes when the job ends, whose wake is the one
-// that matters, and the longest real jobs ran about five hours. A job that
-// never ends still reaches its driver, at this mark and then at ever longer
-// ones, and the page and status show the wait all along.
-const jobHold = 2 * time.Hour
 
 // Wait blocks until a session's turn ends and has stayed ended for quiet: it
-// is done with no background job still running, it waits on a prompt, or an
-// API error ended it. A turn that ended while its jobs run usually resumes
-// when they finish, so its reply decides (wakeAt): one that asks ends the wait
-// after quiet, one that says it waits holds until jobHold, and anything else
-// ends it after bgCap.
+// is done with no shell this turn started still running, it waits on a
+// prompt, or an API error ended it. A turn that ended while its own
+// background jobs run usually resumes when they finish but may also have
+// ended on a question, so after bgCap the wait returns anyway. A driver
+// running this pays for no wake, so what paces a chat driver's (wakeFacts)
+// stays out of it.
 func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
-	return d.wait(ref, quiet, bgCap, nil)
+	return d.wait(ref, func(_ *Observation, t Turn, stable time.Time) wakePlan {
+		switch {
+		case t.State == "blocked:auth" || t.State == "error" || t.State == "interrupted":
+			return wakePlan{at: stable} // nothing will happen until someone acts
+		case t.State.onPrompt() || t.Shells == 0:
+			return wakePlan{at: stable.Add(quiet)}
+		}
+		return wakePlan{at: stable.Add(bgCap)}
+	}, nil)
 }
 
-// wait is Wait with a say in when an ending returns: mayEnd, when set, keeps
-// the wait going past an ending it holds back, and the session is looked at
+// wait is both: planFor says when a turn that is over ends the wait, and
+// mayEnd, when set, can keep it going past that, the session being looked at
 // again meanwhile, so a turn that moves on is no ending any more.
-func (d *Driver) wait(ref string, quiet, bgCap time.Duration, mayEnd func(*Ending) bool) (*Ending, error) {
+func (d *Driver) wait(ref string, planFor func(o *Observation, t Turn, stable time.Time) wakePlan, mayEnd func(*Ending) bool) (*Ending, error) {
 	b, _, members, err := d.members()
 	if err != nil {
 		return nil, err
@@ -113,19 +116,13 @@ func (d *Driver) wait(ref string, quiet, bgCap time.Duration, mayEnd func(*Endin
 		if key != last {
 			last, stable = key, d.now()
 		}
-		var promptAt time.Time
-		if p := o.Frontier.Newest(); p != nil {
-			promptAt = p.At
-		}
-		t := d.turnOf(o.Session, o.Frontier, promptAt)
+		t := d.turnNow(o)
 		state := t.State
+		var plan wakePlan
 		ended := false
-		switch {
-		case !t.Over:
-		case state == "blocked:auth" || state == "error" || state == "interrupted":
-			ended = true // nothing will happen until someone acts
-		default:
-			ended = !d.now().Before(d.wakeAt(o, t, d.wakesOf(b, o.Label), stable, quiet, bgCap))
+		if t.Over {
+			plan = planFor(o, t, stable)
+			ended = plan.covered || !d.now().Before(plan.at)
 		}
 		if ended {
 			e := &Ending{Label: o.Label, Block: o.Session.Block, State: state, Msg: st.Msg, Error: o.Frontier.Error,
@@ -140,107 +137,13 @@ func (d *Driver) wait(ref string, quiet, bgCap time.Duration, mayEnd func(*Endin
 				}
 			}
 			e.Next = d.nextFor(o, state, e.Jobs)
-			if mayEnd == nil || mayEnd(e) {
+			e.Covered = plan.covered
+			if plan.covered || mayEnd == nil || mayEnd(e) {
 				return e, nil
 			}
 		}
 		d.sleep(5 * d.poll() / 2)
 	}
-}
-
-// wakeRecord is what the batch's log says of a session's wakes.
-type wakeRecord struct {
-	member *batch.Member // nil for a session outside the batch
-	heard  time.Time     // when any of the batch's drivers last left a trace
-}
-
-// wakesOf reads the log afresh, since a wait outlasts what it read when it
-// began; b is nil outside any batch.
-func (d *Driver) wakesOf(b *batch.Batch, label string) wakeRecord {
-	if b == nil {
-		return wakeRecord{}
-	}
-	evs, err := b.Events()
-	if err != nil {
-		return wakeRecord{}
-	}
-	return wakeRecord{member: batch.Find(batch.Members(evs), label), heard: batch.Hearings(evs, d.now()).Heard}
-}
-
-// told says the driver heard of this view while jobs run: a wake came for it,
-// and a driver left a trace after that. A wake no run answered told no one.
-func (w wakeRecord) told(view string) bool {
-	m := w.member
-	return m != nil && m.WokenTimes > 0 && m.WokenView == view && w.heard.After(m.Woken)
-}
-
-// asked says the driver sent for a reply to read, which is news whatever it
-// says and whatever still runs: a recap goes before a park or a close.
-func (w wakeRecord) asked() bool {
-	if w.member == nil || w.member.LastSend == nil {
-		return false
-	}
-	last := w.member.LastSend
-	return last.Key == "recap" || strings.EqualFold(strings.TrimSpace(last.Text), "recap")
-}
-
-// wakeAt is when a turn that is over ends the wait. With no job running that
-// is after quiet, and so on a prompt. With one running it is the reply's call,
-// and a view the driver has heard of waits longer each time, so a job that runs
-// for hours costs at most a run or two. stable is when this wait saw the turn
-// last change.
-func (d *Driver) wakeAt(o *Observation, t Turn, rec wakeRecord, stable time.Time, quiet, bgCap time.Duration) time.Time {
-	view := o.View.String()
-	m := rec.member
-	if t.State.onPrompt() || t.Shells+t.Orphans == 0 {
-		return stable.Add(quiet)
-	}
-	if rec.told(view) {
-		return m.Woken.Add(jobHold << min(m.WokenTimes, 8))
-	}
-	if m != nil && m.WokenTimes > 0 && m.WokenView == view {
-		return m.Woken.Add(repostAfter) // a wake no run answered is no wake
-	}
-	if rec.asked() {
-		return stable.Add(quiet)
-	}
-	switch replyReads(o) {
-	case turn.ReadsAsking:
-		return stable.Add(quiet)
-	case turn.ReadsWaiting:
-		return o.Session.Since().Add(max(jobHold, bgCap))
-	}
-	if t.Shells == 0 {
-		return stable.Add(quiet) // only older jobs run, and this turn answered its step
-	}
-	return stable.Add(bgCap)
-}
-
-// holdsUntil is when a session's wake comes at the latest while it waits on
-// its own job, as Wait holds it; zero when no such hold stands. Status and the
-// page show it, since a wake held back is a wake the owner cannot otherwise
-// see coming, and a watch held so long is not stuck.
-func (d *Driver) holdsUntil(o *Observation, rec wakeRecord) time.Time {
-	var at time.Time
-	if p := o.Frontier.Newest(); p != nil {
-		at = p.At
-	}
-	t := d.turnOf(o.Session, o.Frontier, at)
-	if !t.Over || t.State != "done" || t.Shells+t.Orphans == 0 {
-		return time.Time{}
-	}
-	if rec.told(o.View.String()) || rec.member != nil && !rec.asked() && replyReads(o) == turn.ReadsWaiting {
-		return d.wakeAt(o, t, rec, o.Session.Since(), time.Minute, time.Minute)
-	}
-	return time.Time{}
-}
-
-// replyReads is what the session's newest reply says of its turn.
-func replyReads(o *Observation) turn.Reads {
-	if a, local := o.Frontier.Answer(); a != nil && !local {
-		return turn.ReadReply(a.Text)
-	}
-	return turn.ReadsEnded
 }
 
 // nextFor is what a driver runs about a session whose turn ended in state,
@@ -267,6 +170,9 @@ func (d *Driver) nextFor(o *Observation, state State, jobs []session.Shell) stri
 		return d.retryHint(o, kind)
 	case state == "interrupted":
 		return fmt.Sprintf("its turn was interrupted; read where it stopped (%s) before its next step", d.run("read", o.Label))
+	case state == "done" && len(jobs) > 0 && replyReads(o) == turn.ReadsAsking:
+		return fmt.Sprintf("its reply asks something, whatever its job does: answer with its next step (%s); if the job should have ended, have the session stop it: %s",
+			d.run("send", o.View.String(), text("…")), d.stopJob(o.View.String(), jobs[0]))
 	case state == "done" && len(jobs) > 0:
 		again := "run only " + d.run("watch", o.Label) + ", which tells drive this run heard the wake: it stays armed and comes again when that turn ends"
 		if webhook, _ := d.wakes(o); !webhook {
@@ -322,7 +228,7 @@ func (e *Ending) Text() string {
 	}
 	b.WriteString(e.Waiting)
 	for _, c := range e.Also {
-		fmt.Fprintf(&b, "also ended, in this one wake: %s (%s): %s; view: %s", c.Label, rex.Short(c.Block), c.State, c.View)
+		fmt.Fprintf(&b, "also ended, in this one wake: %s (%s), whose reply is not shown here: %s; view: %s", c.Label, rex.Short(c.Block), c.State, c.View)
 		if c.Next != "" {
 			fmt.Fprintf(&b, "; next for it: %s", c.Next)
 		}

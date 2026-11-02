@@ -341,3 +341,61 @@ func TestContractRexRestart(t *testing.T) {
 	c.run("restart-open", as("open", "S1", "--dir", work, "--resume", s1.SID, "--account", "acct@example.com")...)
 	c.run("restart-status-after", as("status", "--quick")...)
 }
+
+// A close can take its cleanup along, in one command.
+func TestContractCloseCleanup(t *testing.T) {
+	c := newContract(t)
+	s := c.w.Add("C1")
+	s.Busy("land it")
+	s.Done("Merged.")
+	s.Write(map[string]any{"type": "attachment", "gitBranch": "pool-drain"})
+	cli(c.app, "batch", "new", "b5")
+	_, out, _ := cli(c.app, "read", s.Block[len(s.Block)-6:])
+	cli(c.app, "send", view(t, out), "--as", "C1", "recap")
+	_, out, _ = cli(c.app, "read", "C1")
+	c.run("close-cleanup", "close", view(t, out), "--cleanup")
+}
+
+// A driver's reads tell drive its run heard the wake, since a run with nothing to
+// do leaves no other trace, and the machine's watchdog is no driver's.
+func TestAReadIsHeardAndTheWatchdogIsNot(t *testing.T) {
+	for _, args := range [][]string{{"status", "--quick"}, {"read", "ON"}, {"log"}, {"metrics"}, {"batch"}, {"watch", "ON"}, {"watch", "--due"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			c := newContract(t)
+			write(t, filepath.Join(c.home, "config", "webhooks", "session-driver"), "URL=http://127.0.0.1:9/unused\nAUTH=Bearer x\n")
+			on := c.w.Add("ON")
+			on.Busy("onboard")
+			on.Done("analysis")
+			cli(c.app, "batch", "new", "b6", "--webhook", "session-driver")
+			_, out, _ := cli(c.app, "--driver", "session-driver", "read", on.Block[len(on.Block)-6:])
+			cli(c.app, "--driver", "session-driver", "send", view(t, out), "--as", "ON", "go")
+			c.w.Clock.Sleep(2 * time.Minute)
+			base := seenIn(t, c)
+			if code, _, errs := cli(c.app, append([]string{"--driver", "session-driver"}, args...)...); code != 0 {
+				t.Fatalf("%v: %s", args, errs)
+			}
+			if seenIn(t, c) != base+1 {
+				t.Fatalf("%v left no trace", args)
+			}
+			c.w.Clock.Sleep(2 * time.Minute)
+			base = seenIn(t, c)
+			if code, _, errs := cli(c.app, "watch", "--due-all"); code != 0 {
+				t.Fatal(errs)
+			}
+			if seenIn(t, c) != base {
+				t.Fatal("the watchdog runs when no driver does, so it proves none is running")
+			}
+		})
+	}
+}
+
+// seenIn counts the batch's seen events straight from its log, since reading it
+// through drive would add one.
+func seenIn(t *testing.T, c *contract) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(c.home, "state", "batches", "b6", "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Count(string(data), `"kind":"seen"`)
+}

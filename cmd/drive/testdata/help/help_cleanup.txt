@@ -5,9 +5,9 @@ Remove what closed sessions left once it is merged, and say plainly what stays.
 A closed session's merged branch goes with its worktree. One that is not
 merged stays, as does one gwt will not remove, such as a checkout with
 uncommitted work or a branch an open session is on: it prints why, status
-lists it once as a fact, and nobody is asked. What stays is judged again on
-the next run, since a pull request can merge after its session closed. gwt
-keeps a recovery ref for anything it discards.
+lists it once as a fact, and nobody is asked. What stays, or could not be
+checked, is judged again on the next run, since a pull request can merge after
+its session closed. gwt keeps a recovery ref for anything it discards.
 
 Arguments:
   <session>            One closed session of the batch, instead of every closed session of the

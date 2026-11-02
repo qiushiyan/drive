@@ -656,7 +656,7 @@ func stripOf(ov *Overview, c Card, group string, now time.Time) stripView {
 			s.Alerts = append(s.Alerts, "woken "+pageClock(m.Woken, now, ov.Zone)+", nothing done since")
 		case !ov.Wakes || m.Parked != "":
 		case r.Armed && r.HoldsUntil.After(now):
-			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "Armed: it says it waits on its own job, so its driver hears when that turn ends, or " + at(r.HoldsUntil) + " at the latest."})
+			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "Armed: " + r.HoldWhy + ", so its driver hears when that turn ends, or " + at(r.HoldsUntil) + " at the latest."})
 		case r.Due == "" && r.Armed:
 			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "Armed: its driver hears when its turn ends."})
 		case r.Due == "":

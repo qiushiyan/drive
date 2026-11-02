@@ -32,12 +32,14 @@ const (
 	KindGoal       = "goal" // what a session sets out to do, for the owner; the latest per label stands
 	KindSeen       = "seen" // a driver read the batch, which is how a run that changes nothing is heard
 	// KindCleanup is what became of a branch a closed session left: Outcome
-	// removed, unmerged, left (Reason says why) or none (it left nothing).
+	// removed, unmerged, left (Reason says why), unread (it could not be
+	// judged, Reason says why) or none (it left nothing).
 	KindCleanup = "cleanup"
 	// KindAfterWake is the batch's after-wake commands having run.
 	KindAfterWake = "after-wake"
-	// KindTold is something the watchdog told the driver of, on a post of its
-	// own, so it tells it once: Outcome gone or watch-failing.
+	// KindTold is something the watchdog told the driver of a session, written
+	// as its post begins: Outcome gone or watch-failing, with Reason when that
+	// post failed.
 	KindTold = "told"
 )
 
@@ -126,6 +128,7 @@ type Event struct {
 	// several endings at once make one post.
 	Via    string `json:"via,omitempty"`
 	Branch string `json:"branch,omitempty"` // on a cleanup, the branch it judged
+	Jobs   int    `json:"jobs,omitempty"`   // on a wake, the background jobs its session still ran
 }
 
 // Member is a session that belongs to the batch.
@@ -157,8 +160,42 @@ type Member struct {
 	Woken      time.Time // when its wake was last posted
 	WokenView  string    // the view that wake carried
 	WokenTimes int       // how many wakes were posted for that view
+	WokenAcked int       // how many of those a driver left a trace after
+	WokenJobs  int       // the background jobs it still ran at that wake
 	PrevView   string    // the view the wake before it carried
 	WakeFailed time.Time // when a watch last ended without a wake
+	// Notices are what the watchdog told the driver of it, by what they are:
+	// gone or watch-failing. Each counts once a driver left a trace after it.
+	Notices map[string]Notice
+
+	posting   bool // a post has begun with no result yet
+	postHeard bool // a driver left a trace since that post began
+	woke      bool // that post was answered 2xx
+}
+
+// Notice is something the watchdog told a driver of a session.
+type Notice struct {
+	At    time.Time
+	Heard bool
+}
+
+// WokenHeard says a driver left a trace after its last wake's post began, which
+// is before that post can have returned: a run can act before it does.
+func (m *Member) WokenHeard() bool { return m.woke && m.postHeard }
+
+// heard notes a driver's trace.
+func (m *Member) heard() {
+	for what, n := range m.Notices {
+		n.Heard = true
+		m.Notices[what] = n
+	}
+	if m.postHeard {
+		return
+	}
+	m.postHeard = true
+	if m.woke {
+		m.WokenAcked++
+	}
 }
 
 // Members derives the batch's sessions, in the order they joined.
@@ -171,6 +208,11 @@ func Members(evs []Event) []*Member {
 	for i := range evs {
 		e := &evs[i]
 		m := by[e.Session]
+		if Heard(*e) {
+			for _, x := range order {
+				x.heard()
+			}
+		}
 		switch e.Kind {
 		case KindOpenIntent:
 			if e.Goal != "" {
@@ -229,19 +271,37 @@ func Members(evs []Event) []*Member {
 			}
 		case KindPosting:
 			if m != nil {
-				m.Posting = e.At
+				m.Posting, m.posting, m.postHeard, m.woke = e.At, true, false, false
 			}
 		case KindWake:
 			switch {
 			case m == nil:
 			case e.HTTP != 0:
 				if e.View != m.WokenView {
-					m.WokenTimes = 0
+					m.WokenTimes, m.WokenAcked = 0, 0
 				}
-				m.Woken, m.PrevView, m.WokenView = e.At, m.WokenView, e.View
+				if !m.posting {
+					m.postHeard = false // a wake with no post on record: nothing has answered it yet
+				}
+				m.Woken, m.PrevView, m.WokenView, m.WokenJobs = e.At, m.WokenView, e.View, e.Jobs
 				m.WokenTimes++
+				m.posting, m.woke = false, true
+				if m.postHeard {
+					m.WokenAcked++
+				}
 			default:
-				m.WakeFailed = e.At
+				m.WakeFailed, m.posting = e.At, false
+			}
+		case KindTold:
+			if m != nil {
+				if m.Notices == nil {
+					m.Notices = map[string]Notice{}
+				}
+				if e.Reason != "" {
+					delete(m.Notices, e.Outcome) // the post failed, so it told no one
+				} else {
+					m.Notices[e.Outcome] = Notice{At: e.At}
+				}
 			}
 		case KindFailure:
 			if m != nil && strings.HasPrefix(e.Reason, "watch ended without a wake") {
@@ -273,11 +333,19 @@ const HeardWithin = 10 * time.Minute
 // Hearings reads how a batch's wakes are being heard as of now.
 func Hearings(evs []Event, now time.Time) Hearing {
 	var h Hearing
+	began := map[string]time.Time{} // when each session's newest post began
 	for _, e := range evs {
 		switch {
 		case Heard(e):
 			h.Heard, h.Strikes, h.Since, h.Last = e.At, 0, time.Time{}, time.Time{}
+		case e.Kind == KindPosting && e.Via == "":
+			began[e.Session] = e.At
 		case e.Kind == KindWake && e.Via == "":
+			b, ok := began[e.Session]
+			delete(began, e.Session)
+			if ok && !h.Heard.IsZero() && !h.Heard.Before(b) && e.HTTP != 0 {
+				continue // a run answered before its post returned
+			}
 			h.Last = e.At
 			if e.HTTP == 0 || now.Sub(e.At) >= HeardWithin {
 				if h.Strikes == 0 {

@@ -113,6 +113,7 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 	if ov.Wakes {
 		ov.Unheard = unheardLine(hearing, ov.Zone)
 	}
+	ov.Leftovers = d.leftoverLines(b)
 	grants, asks, notes := batch.Records(evs)
 	for _, a := range asks {
 		if a.Answer == nil {
@@ -160,7 +161,6 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 			holds := d.holdsNow(evs, members)
 			ov.Holds = holdLines(holds, ov.Zone)
 			read := d.memberRows(b, members, nil, holds, hearing, ov.Zone, true)
-			ov.Leftovers = d.leftoverLines(b)
 			for i := range read {
 				rows[read[i].Label] = &read[i]
 			}

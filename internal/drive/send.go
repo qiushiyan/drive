@@ -33,6 +33,15 @@ type SendOptions struct {
 	Queue bool   // the session is working: let it take this mid-turn
 	Hold  string // a resource this step's turn uses that only one session may use at once
 	Label string // the label a session outside the batch joins it under
+	// Answer is the owner's answer this step carries out, recorded with its
+	// intent.
+	Answer *AskAnswer
+}
+
+// AskAnswer is the owner's answer to an ask.
+type AskAnswer struct {
+	Ask, Source, Took string
+	Explained         bool
 }
 
 // Sent reports a send.
@@ -315,6 +324,11 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 	var noticeLine, noticeIntent string
 	err := b.Locked(func(evs []batch.Event) error {
 		members := batch.Members(evs)
+		if opt.Answer != nil {
+			if _, refused := d.openAsk(b, evs, opt.Answer.Ask); refused != nil {
+				return refused // another run answered it since this one read
+			}
+		}
 		if opt.Hold != "" {
 			if h, held := d.holder(evs, members, opt.Hold, o.Label); held {
 				// The refused session is left untouched, so no wake of its own comes: one in the batch is parked.
@@ -363,6 +377,9 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 				return err
 			}
 			p.path, p.typed = path, pointer(path, opt.Queue)
+		}
+		if an := opt.Answer; an != nil {
+			add = append(add, batch.Event{At: d.now(), Kind: batch.KindAnswer, Ref: an.Ask, Source: an.Source, Took: an.Took, Explained: an.Explained, Intent: intent})
 		}
 		add = append(add, batch.Event{At: d.now(), Kind: batch.KindSendIntent, Session: o.Label, Intent: intent,
 			Hold: opt.Hold, View: view, Key: p.key, Text: p.typed, Path: p.path, Mode: p.mode(), Notice: p.notice && !p.alone})

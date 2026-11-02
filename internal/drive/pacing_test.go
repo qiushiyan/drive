@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -25,10 +26,11 @@ import (
 // decisions that pace them, and that a real ending is never among what they
 // hold back.
 
-// webhookLog is a driver's webhook that records what it is told.
+// webhookLog is a driver's webhook that records what it is told, and when.
 type webhookLog struct {
 	mu     sync.Mutex
 	posts  []map[string]any
+	at     []time.Time
 	status int
 	onPost func()
 }
@@ -42,6 +44,7 @@ func hook(t *testing.T, r *rig) *webhookLog {
 		_ = json.Unmarshal(body, &p)
 		l.mu.Lock()
 		l.posts = append(l.posts, p)
+		l.at = append(l.at, r.w.Clock.Now())
 		status, on := l.status, l.onPost
 		l.mu.Unlock()
 		if on != nil {
@@ -66,9 +69,38 @@ func (l *webhookLog) output(i int) string {
 	return fmt.Sprint(l.posts[i]["output"])
 }
 
-// A turn ended while a job it started runs. What the reply says decides how
-// long the wait lasts, and a question never waits on a job.
-func TestWhatAReplySaysDecidesTheWaitWhileItsJobRuns(t *testing.T) {
+// after is how long after start the i-th post came.
+func (l *webhookLog) after(i int, start time.Time) time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.at[i].Sub(start)
+}
+
+// answeredBy has each post start a driver's run, which reads the batch half a
+// minute on, as real runs did, and ends.
+func (l *webhookLog) answeredBy(r *rig) *webhookLog {
+	l.onPost = func() {
+		run := *r.d
+		r.w.Clock.At(r.w.Clock.Now().Add(30*time.Second), run.Seen)
+	}
+	return l
+}
+
+// watch runs a session's watch to its end, as the process does, on this
+// goroutine: what happens meanwhile is scheduled on the clock.
+func watch(t *testing.T, r *rig, c *testkit.Claude, label string) *drive.Ending {
+	t.Helper()
+	run := *r.d
+	e, err := run.Notify(watchOf(c), label, drive.WakeQuiet, drive.WakeCap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+// A turn ended while a job it started runs. What the reply says decides when
+// the driver hears, and a question never waits on a job.
+func TestWhatAReplySaysDecidesTheWakeWhileItsJobRuns(t *testing.T) {
 	report := strings.Repeat("What the round found and how it was settled. ", 40)
 	for _, tc := range []struct {
 		name, reply string
@@ -78,29 +110,49 @@ func TestWhatAReplySaysDecidesTheWaitWhileItsJobRuns(t *testing.T) {
 		{"ended on a question", "Run 5 passes three of five readings. Should it count as a pass?", time.Minute, 2 * time.Minute},
 		{"a decision that needs someone", report + "\n\nOn your word I'll end the loop here.", time.Minute, 2 * time.Minute},
 		{"asks, and waits as well", "Is the heads-up enough? Waiting on CI meanwhile.", time.Minute, 2 * time.Minute},
+		{"an approval, and a wait", "Please approve the production migration. Waiting on CI meanwhile.", time.Minute, 2 * time.Minute},
 		{"a report with a job left behind", report + "\n\nThe scratch worktrees are removed.", 10 * time.Minute, 11 * time.Minute},
 		{"anything unclear", "415 copies, no new failures.", 10 * time.Minute, 11 * time.Minute},
+		{"a wait that is over", "No longer waiting for CI. The change is merged and released.", 10 * time.Minute, 11 * time.Minute},
 		{"says it waits", "Waiting on the replays.", 2 * time.Hour, 2*time.Hour + time.Minute},
 		{"says what comes after", report + "\n\nWhen the replays finish, I'll score them and report.", 2 * time.Hour, 2*time.Hour + time.Minute},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newRig(t, "webhook")
+			l := hook(t, r).answeredBy(r)
 			c := adopted(t, r, "T1")
 			c.Busy("run the gate")
 			c.Job("gate-replay --arms 5")
 			c.Done(tc.reply)
 			start := r.w.Clock.Now()
-			e, err := r.d.Wait("T1", time.Minute, 10*time.Minute)
-			if err != nil {
-				t.Fatal(err)
+			r.w.Clock.At(start.Add(3*time.Hour), func() { c.JobDone("Replays are in.") })
+			watch(t, r, c, "T1")
+			if took := l.after(0, start); took < tc.atLeast || took > tc.atMost {
+				t.Fatalf("the driver heard after %s, not between %s and %s", took, tc.atLeast, tc.atMost)
 			}
-			if took := r.w.Clock.Now().Sub(start); took < tc.atLeast || took > tc.atMost {
-				t.Fatalf("the wait ended after %s, not between %s and %s", took, tc.atLeast, tc.atMost)
-			}
-			if len(e.Jobs) != 1 || e.State != "done" || !strings.Contains(e.Text(), "gate-replay") {
-				t.Fatalf("it says what still runs: %+v\n%s", e, e.Text())
+			if !strings.Contains(l.output(0), "gate-replay") {
+				t.Fatalf("it says what still runs:\n%s", l.output(0))
 			}
 		})
+	}
+}
+
+// A driver that waits itself pays for no wake, so its wait keeps the contract
+// its flags state, whatever the reply says.
+func TestAWaitKeepsItsOwnTiming(t *testing.T) {
+	for _, wake := range []string{"none", "webhook"} {
+		r := newRig(t, wake)
+		c := adopted(t, r, "T1")
+		c.Busy("run the gate")
+		c.Job("gate-replay")
+		c.Done("Waiting on the replays.")
+		start := r.w.Clock.Now()
+		if _, err := r.d.Wait("T1", time.Second, time.Minute); err != nil {
+			t.Fatal(err)
+		}
+		if took := r.w.Clock.Now().Sub(start); took > 2*time.Minute {
+			t.Fatalf("%s: --bg 60 waited %s", wake, took)
+		}
 	}
 }
 
@@ -110,7 +162,7 @@ func TestAJobHoldsBackNoPromptErrorOrInterrupt(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		end   func(c *testkit.Claude)
-		state drive.State
+		state string
 	}{
 		{"a permission prompt", func(c *testkit.Claude) { c.Ask("rm -rf /tmp/x") }, "blocked:permission"},
 		{"a question prompt", func(c *testkit.Claude) { c.Set("blocked", "question", "Which arm?") }, "blocked:question"},
@@ -118,17 +170,18 @@ func TestAJobHoldsBackNoPromptErrorOrInterrupt(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newRig(t, "webhook")
+			l := hook(t, r)
 			c := adopted(t, r, "T1")
 			c.Busy("run the gate")
 			c.Say("Waiting on the replays.")
 			c.Job("gate-replay")
 			tc.end(c)
 			start := r.w.Clock.Now()
-			e, err := r.d.Wait("T1", time.Minute, 10*time.Minute)
-			if err != nil || e.State != tc.state {
-				t.Fatalf("%+v %v", e, err)
+			e := watch(t, r, c, "T1")
+			if string(e.State) != tc.state || l.count() != 1 {
+				t.Fatalf("%+v, %d posts", e, l.count())
 			}
-			if took := r.w.Clock.Now().Sub(start); took > 2*time.Minute {
+			if took := l.after(0, start); took > 2*time.Minute {
 				t.Fatalf("it waited %s on a job", took)
 			}
 		})
@@ -139,6 +192,7 @@ func TestAJobHoldsBackNoPromptErrorOrInterrupt(t *testing.T) {
 // whatever it says and whatever still runs.
 func TestARecapWakesWhateverStillRuns(t *testing.T) {
 	r := newRig(t, "webhook")
+	l := hook(t, r).answeredBy(r)
 	c := adopted(t, r, "T1")
 	c.Job("gh pr checks --watch")
 	c.Edit(func(c *testkit.Claude) {
@@ -148,33 +202,10 @@ func TestARecapWakesWhateverStillRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := r.w.Clock.Now()
-	if _, err := r.d.Wait("T1", time.Minute, 10*time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	if took := r.w.Clock.Now().Sub(start); took > 2*time.Minute {
+	r.w.Clock.At(start.Add(3*time.Hour), func() { c.JobDone("Released.") })
+	watch(t, r, c, "T1")
+	if took := l.after(0, start); took > 2*time.Minute {
 		t.Fatalf("a recap waited %s on a job", took)
-	}
-}
-
-// answeredBy has each post start a driver's run, which reads the batch half a
-// minute on, as real runs did, and ends.
-func (l *webhookLog) answeredBy(r *rig) *webhookLog {
-	l.onPost = func() {
-		run := *r.d
-		at := r.w.Clock.Now().Add(30 * time.Second)
-		go func() {
-			waitForClock(r, at)
-			run.Seen()
-		}()
-	}
-	return l
-}
-
-// waitForClock returns once the fake clock has passed after: the test's own
-// goroutine moving a session while a watch polls.
-func waitForClock(r *rig, after time.Time) {
-	for r.w.Clock.Now().Before(after) {
-		time.Sleep(20 * time.Microsecond)
 	}
 }
 
@@ -189,25 +220,23 @@ func TestAFiveHourJobCostsOneWakeAndABackstop(t *testing.T) {
 	c.Busy("run the gate")
 	c.Job("gate-replay")
 	c.Done("Replays are running. When they finish, I'll score them and report.")
-	woke := make(chan *drive.Ending, 1)
-	notify := *r.d
-	go func() {
-		e, _ := notify.Notify(name, "T1", time.Minute, 10*time.Minute)
-		woke <- e
-	}()
-	start := r.w.Clock.Now()
-	waitForClock(r, start.Add(5*time.Hour))
-	if !r.watches.Alive(name) {
+	var alive bool
+	var posts int
+	var first string
+	r.w.Clock.At(r.w.Clock.Now().Add(5*time.Hour), func() {
+		alive, posts, first = r.watches.Alive(name), l.count(), l.output(0)
+		c.JobDone("All five readings are scored. Should run 5 count as a pass?")
+	})
+	e := watch(t, r, c, "T1")
+	if !alive {
 		t.Fatal("the watch stays armed while the job runs")
 	}
-	if n := l.count(); n != 1 {
-		t.Fatalf("five hours of waiting cost %d wakes, not the one backstop at two hours", n)
+	if posts != 1 {
+		t.Fatalf("five hours of waiting cost %d wakes, not the one backstop at two hours", posts)
 	}
-	if out := l.output(0); !strings.Contains(out, "gate-replay") || !strings.Contains(out, "drive --batch b1 watch T1") {
-		t.Fatalf("the backstop says what runs, and the one command that answers it: %s", out)
+	if !strings.Contains(first, "gate-replay") || !strings.Contains(first, "drive --batch b1 watch T1") {
+		t.Fatalf("the backstop says what runs, and the one command that answers it: %s", first)
 	}
-	c.JobDone("All five readings are scored. Should run 5 count as a pass?")
-	e := <-woke
 	if e == nil || e.State != "done" || !strings.Contains(e.Reply, "Should run 5 count") {
 		t.Fatalf("the real ending wakes the driver: %+v", e)
 	}
@@ -219,37 +248,77 @@ func TestAFiveHourJobCostsOneWakeAndABackstop(t *testing.T) {
 	}
 }
 
-// A report with a job left behind wakes once, and however often its watch is
-// armed again, not again for that view until the backstop.
+// A report with a job left behind wakes once, and not again for that view until
+// the backstop, whose marks grow further apart.
 func TestAReplyIsToldOncePerView(t *testing.T) {
 	r := newRig(t, "webhook")
 	l := hook(t, r).answeredBy(r)
 	c := adopted(t, r, "T1")
-	name := watchOf(c)
 	c.Busy("land it")
 	c.Job("tail -f server.log")
 	c.Done("PR #41 is open and its description is written.")
-	stopped := make(chan struct{})
-	notify := *r.d
-	go func() {
-		defer close(stopped)
-		_, _ = notify.Notify(name, "T1", time.Minute, 10*time.Minute)
-	}()
 	start := r.w.Clock.Now()
-	waitForClock(r, start.Add(90*time.Minute))
-	if n := l.count(); n != 1 {
-		t.Fatalf("one reply cost %d wakes in 90 minutes", n)
+	var at90m, at5h, at11h int
+	r.w.Clock.At(start.Add(90*time.Minute), func() { at90m = l.count() })
+	r.w.Clock.At(start.Add(5*time.Hour), func() { at5h = l.count() })
+	r.w.Clock.At(start.Add(11*time.Hour), func() {
+		at11h = l.count()
+		c.JobDone("Stopped.")
+	})
+	watch(t, r, c, "T1")
+	if at90m != 1 || at5h != 2 || at11h != 2 {
+		t.Fatalf("one wake, then one some hours on, and none soon after: %d, %d, %d", at90m, at5h, at11h)
 	}
-	waitForClock(r, start.Add(5*time.Hour))
-	if n := l.count(); n != 2 {
-		t.Fatalf("a job past its purpose reaches the driver again some hours on: %d wakes", n)
+}
+
+// A run can act before its post returns: that run heard the wake.
+func TestARunThatAnswersBeforeThePostReturnsHeardIt(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r)
+	run := *r.d
+	l.onPost = func() { run.Seen() }
+	c := adopted(t, r, "T1")
+	r.w.Clock.Sleep(2 * time.Minute) // past the run that set it up
+	c.Busy("land it")
+	c.Job("tail -f server.log")
+	c.Done("PR #41 is open and its description is written.")
+	got := -1
+	r.w.Clock.At(r.w.Clock.Now().Add(90*time.Minute), func() {
+		got = l.count()
+		c.JobDone("Stopped.")
+	})
+	watch(t, r, c, "T1")
+	if got != 1 {
+		t.Fatalf("heard before the post returned, it needs no repeat: %d wakes in 90 minutes", got)
 	}
-	waitForClock(r, start.Add(11*time.Hour))
-	if n := l.count(); n != 2 {
-		t.Fatalf("and later marks are further apart: %d wakes", n)
+}
+
+// Attempts nobody heard do not stretch the backstop: a driver back from an outage
+// hears of a job at the first mark, not days on.
+func TestUnheardAttemptsDoNotStretchTheBackstop(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r)
+	c := adopted(t, r, "T1")
+	c.Busy("land it")
+	c.Job("tail -f server.log")
+	c.Done("PR #41 is open and its description is written.")
+	view := r.view("T1")
+	r.w.Clock.Sleep(2 * time.Minute)
+	for range 6 {
+		_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindPosting, Session: "T1", View: view},
+			batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "T1", HTTP: 204, View: view, Jobs: 1})
+		r.w.Clock.Sleep(time.Minute)
 	}
-	c.JobDone("Stopped.")
-	<-stopped
+	r.d.Seen()
+	got := -1
+	r.w.Clock.At(r.w.Clock.Now().Add(5*time.Hour), func() {
+		got = l.count()
+		c.JobDone("Stopped.")
+	})
+	watch(t, r, c, "T1")
+	if got != 1 {
+		t.Fatalf("heard once, the next mark is hours off, not days: %d posts in five hours", got)
+	}
 }
 
 // A job that ends with the session still idle, which no notification resumed,
@@ -261,64 +330,93 @@ func TestAJobThatEndsWithoutResumingStillWakes(t *testing.T) {
 	c.Busy("land it")
 	c.Job("gate-replay")
 	c.Done("Waiting on the replays.")
-	done := make(chan struct{})
-	notify := *r.d
-	go func() {
-		defer close(done)
-		_, _ = notify.Notify(watchOf(c), "T1", time.Minute, 10*time.Minute)
-	}()
-	waitForClock(r, r.w.Clock.Now().Add(3*time.Hour))
-	if n := l.count(); n != 1 {
-		t.Fatalf("the backstop: %d wakes", n)
-	}
-	c.Edit(func(c *testkit.Claude) { c.Shells = nil })
-	<-done
-	if n := l.count(); n != 2 {
-		t.Fatalf("the job's end is told too: %d wakes", n)
+	got := -1
+	r.w.Clock.At(r.w.Clock.Now().Add(3*time.Hour), func() {
+		got = l.count()
+		c.Edit(func(c *testkit.Claude) { c.Shells = nil })
+	})
+	watch(t, r, c, "T1")
+	if got != 1 || l.count() != 2 {
+		t.Fatalf("the backstop, then the job's end: %d, %d", got, l.count())
 	}
 }
 
-// Endings close together make one post, naming them all, and each session's
-// own watch then has nothing to add. The next ending after it waits for the
-// run that post started.
-func TestEndingsCloseTogetherShareOnePost(t *testing.T) {
+// What a wake cuts may be what the session asks, so a wake that cannot show it
+// says to read it first, and never says only to wait.
+func TestAQuestionTheWakeCutIsReadFirst(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r).answeredBy(r)
+	c := adopted(t, r, "T1")
+	c.Busy("run the gate")
+	c.Job("gate-replay")
+	c.Done("Should run 5 count as a pass?\n\n" + strings.Repeat("What the round found and how it was settled. ", 100) + "\n\nWaiting on CI.")
+	r.w.Clock.At(r.w.Clock.Now().Add(time.Hour), func() { c.JobDone("Done.") })
+	watch(t, r, c, "T1")
+	out := l.output(0)
+	if strings.Contains(out, "Should run 5") {
+		t.Fatal("the question falls outside the wake's tail, or this tests nothing")
+	}
+	if !strings.Contains(out, "its reply is cut above: read all of it first (drive --batch b1 read T1)") || strings.Contains(out, "run only") {
+		t.Fatalf("it is told to read what it cannot see, not to answer the wait:\n%s", out[len(out)-600:])
+	}
+}
+
+// A reply that asks gets an answer, not the line for one that waits.
+func TestAReplyThatAsksIsNotToldToWait(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r).answeredBy(r)
+	c := adopted(t, r, "T1")
+	c.Busy("run the gate")
+	c.Job("gate-replay")
+	c.Done("Should run 5 count as a pass?")
+	r.w.Clock.At(r.w.Clock.Now().Add(time.Hour), func() { c.JobDone("Done.") })
+	watch(t, r, c, "T1")
+	out := l.output(0)
+	if strings.Contains(out, "run only") || !strings.Contains(out, "its reply asks something") {
+		t.Fatalf("%s", out)
+	}
+}
+
+// Endings close together make one post, naming them all, however the watches
+// race for it, and each other watch then has nothing to add.
+func TestWatchesEndingTogetherMakeOnePost(t *testing.T) {
 	r := newRig(t, "webhook")
 	l := hook(t, r)
-	a, b, c := adopted(t, r, "A"), adopted(t, r, "B"), adopted(t, r, "C")
-	for _, s := range []*testkit.Claude{a, b, c} {
-		s.Busy("work")
-		s.Done("the round is finished")
+	sessions := map[string]*testkit.Claude{}
+	for _, label := range []string{"A", "B", "C", "D", "E", "F"} {
+		c := adopted(t, r, label)
+		c.Busy("work")
+		c.Done("the round is finished")
+		sessions[label] = c
 	}
 	r.w.Clock.Sleep(2 * time.Minute)
-	// A's watch reaches its post first; B's and C's are running.
-	first := *r.d
-	if _, err := first.Notify(watchOf(a), "A", time.Minute, 10*time.Minute); err != nil {
-		t.Fatal(err)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	covered := 0
+	for label, c := range sessions {
+		run := *r.d
+		wg.Go(func() {
+			e, err := run.Notify(watchOf(c), label, drive.WakeQuiet, drive.WakeCap)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if e.Covered {
+				mu.Lock()
+				covered++
+				mu.Unlock()
+			}
+		})
 	}
+	wg.Wait()
 	if n := l.count(); n != 1 {
-		t.Fatalf("one post: %d", n)
+		t.Fatalf("six endings, %d posts", n)
 	}
-	out := l.output(0)
-	for _, want := range []string{"also ended, in this one wake: B", "also ended, in this one wake: C", "view: B@", "view: C@"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("the post names %q:\n%s", want, out)
-		}
+	if covered != 5 || strings.Count(l.output(0), "also ended, in this one wake") != 5 {
+		t.Fatalf("one post tells of them all: %d covered\n%s", covered, l.output(0))
 	}
-	for _, s := range []struct {
-		label string
-		c     *testkit.Claude
-	}{{"B", b}, {"C", c}} {
-		other := *r.d
-		e, err := other.Notify(watchOf(s.c), s.label, time.Minute, 10*time.Minute)
-		if err != nil || !e.Covered {
-			t.Fatalf("%s's ending was carried: %+v %v", s.label, e, err)
-		}
-		if r.watches.Alive(watchOf(s.c)) {
-			t.Fatalf("%s's watch has nothing left to do", s.label)
-		}
-	}
-	if n := l.count(); n != 1 {
-		t.Fatalf("still one post: %d", n)
+	if m, _ := r.d.Metrics(); m.Wakes != 1 || m.Carried != 5 {
+		t.Fatalf("metrics tell posts from endings carried: %+v", m)
 	}
 	st, _ := r.d.Status(false)
 	for _, row := range st.Rows {
@@ -326,8 +424,24 @@ func TestEndingsCloseTogetherShareOnePost(t *testing.T) {
 			t.Fatalf("each reads as woken, so nothing is lost from status: %+v", row)
 		}
 	}
-	if m, _ := r.d.Metrics(); m.Wakes != 1 || m.Carried != 2 {
-		t.Fatalf("metrics tell posts from endings carried: %+v", m)
+}
+
+// What another post carries shows no reply, so it says to read one, whatever else
+// it says to do.
+func TestAnEndingCarriedSaysToReadItsReply(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r)
+	a, b := adopted(t, r, "A"), adopted(t, r, "B")
+	a.Busy("work")
+	a.Done("finished")
+	b.Busy("work")
+	b.Job("gate-replay")
+	b.Done("Should run 5 count as a pass?")
+	r.w.Clock.Sleep(2 * time.Minute)
+	watch(t, r, a, "A")
+	out := l.output(0)
+	if !strings.Contains(out, "also ended, in this one wake: B") || !strings.Contains(out, "read its reply first (drive --batch b1 read B)") {
+		t.Fatalf("%s", out)
 	}
 }
 
@@ -340,60 +454,92 @@ func TestAWakeCloseBehindAnotherWaitsForItsRun(t *testing.T) {
 	a.Busy("work")
 	a.Done("finished")
 	r.w.Clock.Sleep(2 * time.Minute)
-	first := *r.d
-	if _, err := first.Notify(watchOf(a), "A", time.Minute, 10*time.Minute); err != nil {
-		t.Fatal(err)
-	}
+	watch(t, r, a, "A")
 	start := r.w.Clock.Now()
 	b.Busy("work")
 	b.Done("finished too")
-	second := *r.d
-	if _, err := second.Notify(watchOf(b), "B", time.Minute, 10*time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	if took := r.w.Clock.Now().Sub(start); took < 3*time.Minute || took > 5*time.Minute {
+	watch(t, r, b, "B")
+	if took := l.after(1, start); took < 3*time.Minute || took > 3*time.Minute+10*time.Second {
 		t.Fatalf("it waited for the gap, not %s", took)
-	}
-	if n := l.count(); n != 2 {
-		t.Fatalf("both endings were posted: %d", n)
 	}
 }
 
-// A run that acts on a session meanwhile leaves nothing to post about it.
-func TestASessionActedOnMeanwhilePostsNothing(t *testing.T) {
+// A post in flight holds the next, however long that one has waited: it would
+// otherwise cross the post that may yet carry it.
+func TestHeldPastItsLimitAWakeStillWaitsForAPostInFlight(t *testing.T) {
 	r := newRig(t, "webhook")
+	release := make(chan struct{})
+	var once sync.Once
+	free := func() { once.Do(func() { close(release) }) }
+	defer free()
 	l := hook(t, r)
+	inFlight := make(chan struct{})
+	var first sync.Once
+	l.onPost = func() {
+		first.Do(func() { close(inFlight) })
+		<-release
+	}
 	a, b := adopted(t, r, "A"), adopted(t, r, "B")
 	a.Busy("work")
 	a.Done("finished")
 	r.w.Clock.Sleep(2 * time.Minute)
-	first := *r.d
-	if _, err := first.Notify(watchOf(a), "A", time.Minute, 10*time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	// B ended moments after A's post, so its wake is held for that run.
+	aDone := make(chan struct{})
+	run := *r.d
+	go func() {
+		defer close(aDone)
+		_, _ = run.Notify(watchOf(a), "A", drive.WakeQuiet, drive.WakeCap)
+	}()
+	<-inFlight
 	b.Busy("work")
 	b.Done("finished too")
-	b.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} })
-	done := make(chan struct{})
-	second := *r.d
-	go func() {
-		defer close(done)
-		_, _ = second.Notify(watchOf(b), "B", time.Minute, 10*time.Minute)
-	}()
-	waitForClock(r, r.w.Clock.Now().Add(90*time.Second))
-	acting := *r.d
-	if _, err := acting.Send(r.view("B"), drive.Step{Line: "next step"}, drive.SendOptions{}); err != nil {
-		t.Fatal(err)
+	seen := -1
+	r.w.Clock.At(r.w.Clock.Now().Add(11*time.Minute+30*time.Second), func() {
+		seen = l.count()
+		free()
+	})
+	watch(t, r, b, "B")
+	<-aDone
+	if seen != 1 {
+		t.Fatalf("%d posts in flight at once", seen)
 	}
-	waitForClock(r, r.w.Clock.Now().Add(20*time.Minute))
-	if n := l.count(); n != 1 {
-		t.Fatalf("B moved on, so nothing is posted for its old turn: %d posts", n)
+}
+
+// A driver acting on other sessions holds a wake until its run is quiet, for a
+// minute, and no longer than ten: it is busy, not gone.
+func TestARunUnderWayHoldsAWakeUntilItIsQuiet(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r)
+	c := adopted(t, r, "T1")
+	r.w.Clock.Sleep(2 * time.Minute)
+	c.Busy("work")
+	c.Done("finished")
+	start := r.w.Clock.Now()
+	acted := start.Add(50 * time.Second)
+	r.w.Clock.At(acted, func() { _, _ = r.d.Note("", "the run acts on something else") })
+	watch(t, r, c, "T1")
+	if got := l.after(0, acted); got < time.Minute || got > time.Minute+10*time.Second {
+		t.Fatalf("it posted %s after the driver's last action", got)
 	}
-	b.Done("next step finished")
-	<-done
-	if n := l.count(); n != 2 {
-		t.Fatalf("its new turn's end wakes the driver: %d posts", n)
+}
+
+func TestABusyDriverHoldsAWakeNoLongerThanTenMinutes(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r)
+	c := adopted(t, r, "T1")
+	r.w.Clock.Sleep(2 * time.Minute)
+	c.Busy("work")
+	c.Done("finished")
+	start := r.w.Clock.Now()
+	var act func()
+	act = func() {
+		_, _ = r.d.Note("", "the run acts on something else")
+		r.w.Clock.At(r.w.Clock.Now().Add(30*time.Second), act)
+	}
+	r.w.Clock.At(start.Add(30*time.Second), act)
+	watch(t, r, c, "T1")
+	// Ready after its minute's quiet, then held for mostHeld.
+	if got := l.after(0, start); got < 11*time.Minute || got > 11*time.Minute+10*time.Second {
+		t.Fatalf("it posted %s on", got)
 	}
 }
 
@@ -411,10 +557,7 @@ func TestWakesNobodyAnswersBackOffAndNoneIsLost(t *testing.T) {
 		t.Helper()
 		sessions[i].Done("finished")
 		r.w.Clock.Sleep(2 * time.Minute)
-		first := *r.d
-		if _, err := first.Notify(watchOf(sessions[i]), string(rune('A'+i)), time.Minute, 10*time.Minute); err != nil {
-			t.Fatal(err)
-		}
+		watch(t, r, sessions[i], string(rune('A'+i)))
 		r.w.Clock.Sleep(11 * time.Minute) // nobody answers within the time a run takes to start
 	}
 	end(0)
@@ -429,23 +572,24 @@ func TestWakesNobodyAnswersBackOffAndNoneIsLost(t *testing.T) {
 	}
 	// D's turn ends: its wake waits, and nothing about it is lost.
 	sessions[3].Done("finished, and a question for you?")
-	done := make(chan struct{})
-	second := *r.d
-	go func() {
-		defer close(done)
-		_, _ = second.Notify(watchOf(sessions[3]), "D", time.Minute, 10*time.Minute)
-	}()
-	waitForClock(r, r.w.Clock.Now().Add(3*time.Minute))
-	if n := l.count(); n != 3 {
-		t.Fatalf("no post while the driver is not answering: %d", n)
+	start := r.w.Clock.Now()
+	var whileOut int
+	var row drive.Row
+	r.w.Clock.At(start.Add(3*time.Minute), func() {
+		whileOut = l.count()
+		st, _ := r.d.Status(false)
+		row = st.Rows[3]
+		// The usage comes back and the owner's own message starts a run.
+		run := *r.d
+		run.Seen()
+	})
+	watch(t, r, sessions[3], "D")
+	if whileOut != 3 {
+		t.Fatalf("no post while the driver is not answering: %d", whileOut)
 	}
-	if st, _ := r.d.Status(false); !strings.Contains(st.Rows[3].Watch, "waits until the driver answers") || st.Rows[3].Due != "" {
-		t.Fatalf("its row says what it waits for, and it is not stuck: %+v", st.Rows[3].Wake)
+	if !strings.Contains(row.Watch, "waits until the driver answers") || row.Due != "" {
+		t.Fatalf("its row says what it waits for, and it is not stuck: %+v", row.Wake)
 	}
-	// The usage comes back and the owner's own message starts a run.
-	run := *r.d
-	run.Seen()
-	<-done
 	if n := l.count(); n != 4 || !strings.Contains(l.output(3), "a question for you?") {
 		t.Fatalf("what waited is posted once a driver answers: %d", n)
 	}
@@ -454,8 +598,39 @@ func TestWakesNobodyAnswersBackOffAndNoneIsLost(t *testing.T) {
 	}
 }
 
-// While nobody answers, tries come further and further apart.
+// While nobody answers, posts come further and further apart, to one every two
+// hours, and what they carry still arrives.
 func TestUnansweredWakesGetFurtherApart(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r)
+	c := adopted(t, r, "T1")
+	r.w.Clock.Sleep(2 * time.Minute)
+	c.Busy("land it")
+	c.Job("gate-replay")
+	c.Done("Should run 5 count as a pass?")
+	start := r.w.Clock.Now()
+	r.w.Clock.At(start.Add(8*time.Hour), func() { c.JobDone("All done. Merged.") })
+	watch(t, r, c, "T1")
+	var gaps []time.Duration
+	for i := 1; i < l.count(); i++ {
+		gaps = append(gaps, (l.after(i, start) - l.after(i-1, start)).Round(time.Minute))
+	}
+	want := []time.Duration{10 * time.Minute, 10 * time.Minute, 15 * time.Minute, 30 * time.Minute, time.Hour, 2 * time.Hour, 2 * time.Hour}
+	if len(gaps) < len(want) {
+		t.Fatalf("gaps %v", gaps)
+	}
+	for i, g := range want {
+		if d := gaps[i] - g; d < -time.Minute || d > time.Minute {
+			t.Fatalf("gaps %v, want %v", gaps, want)
+		}
+	}
+	if !strings.Contains(l.output(l.count()-1), "All done. Merged.") {
+		t.Fatalf("the ending that came meanwhile arrives: %s", l.output(l.count()-1))
+	}
+}
+
+// How wakes are heard, from the log alone.
+func TestHearingIsReadFromTheLog(t *testing.T) {
 	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	var evs []batch.Event
 	h := func() batch.Hearing { return batch.Hearings(evs, now) }
@@ -508,7 +683,8 @@ func TestAWakeNobodyHeardIsDueAgainWhateverItsCount(t *testing.T) {
 	}
 }
 
-// A timer posted while nobody answers is a timer lost, so it waits too.
+// A timer posted while nobody answers is a timer lost, so it waits too, on the
+// books, so ending its batch still stops it, and says so.
 func TestATimerWaitsWhileNobodyAnswers(t *testing.T) {
 	r := newRig(t, "webhook")
 	l := hook(t, r)
@@ -517,18 +693,29 @@ func TestATimerWaitsWhileNobodyAnswers(t *testing.T) {
 		_ = r.b.Append(batch.Event{At: now.Add(time.Duration(i) * time.Second), Kind: batch.KindWake, Session: "A", HTTP: 204})
 	}
 	r.w.Clock.Sleep(11 * time.Minute)
-	done := make(chan struct{})
-	ring := *r.d
-	go func() {
-		defer close(done)
-		_ = ring.Ring("", "veto")
-	}()
-	<-done
+	name := "drive-b1-timer-veto"
+	if err := r.watches.Start(name, []string{"x"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	alive := false
+	r.w.Clock.At(r.w.Clock.Now().Add(time.Minute), func() { alive = r.watches.Alive(name) })
+	if err := r.d.Ring(name, "veto"); err != nil {
+		t.Fatal(err)
+	}
 	if took := r.w.Clock.Now().Sub(now); took < 15*time.Minute {
 		t.Fatalf("it rang after %s, inside the back-off", took)
 	}
 	if n := l.count(); n != 1 {
 		t.Fatalf("it still rings: %d", n)
+	}
+	if !alive {
+		t.Fatal("a timer that waits has left the books, so ending the batch cannot stop it")
+	}
+	if r.watches.Alive(name) {
+		t.Fatal("it retires once it has posted")
+	}
+	if notes := r.events(batch.KindNote); len(notes) != 1 || !strings.Contains(notes[0].Note, `timer "veto" is due`) {
+		t.Fatalf("the record says it waits: %+v", notes)
 	}
 }
 
@@ -536,13 +723,11 @@ func TestATimerWaitsWhileNobodyAnswers(t *testing.T) {
 func TestTheWatchdogPostsOnlyWhatNeedsADriver(t *testing.T) {
 	r := newRig(t, "webhook")
 	l := hook(t, r)
-	work := filepath.Join(r.w.Root, "work")
 	s := r.w.Add("S1")
 	done(s, "onboard", "analysis")
 	if _, err := r.d.Send(r.view(s.Block[len(s.Block)-6:]), drive.Step{Line: "go"}, drive.SendOptions{Label: "S1"}); err != nil {
 		t.Fatal(err)
 	}
-	_ = work
 	reports, err := r.d.DueAll()
 	if err != nil || len(reports) != 1 || reports[0].Posted != "" || l.count() != 0 {
 		t.Fatalf("a watch runs, so nothing is due and nothing posts: %+v %v", reports, err)
@@ -581,17 +766,63 @@ func TestTheWatchdogPostsOnlyWhatNeedsADriver(t *testing.T) {
 	if _, _ = r.d.DueAll(); l.count() != 1 {
 		t.Fatalf("not again so soon: %d posts", l.count())
 	}
-	// A session that went away is told once.
-	r.d.Seen()
+}
+
+// A session that is gone is told until a run hears it: a post that answers 200
+// while the bot's usage is out told no one, and nothing else will.
+func TestTheWatchdogTellsOfAGoneSessionUntilARunHears(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r)
+	adopted(t, r, "S1")
 	r.w.Restart()
-	r.w.Clock.Sleep(7 * time.Hour)
-	reports, _ = r.d.DueAll()
-	if l.count() != 2 || !strings.Contains(l.output(1), "S1 is gone:") || !strings.Contains(l.output(1), "drive --batch b1 open S1") {
-		t.Fatalf("gone: %+v %d posts", reports[0], l.count())
+	r.w.Clock.Sleep(2 * time.Minute) // past the run that opened it
+	due := func() {
+		t.Helper()
+		if _, err := r.d.DueAll(); err != nil {
+			t.Fatal(err)
+		}
 	}
-	r.w.Clock.Sleep(time.Minute)
-	if reports, _ := r.d.DueAll(); strings.Contains(reports[0].Posted, "gone") {
-		t.Fatalf("told once: %+v", reports[0])
+	due()
+	if l.count() != 1 || !strings.Contains(l.output(0), "S1 is gone:") || !strings.Contains(l.output(0), "drive --batch b1 open S1") {
+		t.Fatalf("%d posts", l.count())
+	}
+	r.w.Clock.Sleep(5 * time.Minute)
+	if due(); l.count() != 1 {
+		t.Fatalf("not again before a run has had the time: %d", l.count())
+	}
+	r.w.Clock.Sleep(25 * time.Minute)
+	if due(); l.count() != 2 {
+		t.Fatalf("no run answered, so it goes again: %d", l.count())
+	}
+	r.w.Clock.Sleep(time.Second)
+	r.d.Seen()
+	r.w.Clock.Sleep(30 * time.Minute)
+	if due(); l.count() != 2 {
+		t.Fatalf("heard, it goes no more: %d", l.count())
+	}
+}
+
+// A post that failed told no one, even if a run comes for another reason.
+func TestAFailedNoticeIsNotTold(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r)
+	l.status = 500
+	r.d.Sleep = func(time.Duration) {} // the post's own retries
+	adopted(t, r, "S1")
+	r.w.Restart()
+	r.w.Clock.Sleep(2 * time.Minute)
+	if _, err := r.d.DueAll(); err != nil {
+		t.Fatal(err)
+	}
+	r.d.Seen()
+	l.status = 204
+	r.w.Clock.Sleep(4 * time.Minute)
+	before := l.count()
+	if _, err := r.d.DueAll(); err != nil {
+		t.Fatal(err)
+	}
+	if l.count() != before+1 {
+		t.Fatalf("it goes again: %d then %d", before, l.count())
 	}
 }
 
@@ -627,6 +858,38 @@ func TestAnAnswerCanCarryItsStep(t *testing.T) {
 	}
 }
 
+// The answer goes on record with the step's intent, before anything is typed,
+// so a command cut off while typing leaves no open ask for a retry to send
+// again.
+func TestTheAnswerIsOnRecordBeforeTheStepIsTyped(t *testing.T) {
+	r := newRig(t, "webhook")
+	c := adopted(t, r, "T1")
+	id, _ := r.d.Ask("T1", "Go on?", "yes", "it waits")
+	gate := make(chan struct{})
+	c.Edit(func(c *testkit.Claude) { c.TypeGate = gate })
+	done := make(chan error, 1)
+	run := *r.d
+	go func() {
+		_, _, err := run.AnswerAndSend(id, "yes", "recommended", false, drive.Step{Line: "go on"}, drive.SendOptions{})
+		done <- err
+	}()
+	var answered, intent bool
+	for end := time.Now().Add(5 * time.Second); time.Now().Before(end) && !intent; time.Sleep(time.Millisecond) {
+		evs, _ := r.b.Events()
+		for _, e := range evs {
+			intent = intent || e.Kind == batch.KindSendIntent && e.Text == "go on"
+			answered = answered || e.Kind == batch.KindAnswer
+		}
+	}
+	close(gate)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !intent || !answered {
+		t.Fatalf("intent %v, answer %v", intent, answered)
+	}
+}
+
 // A refused step leaves the ask open, so the one command can run again.
 func TestARefusedStepRecordsNoAnswer(t *testing.T) {
 	r := newRig(t, "webhook")
@@ -650,15 +913,20 @@ func TestARefusedStepRecordsNoAnswer(t *testing.T) {
 // cleanupWorld answers as gwt does: which branches are merged, and removing them.
 type cleanupWorld struct {
 	prs
-	merged  map[string]bool
-	refuse  map[string]string
-	removed []string
+	merged    map[string]bool
+	refuse    map[string]string
+	removed   []string
+	landedErr error
+	unjudged  map[string]string // branches gwt failed on, and what it said
 }
 
 func (w *cleanupWorld) Landed(dir string, branches []string, commits []progress.Commit) (progress.Landing, error) {
-	l := progress.Landing{Repo: "/work/tool", Trunk: "main", Branches: branches, Merged: map[string]bool{}}
+	if w.landedErr != nil {
+		return progress.Landing{}, w.landedErr
+	}
+	l := progress.Landing{Repo: "/work/tool", Trunk: "main", Branches: branches, Merged: map[string]bool{}, Errors: w.unjudged}
 	for _, b := range branches {
-		if m, ok := w.merged[b]; ok {
+		if m, ok := w.merged[b]; ok && w.unjudged[b] == "" {
 			l.Merged[b] = m
 		}
 	}
@@ -746,6 +1014,135 @@ func TestCleanupResolvesWhatClosedSessionsLeft(t *testing.T) {
 	}
 }
 
+// A cleanup that could not read a session says so, and reads it again next time:
+// it left what it left whether or not gwt could run.
+func TestACleanupThatCouldNotReadASessionStaysOpen(t *testing.T) {
+	r := newRig(t, "webhook")
+	w := &cleanupWorld{prs: prs{}, merged: map[string]bool{"done-a": true, "odd-b": true}, landedErr: errors.New("gwt: cannot run"), unjudged: map[string]string{"odd-b": "bad object"}}
+	r.d.Progress = w
+	closedOn(t, r, "A", "done-a", "odd-b")
+	if _, err := r.d.Cleanup(""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := r.d.Status(true)
+	if !strings.Contains(strings.Join(st.Leftovers, "\n"), "what A left could not be checked: gwt: cannot run") {
+		t.Fatalf("%q", st.Leftovers)
+	}
+	w.landedErr = nil
+	if _, err := r.d.Cleanup(""); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.removed) != 1 || w.removed[0] != "done-a" {
+		t.Fatalf("the next run judges it: %q", w.removed)
+	}
+	st, _ = r.d.Status(true)
+	if !strings.Contains(strings.Join(st.Leftovers, "\n"), "bad object") || strings.Contains(strings.Join(st.Leftovers, "\n"), "cannot run") {
+		t.Fatalf("a branch gwt could not judge stays open, by what it said: %q", st.Leftovers)
+	}
+}
+
+// Cleanup reaches back through this driver's batches, for what an earlier one
+// left, and never into another driver's.
+func TestCleanupCoversThisDriversBatchesOnly(t *testing.T) {
+	r := newRig(t, "webhook")
+	w := &cleanupWorld{prs: prs{}, merged: map[string]bool{"here": true, "older": true, "stays": false, "theirs": true}}
+	r.d.Progress = w
+	closedOn(t, r, "A", "here")
+	closedIn := func(name, driver, label string, branch string) {
+		t.Helper()
+		b, _, err := r.d.Store.New(batch.Meta{Name: name, Started: r.w.Clock.Now(), Wake: "none", Driver: driver})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := r.w.Add(label)
+		c.Write(map[string]any{"type": "attachment", "gitBranch": branch})
+		_ = b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindOpen, Session: label, Block: c.Block, SID: c.SID, Dir: c.Cwd},
+			batch.Event{At: r.w.Clock.Now(), Kind: batch.KindClose, Session: label, Block: c.Block})
+		if err := r.w.Close(c.Block); err != nil {
+			t.Fatal(err)
+		}
+	}
+	closedIn("older", "", "O", "older")
+	closedIn("older2", "", "P", "stays")
+	closedIn("elsewhere", "someone-else", "T", "theirs")
+	r.d.BatchName = "b1"
+	if _, err := r.d.Cleanup(""); err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(w.removed)
+	if !slices.Equal(w.removed, []string{"here", "older"}) {
+		t.Fatalf("%q", w.removed)
+	}
+	st, _ := r.d.Status(true)
+	if joined := strings.Join(st.Leftovers, "\n"); !strings.Contains(joined, "left by P (batch older2): branch stays stays") || strings.Contains(joined, "theirs") {
+		t.Fatalf("%q", st.Leftovers)
+	}
+}
+
+// What is held back shows where the owner reads, live and from the record alone,
+// and in the document a driver parses.
+func TestWhatIsHeldBackShowsOnThePageAndInStatus(t *testing.T) {
+	r := newRig(t, "webhook")
+	w := &cleanupWorld{prs: prs{}, merged: map[string]bool{"stays": false}}
+	r.d.Progress = w
+	closedOn(t, r, "A", "stays")
+	if _, err := r.d.Cleanup(""); err != nil {
+		t.Fatal(err)
+	}
+	c := adopted(t, r, "T1")
+	c.Busy("run the gate")
+	c.Job("gate-replay")
+	c.Done("Waiting on the replays.")
+	r.w.Clock.Sleep(time.Minute)
+	ov, err := r.d.Overview(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(ov.HTML(r.w.Clock.Now()))
+	if !strings.Contains(page, "it says it waits on its own job") || !strings.Contains(page, "at the latest") {
+		t.Fatalf("the page says a job holds its wake, and until when:\n%s", page)
+	}
+	if !strings.Contains(page, "branch stays stays") {
+		t.Fatal("the page lists what a closed session left")
+	}
+	st, _ := r.d.Status(true)
+	if !strings.Contains(st.Rows[0].Watch, "it says it waits on its own job") {
+		t.Fatalf("%q", st.Rows[0].Watch)
+	}
+	// A driver that heard a question says so, not that the session waits.
+	c.Done("Should run 5 count as a pass?")
+	view := r.view("T1")
+	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindPosting, Session: "T1", View: view},
+		batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "T1", HTTP: 204, View: view, Jobs: 1})
+	r.w.Clock.Sleep(time.Second)
+	r.d.Seen()
+	if st, _ := r.d.Status(false); !strings.Contains(st.Rows[0].Watch, "its driver has heard its reply") || strings.Contains(st.Rows[0].Watch, "says it waits") {
+		t.Fatalf("%q", st.Rows[0].Watch)
+	}
+	// With nobody answering, the header says so, Rex down or not.
+	for range 3 {
+		_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "T1", HTTP: 204})
+	}
+	r.w.Clock.Sleep(11 * time.Minute)
+	ov, err = r.d.Overview(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page = string(ov.HTML(r.w.Clock.Now()))
+	for _, want := range []string{"Not answered", "has not answered its last 3 wakes", "branch stays stays"} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("from the record alone it says %q:\n%s", want, page)
+		}
+	}
+	st, _ = r.d.Status(true)
+	body, _ := json.Marshal(st.JSON())
+	for _, want := range []string{`"unheard":`, `"leftovers":`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("status --json carries %s: %s", want, body)
+		}
+	}
+}
+
 // A close can take its cleanup along; an open session's branch is refused.
 func TestCleanupOfOneSession(t *testing.T) {
 	r := newRig(t, "none")
@@ -814,7 +1211,7 @@ func TestAWakeSaysWhatToReadAndWhatToDo(t *testing.T) {
 	if !strings.HasPrefix(out, "Before you message anyone, read "+brief+" § The chat") {
 		t.Fatalf("%s", out)
 	}
-	for _, want := range []string{"next: decide from its reply above", "drive --batch b1 send T1@", "drive --batch b1 park T1@", "drive --batch b1 close T1@"} {
+	for _, want := range []string{"next: decide from its reply:", "drive --batch b1 send T1@", "drive --batch b1 park T1@", "drive --batch b1 close T1@"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("it says %q:\n%s", want, out)
 		}

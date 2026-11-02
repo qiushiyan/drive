@@ -192,9 +192,7 @@ type Row struct {
 	Next     string          // for a member that is gone, how to bring it back
 	Jobs     []session.Shell // background jobs it runs
 	Wake
-	// HoldsUntil is when its wake comes at the latest while it waits on its
-	// own job; zero when no such hold stands.
-	HoldsUntil time.Time
+	facts wakeFacts // what decides its wake, for a session read live
 }
 
 // Wake is how a member's wake stands.
@@ -204,6 +202,10 @@ type Wake struct {
 	Unhandled bool      // a wake was posted after the driver last acted on it
 	Due       string    // why the watchdog should arm its wake; "" when nothing is due
 	Again     time.Time // when the watchdog posts a wake nobody acted on once more, while that is still to come
+	// HoldsUntil is when its wake comes at the latest while a job holds it,
+	// and HoldWhy why; zero while nothing does.
+	HoldsUntil time.Time
+	HoldWhy    string
 }
 
 // Status is the batch at a glance.
@@ -416,10 +418,6 @@ func (d *Driver) inFlight(evs []batch.Event, members []*batch.Member) []InFlight
 	return out
 }
 
-// repostAfter is how long a wake nobody acted on waits before the watchdog
-// posts it once more: a run acting on it takes minutes.
-const repostAfter = 10 * time.Minute
-
 // wakeOf says how a member's wake stands, first whether a watch runs and
 // then what the log says came of the last one, and why the watchdog should
 // arm it again. free is the hold a parked member waits for, when that hold
@@ -427,7 +425,6 @@ const repostAfter = 10 * time.Minute
 func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, hearing batch.Hearing, zone *time.Location, free string) Wake {
 	alive := d.Watches != nil && b != nil && d.Watches.Alive(watchName(b, m.Block))
 	woken := !m.Woken.IsZero() && !m.Woken.Before(m.Watched)
-	unheard := hearing.Strikes >= stallAfter
 	switch {
 	case m.Parked != "" && free != "":
 		// A parked waiter whose hold is free wakes no one unless its watch is armed again.
@@ -435,35 +432,34 @@ func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, hearing batch.He
 			Due: "waits for " + free + ", which is free"}
 	case m.Parked != "":
 		return Wake{Watch: "parked: " + m.Parked}
-	case alive && r.HoldsUntil.After(d.now()):
-		return Wake{Watch: "armed: it waits on its own job, so the wake comes when that turn ends, by " + r.HoldsUntil.In(zone).Format("15:04") + " at the latest", Armed: true}
-	case alive && unheard:
-		return Wake{Watch: "armed: what it has to say waits until the driver answers", Armed: true}
-	case alive && stuck(r.State, d.now().Add(-r.For), m.Watched, d.now()):
-		return Wake{Watch: fmt.Sprintf("armed, but its turn ended %s ago: stuck (%s restarts it)", ago(r.For), d.run("watch", m.Label)), Due: "stuck", Armed: true}
 	case alive:
+		plan := r.facts.plan()
+		switch {
+		case plan.held != "" && plan.at.After(d.now()):
+			return Wake{Watch: "armed: " + plan.held + ", so the wake comes when that turn ends, by " + plan.at.In(zone).Format("15:04") + " at the latest",
+				Armed: true, HoldsUntil: plan.at, HoldWhy: plan.held}
+		case hearing.Strikes >= stallAfter:
+			return Wake{Watch: "armed: what it has to say waits until the driver answers", Armed: true}
+		case plan.stuck(d.now()):
+			return Wake{Watch: fmt.Sprintf("armed, but its turn ended %s ago: stuck (%s restarts it)", ago(r.For), d.run("watch", m.Label)), Due: "stuck", Armed: true}
+		}
 		return Wake{Watch: "armed", Armed: true}
 	case !m.Stopped.IsZero() && !m.Stopped.Before(m.Watched):
 		return Wake{Watch: "stopped " + m.Stopped.In(zone).Format("15:04") + " (" + d.run("watch", "--due") + " arms it again)", Due: "its wake was stopped"}
 	case m.Posting.After(m.Watched) && m.Posting.After(m.Woken) && m.Posting.After(m.WakeFailed):
 		return Wake{Watch: "posting since " + m.Posting.In(zone).Format("15:04")}
 	case woken && m.Woken.After(m.LastAction):
-		// The driver owes it a decision. A session that moved on by itself
-		// since, such as one a usage limit's reset continued, is woken again
-		// when that turn ends; otherwise the wake is posted once more, so one
-		// lost to a run that died is not lost, and never again for one view.
+		// The driver owes it a decision.
 		w := Wake{Watch: "woken " + m.Woken.In(zone).Format("15:04") + " (nothing done since", Unhandled: true}
-		switch {
-		case r.View.Session != "" && m.WokenView != "" && r.View.String() != m.WokenView:
-			w.Due = "it moved on by itself since its last wake"
-		case !hearing.Heard.After(m.Woken) && d.now().Sub(m.Woken) > repostAfter:
-			w.Due = "woken " + ago(d.now().Sub(m.Woken)) + " ago, and no driver has run since" // a wake no run answered told no one
-		case m.WokenView == m.PrevView:
+		f := r.facts
+		f.member = m
+		switch rp := f.repost(d.now()); {
+		case rp.due != "":
+			w.Due = rp.due
+		case rp.done:
 			w.Watch += ", and posted again already"
-		case d.now().Sub(m.Woken) > repostAfter:
-			w.Due = "woken " + ago(d.now().Sub(m.Woken)) + " ago with nothing done since"
 		default:
-			w.Again = m.Woken.Add(repostAfter)
+			w.Again = rp.again
 			w.Watch += "; " + d.run("watch", "--due") + " posts it again from " + w.Again.In(zone).Format("15:04")
 		}
 		w.Watch += ")"
@@ -474,30 +470,6 @@ func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, hearing batch.He
 		return Wake{Watch: "ended without a wake (watches.log says why)", Due: "its watch ended without a wake"}
 	}
 	return Wake{Watch: "none", Due: "never watched"}
-}
-
-// unheardLine says a batch's driver is not answering its wakes: the bot's
-// usage ran out, most often. "" while it answers.
-func unheardLine(h batch.Hearing, zone *time.Location) string {
-	next := stalled(h)
-	if next.IsZero() {
-		return ""
-	}
-	return fmt.Sprintf("the driver has not answered its last %d wakes, since %s: wakes wait, none is lost, and the next try is at %s",
-		h.Strikes, h.Since.In(zone).Format("15:04"), next.In(zone).Format("15:04"))
-}
-
-// stuck says a watch still runs long after the turn it waits on ended: a
-// wait returns a minute after a turn ends, or ten after one that left its
-// own background jobs running, counted from when the watch was armed if
-// that was later. A turn its own job holds longer than that is no stuck
-// watch (holdsUntil).
-func stuck(state State, since, watched, now time.Time) bool {
-	ended := state == "done" || state == "idle" || state == "error" || state == "interrupted" || state.blocked()
-	if watched.After(since) {
-		since = watched
-	}
-	return ended && now.Sub(since) > 15*time.Minute
 }
 
 func sortedKeys(m map[string]bool) []string {
@@ -534,9 +506,11 @@ func (d *Driver) row(b *batch.Batch, members []*batch.Member, label string, with
 	r.For = d.now().Sub(r.Since)
 	r.Input, r.Typed, r.View = o.Input, o.Typed, o.View
 	r.Jobs = d.Host.Shells(o.Session.Status.PID)
-	if b != nil && o.Member != nil && b.Meta.Wake == "webhook" {
-		r.HoldsUntil = d.holdsUntil(o, d.wakesOf(b, label))
+	stable := r.Since
+	if m := o.Member; m != nil && m.Watched.After(stable) {
+		stable = m.Watched
 	}
+	r.facts = factsOf(o, d.turnNow(o), o.Member, stable, WakeQuiet, WakeCap)
 	if withProgress && d.Progress != nil && o.Session.ID != "" {
 		if s, err := d.Progress.Steps(o.Session.ID); err != nil {
 			r.StepsErr = firstLine(err.Error())
