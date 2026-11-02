@@ -132,6 +132,11 @@ type Event struct {
 	Via    string `json:"via,omitempty"`
 	Branch string `json:"branch,omitempty"` // on a cleanup, the branch it judged
 	Jobs   int    `json:"jobs,omitempty"`   // on a wake, the background jobs its session still ran
+	// On a posting and its wake: what made it go, such as asks or job-wait. On a
+	// posting alone: when it was due, and what last held it back past that.
+	Why    string    `json:"why,omitempty"`
+	Due    time.Time `json:"due,omitzero"`
+	HeldBy string    `json:"held_by,omitempty"`
 }
 
 // Member is a session that belongs to the batch.

@@ -39,6 +39,7 @@ type Ending struct {
 	// its watch posts nothing.
 	Covered bool
 	claimed bool // the post's intent is on record, so Wake records none
+	post    posting
 }
 
 // Carried is another session's ending, carried by a wake.
@@ -49,6 +50,7 @@ type Carried struct {
 	View  string
 	Next  string
 	Jobs  int // the background jobs it still runs
+	post  posting
 }
 
 // Wait blocks until a session's turn ends and has stayed ended for quiet: it
@@ -100,7 +102,7 @@ func (d *Driver) wait(ref string, planFor func(o *Observation, t Turn, stable ti
 				d.sleep(d.poll())
 				continue
 			}
-			e := &Ending{Label: ref, State: "gone", Msg: r.Reason,
+			e := &Ending{Label: ref, State: "gone", Msg: r.Reason, post: posting{why: whyGone, due: d.now()},
 				Next: fmt.Sprintf("%s lists what runs; if %s still runs there, watch it again: %s", d.run("status"), ref, d.run("watch", ref))}
 			if m := batch.Find(members, ref); m != nil {
 				e.Block = m.Block
@@ -137,7 +139,7 @@ func (d *Driver) wait(ref string, planFor func(o *Observation, t Turn, stable ti
 				}
 			}
 			e.Next = d.nextFor(o, state, e.Jobs)
-			e.Covered = plan.covered
+			e.Covered, e.post = plan.covered, posting{why: plan.why, due: plan.at}
 			if plan.covered || mayEnd == nil || mayEnd(e) {
 				return e, nil
 			}

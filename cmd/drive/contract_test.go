@@ -237,14 +237,14 @@ func TestTheJSONIsDescribed(t *testing.T) {
 }
 
 // keys are every key a JSON document holds, at any depth, but for the
-// counts whose keys are data: took, by_key, refusals.
+// counts whose keys are data: took, by_key, refusals, wakes_by_why.
 func keys(doc any) []string {
 	var out []string
 	switch d := doc.(type) {
 	case map[string]any:
 		for k, v := range d {
 			out = append(out, k)
-			if k != "took" && k != "by_key" && k != "refusals" {
+			if k != "took" && k != "by_key" && k != "refusals" && k != "wakes_by_why" {
 				out = append(out, keys(v)...)
 			}
 		}

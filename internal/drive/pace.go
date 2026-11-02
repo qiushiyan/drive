@@ -54,6 +54,40 @@ const (
 	stallAfter = 3
 )
 
+// What makes a post go, as the log records it.
+const (
+	whyEnded      = "turn-ended"  // a turn is over and no job runs
+	whyPrompt     = "prompt"      // it stopped on a prompt
+	whyStopped    = "stopped"     // an API error, a rejected login or an interrupt
+	whyGone       = "gone"        // its session is gone
+	whyAsks       = "asks"        // a job runs, and the reply asks something
+	whyRecap      = "recap"       // a job runs, and the driver sent for this reply
+	whyJobRunning = "job-running" // a job runs, and the reply neither asks nor waits
+	whyOlderJob   = "older-job"   // only a job from before this turn runs
+	whyJobWait    = "job-wait"    // the reply says it waits, and its job has run past jobHold
+	whyJobCheck   = "job-check"   // a driver heard this reply, and its job has run on
+	whyJobEnded   = "job-ended"   // its job ended with the session idle at a view already told
+	whyUnheard    = "unheard"     // no run answered its last wake
+	whyRepost     = "repost"      // a run heard its last wake and nothing was done
+	whyTimer      = "timer"
+	whyWatchdog   = "watchdog"
+)
+
+// What holds a post back past when it was due, as the log records it.
+const (
+	heldStalled = "unheard" // the driver is not answering any wake
+	heldPosting = "posting" // another post is under way
+	heldGap     = "gap"     // another post has just gone, and its run comes first
+	heldRun     = "run"     // a run is under way
+)
+
+// posting is what a post's record says of it.
+type posting struct {
+	why    string
+	due    time.Time
+	heldBy string
+}
+
 // wakeFacts is what decides a session's wake: where its turn stands, what its
 // reply says, and what the log says of its wakes.
 type wakeFacts struct {
@@ -95,6 +129,7 @@ type wakePlan struct {
 	at      time.Time // when it posts; zero while its turn has not ended
 	covered bool      // a post since it was armed said all there is, so it posts nothing
 	held    string    // why a job holds the wake past the turn's end; "" when none does
+	why     string    // what makes it post
 }
 
 // plan is when a turn that ended posts. With no job running that is after
@@ -109,27 +144,42 @@ func (f wakeFacts) plan() wakePlan {
 	}
 	told := m != nil && m.WokenTimes > 0 && m.WokenView == f.view
 	if t.State != "done" || t.Shells+t.Orphans == 0 {
-		switch {
-		case told && m.Woken.After(m.Watched) && m.WokenJobs == 0:
-			return wakePlan{covered: true}
-		case t.State == "done" || t.State.onPrompt():
-			return wakePlan{at: f.stable.Add(f.quiet)}
+		why := map[bool]string{true: whyPrompt, false: whyEnded}[t.State.onPrompt()]
+		if t.State != "done" && !t.State.onPrompt() {
+			why = whyStopped
 		}
-		return wakePlan{at: f.stable}
+		if told {
+			switch {
+			case m.Woken.After(m.Watched) && m.WokenJobs == 0:
+				return wakePlan{covered: true}
+			case m.WokenJobs > 0:
+				why = whyJobEnded
+			case !m.WokenHeard():
+				why = whyUnheard
+			default:
+				why = whyRepost
+			}
+		}
+		if t.State == "done" || t.State.onPrompt() {
+			return wakePlan{at: f.stable.Add(f.quiet), why: why}
+		}
+		return wakePlan{at: f.stable, why: why}
 	}
 	switch {
 	case told && m.WokenAcked > 0:
-		return wakePlan{at: m.Woken.Add(jobHold << min(m.WokenAcked, 8)), held: "its driver has heard its reply, and a job of its still runs"}
+		return wakePlan{at: m.Woken.Add(jobHold << min(m.WokenAcked, 8)), held: "its driver has heard its reply, and a job of its still runs", why: whyJobCheck}
 	case told:
-		return wakePlan{at: m.Woken.Add(repostAfter)} // a wake no run answered is no wake
-	case f.sentForReply(), f.reads == turn.ReadsAsking:
-		return wakePlan{at: f.stable.Add(f.quiet)}
+		return wakePlan{at: m.Woken.Add(repostAfter), why: whyUnheard} // a wake no run answered is no wake
+	case f.sentForReply():
+		return wakePlan{at: f.stable.Add(f.quiet), why: whyRecap}
+	case f.reads == turn.ReadsAsking:
+		return wakePlan{at: f.stable.Add(f.quiet), why: whyAsks}
 	case f.reads == turn.ReadsWaiting:
-		return wakePlan{at: f.since.Add(max(jobHold, f.bgCap)), held: "it says it waits on its own job"}
+		return wakePlan{at: f.since.Add(max(jobHold, f.bgCap)), held: "it says it waits on its own job", why: whyJobWait}
 	case t.Shells == 0:
-		return wakePlan{at: f.stable.Add(f.quiet)} // only older jobs run, and this turn answered its step
+		return wakePlan{at: f.stable.Add(f.quiet), why: whyOlderJob} // only older jobs run, and this turn answered its step
 	}
-	return wakePlan{at: f.stable.Add(f.bgCap)}
+	return wakePlan{at: f.stable.Add(f.bgCap), why: whyJobRunning}
 }
 
 // sentForReply says the driver sent for a reply to read, which is news whatever
@@ -196,13 +246,13 @@ func stalled(h batch.Hearing) time.Time {
 	return h.Last.Add(stallRetry(h.Strikes))
 }
 
-// wakeHeld says whether a session's wake, ready since ready, waits: while the
-// driver is not answering any wake, while another post is under way, until a
-// post has had its run, and while a run is under way, up to mostHeld. Nothing is
+// wakeHeld says what holds a session's wake, ready since ready, "" when nothing
+// does: the driver not answering any wake, another post under way, a post that
+// has yet to have its run, and a run under way, up to mostHeld. Nothing is
 // dropped: the watch that holds a wake still runs and looks again.
-func wakeHeld(evs []batch.Event, now, ready time.Time) bool {
+func wakeHeld(evs []batch.Event, now, ready time.Time) string {
 	if next := stalled(batch.Hearings(evs, now)); now.Before(next) {
-		return true
+		return heldStalled
 	}
 	var posted, posting, heard time.Time
 	for _, e := range evs {
@@ -215,9 +265,15 @@ func wakeHeld(evs []batch.Event, now, ready time.Time) bool {
 			posting, posted = time.Time{}, e.At
 		}
 	}
-	return !posting.IsZero() && now.Sub(posting) < postLimit ||
-		!posted.IsZero() && now.Sub(posted) < wakeGap ||
-		!heard.IsZero() && now.Sub(heard) < runQuiet && now.Sub(ready) < mostHeld
+	switch {
+	case !posting.IsZero() && now.Sub(posting) < postLimit:
+		return heldPosting
+	case !posted.IsZero() && now.Sub(posted) < wakeGap:
+		return heldGap
+	case !heard.IsZero() && now.Sub(heard) < runQuiet && now.Sub(ready) < mostHeld:
+		return heldRun
+	}
+	return ""
 }
 
 // timersHeld lists the timers due and waiting for the driver to answer, as

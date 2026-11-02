@@ -663,7 +663,7 @@ func (c *LogCmd) HelpSections() []clikit.Section {
 The batch's events, oldest first, as recorded: at, kind, and the fields its kind carries,
 among session, block, sid, account, dir, intent, mode, key, path, text, notice, outcome,
 reason, hold, view, action, call, id, ref, source, scope, question, recommendation,
-if_unanswered, took, explained, note, goal, http, try, via, branch.`}}
+if_unanswered, took, explained, note, goal, http, try, via, branch, jobs, why, due, held_by.`}}
 }
 
 func (c *LogCmd) act(ctx *kong.Context, d *drive.Driver) error {
@@ -776,7 +776,8 @@ batch, from, to, sessions; asks, answered, unanswered, took (counts of recommend
 amended, delegated, moot), explained; owner_wait_seconds, median_answer_seconds,
 per_merge_seconds; merged (repo, number or branch and commit, at, sessions), unread;
 sends, snippets, by_key, commands, own_words, recovered, garbled, other, unknown;
-refusals (counts by kind), failures; wakes, timers, wake_fails, carried, unhandled, unwatched`}}
+refusals (counts by kind), failures; wakes, timers, wake_fails, carried, wakes_by_why (counts
+by what made them go), unhandled, unwatched`}}
 }
 
 func (c *MetricsCmd) act(ctx *kong.Context, d *drive.Driver) error {

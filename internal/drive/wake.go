@@ -325,14 +325,14 @@ func (d *Driver) Notify(watch, ref string, quiet, bgCap time.Duration) (*Ending,
 		return nil, err
 	}
 	for {
-		var ready time.Time
+		var p pace
 		e, err := d.wait(ref, func(o *Observation, t Turn, stable time.Time) wakePlan {
 			return factsOf(o, t, d.memberNow(b, o.Label), stable, quiet, bgCap).plan()
 		}, func(e *Ending) bool {
-			if ready.IsZero() {
-				ready = d.now()
+			if p.ready.IsZero() {
+				p.ready = d.now()
 			}
-			return d.claim(b, e, ready)
+			return d.claim(b, e, &p)
 		})
 		stays := err == nil && e.State == "done" && len(e.Jobs) > 0 && !e.Covered
 		if watch != "" && d.Watches != nil && !stays {
@@ -365,31 +365,48 @@ func (d *Driver) memberNow(b *batch.Batch, label string) *batch.Member {
 	return batch.Find(batch.Members(evs), label)
 }
 
+// pace is a wake waiting its turn to post: when it was ready, and what last held
+// it back.
+type pace struct {
+	ready  time.Time
+	heldBy string
+}
+
+// held notes what holds the wake, and says whether anything does.
+func (p *pace) held(evs []batch.Event, now time.Time) bool {
+	by := wakeHeld(evs, now, p.ready)
+	if by != "" {
+		p.heldBy = by
+	}
+	return by != ""
+}
+
 // claim says whether e's wake posts now, which only one watch of a batch does
 // at a time. It leaves e carrying the other sessions whose turns have ended, so
 // they share the post.
-func (d *Driver) claim(b *batch.Batch, e *Ending, ready time.Time) bool {
+func (d *Driver) claim(b *batch.Batch, e *Ending, p *pace) bool {
 	evs, err := b.Events()
 	if err != nil {
 		return true // an unreadable log costs an extra wake, never a lost one
 	}
-	if wakeHeld(evs, d.now(), ready) {
+	if p.held(evs, d.now()) {
 		return false
 	}
 	also := d.carried(b, evs, e)
 	posts := false
 	err = b.Locked(func(evs []batch.Event) error {
-		if wakeHeld(evs, d.now(), ready) {
+		if p.held(evs, d.now()) {
 			return nil
 		}
 		posts = true
+		e.post.heldBy = p.heldBy
 		view := ""
 		if e.View.Session != "" {
 			view = e.View.String()
 		}
-		rows := []batch.Event{{At: d.now(), Kind: batch.KindPosting, Session: e.Label, Block: e.Block, View: view}}
+		rows := []batch.Event{{At: d.now(), Kind: batch.KindPosting, Session: e.Label, Block: e.Block, View: view, Why: e.post.why, Due: e.post.due, HeldBy: e.post.heldBy}}
 		for _, c := range also {
-			rows = append(rows, batch.Event{At: d.now(), Kind: batch.KindPosting, Session: c.Label, Block: c.Block, View: c.View, Via: e.Label})
+			rows = append(rows, batch.Event{At: d.now(), Kind: batch.KindPosting, Session: c.Label, Block: c.Block, View: c.View, Via: e.Label, Why: c.post.why, Due: c.post.due})
 		}
 		return b.Append(rows...)
 	})
@@ -429,7 +446,8 @@ func (d *Driver) carried(b *batch.Batch, evs []batch.Event, e *Ending) []Carried
 		if n := d.nextFor(o, t.State, jobs); n != "" {
 			next = "read its reply first (" + next + "); then " + n
 		}
-		out = append(out, Carried{Label: m.Label, Block: m.Block, State: t.State, View: view, Next: next, Jobs: len(jobs)})
+		plan := factsOf(o, t, m, o.Session.Since(), WakeQuiet, WakeCap).plan()
+		out = append(out, Carried{Label: m.Label, Block: m.Block, State: t.State, View: view, Next: next, Jobs: len(jobs), post: posting{why: plan.why, due: plan.at}})
 	}
 	return out
 }
@@ -438,16 +456,16 @@ func (d *Driver) carried(b *batch.Batch, evs []batch.Event, e *Ending) []Carried
 // answering it waits too, since a timer posted into that is a timer lost, and
 // stays on the books meanwhile, so ending its batch still stops it.
 func (d *Driver) Ring(watch, note string) error {
+	p := posting{why: whyTimer, due: d.now()}
 	if b, err := d.Batch(); err == nil {
-		noted := false
 		for {
 			evs, err := b.Events()
 			if err != nil || !d.now().Before(stalled(batch.Hearings(evs, d.now()))) {
 				break
 			}
-			if !noted {
+			if p.heldBy == "" {
 				_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindHeld, Note: note})
-				noted = true
+				p.heldBy = heldStalled
 			}
 			d.sleep(d.poll() * 15)
 		}
@@ -455,7 +473,7 @@ func (d *Driver) Ring(watch, note string) error {
 	if watch != "" && d.Watches != nil {
 		d.Watches.Retire(watch)
 	}
-	if err := d.Wake("", nil, note); err != nil {
+	if err := d.post("", nil, note, p); err != nil {
 		d.WatchFailed("", err)
 		return err
 	}
@@ -488,6 +506,15 @@ func safeName(s string) string {
 // Wake posts an ending or a timer to the driver's webhook and records how
 // the post went: an empty log line is never taken to mean the wake arrived.
 func (d *Driver) Wake(label string, e *Ending, note string) error {
+	var p posting
+	if e != nil {
+		p = e.post
+	}
+	return d.post(label, e, note, p)
+}
+
+// post is Wake with what its record says of it.
+func (d *Driver) post(label string, e *Ending, note string, p posting) error {
 	b, err := d.Batch()
 	if err != nil {
 		return err
@@ -519,7 +546,7 @@ func (d *Driver) Wake(label string, e *Ending, note string) error {
 		first := d.briefLine() + again
 		payload["output"] = first + tail(e.Text(), 6000-len(first))
 		if !e.claimed {
-			_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindPosting, Session: label, Block: e.Block, View: view})
+			_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindPosting, Session: label, Block: e.Block, View: view, Why: p.why, Due: p.due, HeldBy: p.heldBy})
 		}
 		if len(e.Also) > 0 {
 			var also []string
@@ -534,14 +561,14 @@ func (d *Driver) Wake(label string, e *Ending, note string) error {
 		} else {
 			payload["kind"], payload["output"] = "timer", d.briefLine()+"timer done: "+note
 		}
-		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindPosting})
+		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindPosting, Why: p.why, Due: p.due, HeldBy: p.heldBy})
 	}
 	body, _ := json.Marshal(payload)
 	hook, _ := d.Cfg.LoadWebhook(b.Meta.Webhook)
 	poster := webhook.Poster{URL: hook.URL, Auth: hook.Auth, Sleep: d.Sleep}
 	var last webhook.Attempt
 	err = poster.Post(body, func(a webhook.Attempt) { last = a })
-	ev := batch.Event{At: d.now(), Kind: batch.KindWake, Session: label, HTTP: last.HTTP, Try: last.Try, Note: clip(note, 300)}
+	ev := batch.Event{At: d.now(), Kind: batch.KindWake, Session: label, HTTP: last.HTTP, Try: last.Try, Note: clip(note, 300), Why: p.why}
 	if e != nil {
 		ev.Block, ev.Outcome, ev.View, ev.Jobs = e.Block, string(e.State), e.View.String(), len(e.Jobs)
 	}
@@ -558,7 +585,7 @@ func (d *Driver) Wake(label string, e *Ending, note string) error {
 	if e != nil {
 		for _, c := range e.Also {
 			_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindWake, Session: c.Label, Block: c.Block, HTTP: last.HTTP, Try: last.Try,
-				Outcome: string(c.State), View: c.View, Via: e.Label, Jobs: c.Jobs})
+				Outcome: string(c.State), View: c.View, Via: e.Label, Jobs: c.Jobs, Why: c.post.why})
 		}
 	}
 	d.runAfterWake(b)
@@ -575,7 +602,7 @@ func (d *Driver) briefLine() string {
 	if _, err := os.Stat(d.Cfg.Brief); err != nil {
 		return ""
 	}
-	return fmt.Sprintf("Before you message anyone, read %s § The chat: one message per event, the result and never that you are starting.\n", d.Cfg.Brief)
+	return fmt.Sprintf("Before you message anyone, read %s § The chat: one message per event, and the result is the first thing the user reads.\n", d.Cfg.Brief)
 }
 
 // AfterWakeEvery is how often a batch's after-wake commands run: they archive
@@ -725,7 +752,7 @@ func (d *Driver) postDue(b *batch.Batch, armed, later []Rearmed) (posted, held s
 		return "", ""
 	}
 	what := strings.Join(lines, "\n")
-	if wakeHeld(evs, d.now(), d.now()) {
+	if wakeHeld(evs, d.now(), d.now()) != "" {
 		return "", what
 	}
 	// On record before the post, as a run can answer before it returns.
@@ -733,7 +760,7 @@ func (d *Driver) postDue(b *batch.Batch, armed, later []Rearmed) (posted, held s
 		rows[i].At = d.now()
 	}
 	_ = b.Append(rows...)
-	if err := d.Wake("", nil, watchdogNote+what); err != nil {
+	if err := d.post("", nil, watchdogNote+what, posting{why: whyWatchdog, due: d.now()}); err != nil {
 		for i := range rows {
 			rows[i].At, rows[i].Reason = d.now(), clip(err.Error(), 200)
 		}

@@ -38,6 +38,7 @@ exit 0
   "timers": 0,
   "wake_fails": 0,
   "carried": 0,
+  "wakes_by_why": {},
   "unhandled": 0,
   "unwatched": 0
 }

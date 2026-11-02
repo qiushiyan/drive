@@ -1374,3 +1374,238 @@ func TestAWakeSaysWhatToReadAndWhatToDo(t *testing.T) {
 		t.Fatalf("%s", l.output(1))
 	}
 }
+
+// postings are a session's posts as the log records them, oldest first.
+func postings(r *rig, label string) []batch.Event {
+	var out []batch.Event
+	for _, e := range r.events(batch.KindPosting) {
+		if e.Session == label {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// A post records what made it go and when it was due, and what held it back if
+// that took longer, so a late wake can be explained and a batch's wakes counted by
+// cause from its record instead of inferred from when they came.
+func TestAPostRecordsWhyItWent(t *testing.T) {
+	report := strings.Repeat("What the round found and how it was settled. ", 40)
+	for _, tc := range []struct {
+		name, reply, why string
+		after            time.Duration
+	}{
+		{"it asks", "Should run 5 count as a pass?", "asks", time.Minute},
+		{"it reports", report, "job-running", 10 * time.Minute},
+		{"it says it waits", "Waiting on the replays.", "job-wait", 2 * time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t, "webhook")
+			hook(t, r).answeredBy(r)
+			c := adopted(t, r, "T1")
+			c.Busy("run the gate")
+			c.Job("gate-replay")
+			c.Done(tc.reply)
+			start := r.w.Clock.Now()
+			r.w.Clock.At(start.Add(3*time.Hour), func() { c.JobDone("Replays are in.") })
+			watch(t, r, c, "T1")
+			p := postings(r, "T1")[0]
+			if p.Why != tc.why {
+				t.Fatalf("why %q, not %q", p.Why, tc.why)
+			}
+			if got := p.Due.Sub(start); got < tc.after || got > tc.after+10*time.Second {
+				t.Fatalf("due %s on, not %s", got, tc.after)
+			}
+			if p.HeldBy != "" {
+				t.Fatalf("nothing held it: %q", p.HeldBy)
+			}
+		})
+	}
+	t.Run("the same view again", func(t *testing.T) {
+		r := newRig(t, "webhook")
+		hook(t, r).answeredBy(r)
+		c := adopted(t, r, "T1")
+		c.Busy("land it")
+		c.Job("tail -f server.log")
+		c.Done("PR #41 is open.")
+		r.w.Clock.At(r.w.Clock.Now().Add(5*time.Hour), func() { c.Edit(func(c *testkit.Claude) { c.Shells = nil }) })
+		watch(t, r, c, "T1")
+		var whys []string
+		for _, p := range postings(r, "T1") {
+			whys = append(whys, p.Why)
+		}
+		if !slices.Equal(whys, []string{"job-running", "job-check", "job-ended"}) {
+			t.Fatalf("a report, a check while its job runs, and the job's end: %q", whys)
+		}
+	})
+	t.Run("nobody answered", func(t *testing.T) {
+		r := newRig(t, "webhook")
+		hook(t, r)
+		c := adopted(t, r, "T1")
+		c.Busy("land it")
+		c.Job("gate-replay")
+		c.Done("Should run 5 count as a pass?")
+		r.w.Clock.At(r.w.Clock.Now().Add(15*time.Minute), func() { c.JobDone("Merged.") })
+		watch(t, r, c, "T1")
+		if p := postings(r, "T1"); len(p) < 2 || p[1].Why != "unheard" {
+			t.Fatalf("%+v", p)
+		}
+	})
+	t.Run("a prompt and an error", func(t *testing.T) {
+		for why, end := range map[string]func(c *testkit.Claude){
+			"prompt":  func(c *testkit.Claude) { c.Ask("rm -rf /tmp/x") },
+			"stopped": func(c *testkit.Claude) { c.Fail("overloaded", "Overloaded") },
+		} {
+			r := newRig(t, "webhook")
+			hook(t, r)
+			c := adopted(t, r, "T1")
+			c.Busy("work")
+			end(c)
+			watch(t, r, c, "T1")
+			if p := postings(r, "T1"); len(p) != 1 || p[0].Why != why {
+				t.Fatalf("%s: %+v", why, p)
+			}
+		}
+	})
+	t.Run("a repost", func(t *testing.T) {
+		r := newRig(t, "webhook")
+		hook(t, r)
+		c := adopted(t, r, "T1")
+		c.Busy("work")
+		c.Done("finished")
+		watch(t, r, c, "T1")
+		r.w.Clock.Sleep(time.Second)
+		r.d.Seen()
+		r.w.Clock.Sleep(11 * time.Minute)
+		if _, err := r.d.Watch("T1"); err != nil {
+			t.Fatal(err)
+		}
+		watch(t, r, c, "T1")
+		p := postings(r, "T1")
+		if len(p) != 2 || p[0].Why != "turn-ended" || p[1].Why != "repost" {
+			t.Fatalf("%+v", p)
+		}
+	})
+}
+
+// What held a post back is on its record, with the time it was due.
+func TestAPostRecordsWhatHeldItBack(t *testing.T) {
+	t.Run("the gap after another post", func(t *testing.T) {
+		r := newRig(t, "webhook")
+		hook(t, r)
+		a, b := adopted(t, r, "A"), adopted(t, r, "B")
+		a.Busy("work")
+		a.Done("finished")
+		b.Busy("work") // so A's post has nothing of it to carry
+		r.w.Clock.Sleep(2 * time.Minute)
+		watch(t, r, a, "A")
+		b.Done("finished too")
+		watch(t, r, b, "B")
+		p := postings(r, "B")[0]
+		if p.HeldBy != "gap" || !p.At.After(p.Due) {
+			t.Fatalf("%+v", p)
+		}
+	})
+	t.Run("a run under way", func(t *testing.T) {
+		r := newRig(t, "webhook")
+		hook(t, r)
+		c := adopted(t, r, "T1")
+		r.w.Clock.Sleep(2 * time.Minute)
+		c.Busy("work")
+		c.Done("finished")
+		r.w.Clock.At(r.w.Clock.Now().Add(50*time.Second), func() { _, _ = r.d.Note("", "acts on something else") })
+		watch(t, r, c, "T1")
+		if p := postings(r, "T1")[0]; p.HeldBy != "run" {
+			t.Fatalf("%+v", p)
+		}
+	})
+	t.Run("nobody answering", func(t *testing.T) {
+		r := newRig(t, "webhook")
+		hook(t, r)
+		c := adopted(t, r, "T1")
+		now := r.w.Clock.Now()
+		for i := range 3 {
+			_ = r.b.Append(batch.Event{At: now.Add(time.Duration(i) * time.Second), Kind: batch.KindWake, Session: "A", HTTP: 204})
+		}
+		c.Busy("work")
+		c.Done("finished")
+		r.w.Clock.Sleep(11 * time.Minute)
+		watch(t, r, c, "T1")
+		if p := postings(r, "T1")[0]; p.HeldBy != "unheard" {
+			t.Fatalf("%+v", p)
+		}
+	})
+	t.Run("carried by another's post", func(t *testing.T) {
+		r := newRig(t, "webhook")
+		hook(t, r)
+		a, b := adopted(t, r, "A"), adopted(t, r, "B")
+		a.Busy("work")
+		a.Done("finished")
+		b.Busy("work")
+		b.Ask("rm -rf /tmp/x")
+		r.w.Clock.Sleep(2 * time.Minute)
+		watch(t, r, a, "A")
+		if p := postings(r, "B")[0]; p.Via != "A" || p.Why != "prompt" {
+			t.Fatalf("%+v", p)
+		}
+	})
+	t.Run("a timer and the watchdog", func(t *testing.T) {
+		r := newRig(t, "webhook")
+		hook(t, r)
+		now := r.w.Clock.Now()
+		for i := range 3 {
+			_ = r.b.Append(batch.Event{At: now.Add(time.Duration(i) * time.Second), Kind: batch.KindWake, Session: "A", HTTP: 204})
+		}
+		r.w.Clock.Sleep(11 * time.Minute)
+		if err := r.d.Ring("", "veto"); err != nil {
+			t.Fatal(err)
+		}
+		p := postings(r, "")
+		if len(p) != 1 || p[0].Why != "timer" || p[0].HeldBy != "unheard" || !p[0].At.After(p[0].Due) {
+			t.Fatalf("%+v", p)
+		}
+		adopted(t, r, "S1")
+		r.w.Restart()
+		r.w.Clock.Sleep(5 * time.Minute)
+		if _, err := r.d.DueAll(); err != nil {
+			t.Fatal(err)
+		}
+		if p := postings(r, ""); len(p) != 2 || p[1].Why != "watchdog" {
+			t.Fatalf("%+v", p)
+		}
+	})
+}
+
+// The log says it in words, and metrics counts a batch's wakes by it.
+func TestAPostsReasonIsPrintedAndCounted(t *testing.T) {
+	r := newRig(t, "webhook")
+	hook(t, r).answeredBy(r)
+	a, b := adopted(t, r, "A"), adopted(t, r, "B")
+	a.Busy("work")
+	a.Job("gate-replay")
+	a.Done("Should run 5 count as a pass?")
+	b.Busy("work") // so A's posts have nothing of it to carry
+	r.w.Clock.Sleep(2 * time.Minute)
+	r.w.Clock.At(r.w.Clock.Now().Add(time.Hour), func() { a.JobDone("Merged.") })
+	watch(t, r, a, "A")
+	b.Done("finished")
+	watch(t, r, b, "B")
+	bat, evs, err := r.d.Log(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := drive.LogText(bat, evs, r.w.Clock.Now())
+	if !strings.Contains(out, "posting      A        asks, due ") || !strings.Contains(out, "posting      B        turn-ended, due ") {
+		t.Fatalf("%s", out)
+	}
+	m, err := r.d.Metrics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.ByWhy["asks"] != 1 || m.ByWhy["turn-ended"] != 2 {
+		t.Fatalf("%+v", m.ByWhy)
+	}
+	if !strings.Contains(m.Text(), "wakes by cause: asks 1, turn-ended 2") {
+		t.Fatalf("%s", m.Text())
+	}
+}

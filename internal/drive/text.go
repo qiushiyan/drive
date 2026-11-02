@@ -3,7 +3,9 @@ package drive
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -351,14 +353,26 @@ func LogText(b *batch.Batch, evs []batch.Event, now time.Time) string {
 		if e.Kind == batch.KindSeen || e.Kind == batch.KindAfterWake {
 			continue // bookkeeping, not what happened to a session
 		}
-		fmt.Fprintf(&out, "%s  %-12s %-8s %s\n", clock(e.At, zone, now), e.Kind, e.Session, describe(e))
+		fmt.Fprintf(&out, "%s  %-12s %-8s %s\n", clock(e.At, zone, now), e.Kind, e.Session, describe(e, zone))
 	}
 	return out.String()
 }
 
 // describe is an event as the log tells it.
-func describe(e batch.Event) string {
+func describe(e batch.Event, zone *time.Location) string {
 	switch e.Kind {
+	case batch.KindPosting:
+		s := e.Why
+		if !e.Due.IsZero() {
+			s += ", due " + e.Due.In(zone).Format("15:04")
+		}
+		if e.HeldBy != "" {
+			s += ", held by " + e.HeldBy
+		}
+		if e.Via != "" {
+			s += ", carried by " + e.Via + "'s wake"
+		}
+		return s
 	case batch.KindSend:
 		s := e.Outcome + ": " + clip(stepOf(e), 100)
 		if e.Key != "" {
@@ -474,6 +488,13 @@ func (m *Metrics) Text() string {
 	}
 	fmt.Fprintf(&b, "wakes: %d posted for sessions and %d for timers or the watchdog, %d failed; %d carried by another session's post; %d followed by no action on the session before its next wake or the batch's end\n",
 		m.Wakes, m.Timers, m.WakeFails, m.Carried, m.Unhandled)
+	if len(m.ByWhy) > 0 {
+		var causes []string
+		for _, why := range slices.Sorted(maps.Keys(m.ByWhy)) {
+			causes = append(causes, fmt.Sprintf("%s %d", why, m.ByWhy[why]))
+		}
+		fmt.Fprintf(&b, "wakes by cause: %s\n", strings.Join(causes, ", "))
+	}
 	fmt.Fprintf(&b, "turns left unwatched: %d (a send or respond that no wake, park or close of its session followed)\n", m.Unwatched)
 	if len(m.Refusals) > 0 {
 		var rs []string

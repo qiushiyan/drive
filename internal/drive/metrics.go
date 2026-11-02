@@ -39,14 +39,15 @@ type Metrics struct {
 	OwnWords  int            // steps the driver wrote: a typed line that is no command, or a file
 	Refusals  map[string]int // by kind of reason
 	Failures  []string
-	Unknown   int // sends whose delivery is unknown
-	Recovered int // lines retyped after their start was lost
-	Garbled   int // lines that arrived without their start and stayed so
-	Other     int // lines the session received as something other than what was typed
-	Wakes     int // a session's wakes posted
-	Timers    int // a timer's or the watchdog's wakes posted
-	Carried   int // endings another session's post carried, which took no post of their own
-	WakeFails int // wakes, a session's or a timer's, whose post failed
+	Unknown   int            // sends whose delivery is unknown
+	Recovered int            // lines retyped after their start was lost
+	Garbled   int            // lines that arrived without their start and stayed so
+	Other     int            // lines the session received as something other than what was typed
+	Wakes     int            // a session's wakes posted
+	Timers    int            // a timer's or the watchdog's wakes posted
+	Carried   int            // endings another session's post carried, which took no post of their own
+	ByWhy     map[string]int // posted wakes, carried ones and timers included, by what made them go
+	WakeFails int            // wakes, a session's or a timer's, whose post failed
 	// Unhandled counts wakes posted that no driver action on their session
 	// followed before its next wake or the batch's end: a send, respond,
 	// park, close, re-armed watch, or a refusal of one.
@@ -82,7 +83,7 @@ func (d *Driver) Metrics() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Metrics{Batch: b.Meta.Name, Zone: b.Zone(), From: b.Meta.Started, To: b.Meta.Started, Took: map[string]int{}, ByKey: map[string]int{}, Refusals: map[string]int{}}
+	m := &Metrics{Batch: b.Meta.Name, Zone: b.Zone(), From: b.Meta.Started, To: b.Meta.Started, Took: map[string]int{}, ByKey: map[string]int{}, Refusals: map[string]int{}, ByWhy: map[string]int{}}
 	for _, e := range evs {
 		if e.At.After(m.To) {
 			m.To = e.At
@@ -173,6 +174,9 @@ func (m *Metrics) actions(evs []batch.Event, wakes bool) {
 		case batch.KindFailure:
 			m.Failures = append(m.Failures, e.Session+": "+clip(e.Reason, 120))
 		case batch.KindWake:
+			if e.HTTP != 0 && e.Why != "" {
+				m.ByWhy[e.Why]++
+			}
 			if e.Session == "" { // a timer
 				if e.HTTP == 0 {
 					m.WakeFails++
