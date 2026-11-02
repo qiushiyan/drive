@@ -37,6 +37,9 @@ const (
 	KindCleanup = "cleanup"
 	// KindAfterWake is the batch's after-wake commands having run.
 	KindAfterWake = "after-wake"
+	// KindHeld is a timer that fell due while the driver is not answering, and
+	// waits: Note is the timer's. A wake with that note ends it.
+	KindHeld = "held"
 	// KindTold is something the watchdog told the driver of a session, written
 	// as its post begins: Outcome gone or watch-failing, with Reason when that
 	// post failed.

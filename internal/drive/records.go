@@ -113,12 +113,36 @@ func (d *Driver) openAsk(b *batch.Batch, evs []batch.Event, ask string) (*batch.
 			continue
 		}
 		if a.Answer != nil {
-			return nil, &Refused{Reason: fmt.Sprintf("%s was answered at %s, and its step, if any, went then", ask, a.Answer.At.In(b.Zone()).Format("15:04")),
+			r := &Refused{Reason: fmt.Sprintf("%s was answered at %s, and %s", ask, a.Answer.At.In(b.Zone()).Format("15:04"), stepOfAnswer(evs, a.Answer)),
 				Next: "read the session before sending anything more: " + d.run("read", cmp.Or(a.Session, "SESSION"))}
+			if a.Answer.Intent != "" && a.Session != "" {
+				r.Next = "see whether the step arrived, and send it again only if it did not: " + d.run("read", a.Session, "--user")
+			}
+			return nil, r
 		}
 		return a, nil
 	}
 	return nil, &Refused{Reason: fmt.Sprintf("no ask %s in batch %s", ask, b.Meta.Name), Next: d.run("status") + " lists the open asks"}
+}
+
+// stepOfAnswer says what the record knows of the step an answer went with, which
+// is whether it went only once its send was settled.
+func stepOfAnswer(evs []batch.Event, answer *batch.Event) string {
+	if answer.Intent == "" {
+		return "no step went with it"
+	}
+	for _, e := range evs {
+		if e.Intent != answer.Intent {
+			continue
+		}
+		switch e.Kind {
+		case batch.KindSend:
+			return "its step " + e.Outcome
+		case batch.KindFailure:
+			return "its step failed: " + clip(e.Reason, 160)
+		}
+	}
+	return "nothing says yet whether its step reached the session"
 }
 
 // Seen notes that a driver read the batch, which is how a run that changes

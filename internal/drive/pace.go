@@ -1,6 +1,8 @@
 package drive
 
 import (
+	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -216,6 +218,23 @@ func wakeHeld(evs []batch.Event, now, ready time.Time) bool {
 	return !posting.IsZero() && now.Sub(posting) < postLimit ||
 		!posted.IsZero() && now.Sub(posted) < wakeGap ||
 		!heard.IsZero() && now.Sub(heard) < runQuiet && now.Sub(ready) < mostHeld
+}
+
+// timersHeld lists the timers due and waiting for the driver to answer, as
+// status and the page show them. One that has rung, or whose watch was stopped,
+// no longer waits.
+func (d *Driver) timersHeld(b *batch.Batch, evs []batch.Event) []string {
+	var out []string
+	for i, e := range evs {
+		if e.Kind != batch.KindHeld {
+			continue
+		}
+		rang := slices.ContainsFunc(evs[i:], func(w batch.Event) bool { return w.Kind == batch.KindWake && w.Session == "" && w.Note == e.Note })
+		if !rang && d.Watches != nil && d.Watches.Alive(timerName(b, e.Note)) {
+			out = append(out, fmt.Sprintf("timer %q is due, and waits until the driver answers", e.Note))
+		}
+	}
+	return out
 }
 
 // unheardLine says a batch's driver is not answering its wakes: the bot's

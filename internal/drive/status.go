@@ -222,6 +222,9 @@ type Status struct {
 	InFlight []InFlight
 	NoGoal   string // which open sessions have no goal recorded, and how to record one
 	Unheard  string // that the batch's driver is not answering its wakes, and what is held for it
+	// TimersHeld are the timers due while the driver is not answering, each
+	// still on the books.
+	TimersHeld []string
 	// Leftovers are what closed sessions of this driver's batches left: a line
 	// each, with what becomes of it. Read only with progress, like the rows' stage.
 	Leftovers []string
@@ -263,6 +266,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 	out.Rows, out.Others, out.Closed = d.rows(b, members, blocks, holds, hearing, out.Zone, withProgress)
 	if b != nil && b.Meta.Wake == "webhook" {
 		out.Unheard = unheardLine(hearing, out.Zone)
+		out.TimersHeld = d.timersHeld(b, evs)
 	}
 	if withProgress && b != nil {
 		out.Leftovers = d.leftoverLines(b)

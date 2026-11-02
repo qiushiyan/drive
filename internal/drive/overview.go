@@ -29,7 +29,9 @@ type Overview struct {
 	// Unheard says the batch's driver is not answering its wakes, and what
 	// that holds back.
 	Unheard string
-	// Leftovers are what closed sessions left and what becomes of each.
+	// Leftovers are what the batch has waiting that belongs to no open session:
+	// timers held for a driver that is not answering, then what closed sessions
+	// left and what becomes of each.
 	Leftovers []string
 
 	Answered []*batch.Ask  // questions the owner answered, or that stopped mattering, in the order asked
@@ -113,7 +115,7 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 	if ov.Wakes {
 		ov.Unheard = unheardLine(hearing, ov.Zone)
 	}
-	ov.Leftovers = d.leftoverLines(b)
+	ov.Leftovers = append(d.timersHeld(b, evs), d.leftoverLines(b)...)
 	grants, asks, notes := batch.Records(evs)
 	for _, a := range asks {
 		if a.Answer == nil {

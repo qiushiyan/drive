@@ -329,13 +329,26 @@ func (d *Driver) landed(dir, sid string, branches []string) (workLanding, bool) 
 }
 
 // judged is how a closed session's work stands against its trunk: its branches
-// and which merged.
-func (d *Driver) judged(m *batch.Member, branches []string) (progress.Landing, error) {
-	var commits []progress.Commit
-	if s, err := d.Progress.Steps(m.SID); err == nil {
-		commits = s.Commits
+// and which merged, from what its transcript and its steps name. Either failing
+// says nothing of what it left, since a session that worked in a worktree through
+// its shell names its branch only there.
+func (d *Driver) judged(m *batch.Member) (progress.Landing, error) {
+	path := ""
+	if m.SID != "" {
+		path = d.Host.Transcript(m.SID)
 	}
-	return d.Progress.Landed(m.Dir, branches, commits)
+	if path == "" {
+		return progress.Landing{}, progress.ErrNothingToJudge
+	}
+	f, err := turn.ReadFile(path)
+	if err != nil {
+		return progress.Landing{}, fmt.Errorf("reading its transcript: %w", err)
+	}
+	s, err := d.Progress.Steps(m.SID)
+	if err != nil {
+		return progress.Landing{}, err
+	}
+	return d.Progress.Landed(m.Dir, f.Branches, s.Commits)
 }
 
 // refusalKind groups refusal reasons by what stopped the action.

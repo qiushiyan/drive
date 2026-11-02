@@ -15,16 +15,17 @@ import (
 // can change without the other; each help page with --json names every key.
 
 type statusDoc struct {
-	Batch     *batchDoc     `json:"batch"` // null when there is no current batch
-	Sessions  []rowDoc      `json:"sessions"`
-	Closed    int           `json:"closed"`
-	Others    []rowDoc      `json:"others"`
-	Holds     []string      `json:"holds"`
-	OpenAsks  []askDoc      `json:"open_asks"`
-	Grants    []grantDoc    `json:"grants"`
-	InFlight  []inFlightDoc `json:"in_flight"`
-	Unheard   string        `json:"unheard,omitempty"`
-	Leftovers []string      `json:"leftovers,omitempty"`
+	Batch      *batchDoc     `json:"batch"` // null when there is no current batch
+	Sessions   []rowDoc      `json:"sessions"`
+	Closed     int           `json:"closed"`
+	Others     []rowDoc      `json:"others"`
+	Holds      []string      `json:"holds"`
+	OpenAsks   []askDoc      `json:"open_asks"`
+	Grants     []grantDoc    `json:"grants"`
+	InFlight   []inFlightDoc `json:"in_flight"`
+	Unheard    string        `json:"unheard,omitempty"`
+	Leftovers  []string      `json:"leftovers,omitempty"`
+	TimersHeld []string      `json:"timers_held,omitempty"`
 }
 
 type batchDoc struct {
@@ -116,7 +117,7 @@ func (st *Status) JSON() any {
 		return out
 	}
 	doc := statusDoc{Sessions: rows(st.Rows), Closed: st.Closed, Others: rows(st.Others), Holds: list(st.Holds),
-		OpenAsks: []askDoc{}, Grants: []grantDoc{}, InFlight: []inFlightDoc{}, Unheard: st.Unheard, Leftovers: st.Leftovers}
+		OpenAsks: []askDoc{}, Grants: []grantDoc{}, InFlight: []inFlightDoc{}, Unheard: st.Unheard, Leftovers: st.Leftovers, TimersHeld: st.TimersHeld}
 	if m := st.Batch; m != nil {
 		doc.Batch = &batchDoc{Name: m.Name, Driver: batch.DriverOf(*m), Started: m.Started, Wake: m.Wake, Webhook: m.Webhook, RexSession: m.RexSession, TZ: m.TZ}
 	}

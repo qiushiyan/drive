@@ -223,6 +223,9 @@ func (st *Status) Text(now time.Time) string {
 	if st.Unheard != "" {
 		b.WriteString(st.Unheard + "\n")
 	}
+	for _, t := range st.TimersHeld {
+		b.WriteString(t + "\n")
+	}
 	if st.NoGoal != "" {
 		b.WriteString(st.NoGoal + "\n")
 	}

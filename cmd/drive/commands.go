@@ -92,6 +92,7 @@ in_flight   actions admitted with no outcome yet: kind, session, at, text, drive
             out once that driver has gone)
 unheard     that the driver has stopped answering its wakes and when the next try is; left
             out while it answers
+timers_held a line per timer due and waiting for the driver to answer; left out when none is
 leftovers   a line per branch a closed session left that stays, and how many closed sessions
             are not yet checked; left out with --quick or when there are none`}}
 }

@@ -151,7 +151,8 @@ func (d *Driver) Cleanup(ref string) ([]Cleaned, error) {
 // cleanSession judges and removes what one closed session left. judged is false
 // when it could not be read at all, which says nothing of what it left, so the
 // record keeps it open to be read again. Nothing left is recorded only once that
-// is known: its checkout is gone, or it named no branch or commit to judge.
+// is known: its checkout is gone, it named no branch or commit to judge, or its
+// transcript is gone, when nothing further can say.
 func (d *Driver) cleanSession(o *batch.Batch, m *batch.Member, inUse map[string]string) (out []Cleaned, judged bool) {
 	none := []Cleaned{{Batch: o.Meta.Name, Session: m.Label, Outcome: "none"}}
 	if m.Dir == "" {
@@ -160,11 +161,7 @@ func (d *Driver) cleanSession(o *batch.Batch, m *batch.Member, inUse map[string]
 	if _, err := os.Stat(m.Dir); errors.Is(err, os.ErrNotExist) {
 		return none, true // its checkout went with its own closeout
 	}
-	var branches []string
-	if m.SID != "" {
-		branches = d.branchesOf(m.SID)
-	}
-	l, err := d.judged(m, branches)
+	l, err := d.judged(m)
 	switch {
 	case errors.Is(err, progress.ErrNothingToJudge):
 		return none, true

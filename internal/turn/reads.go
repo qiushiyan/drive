@@ -32,7 +32,8 @@ var (
 	askingWords = regexp.MustCompile(`(?i)\bsay\s+["“'*]|\bon your (word|go|ok)\b|\bwait(s|ing)?\s+(on|for)\s+(you|your)\b|\bawaiting\s+(you|your|approval|sign)` +
 		`|\bneeds?\s+(you|your|approval|a decision|sign-?off)\b|\byour\s+(call|decision|answer|go-ahead|approval|ok)\b|\bfor you to (decide|choose|pick|answer|approve)\b` +
 		`|\b(is|are)\s+(still\s+)?yours\b|\blet me know\b|\btell me\b|\b(once|when|after|if)\s+you\b|\byou('d| would) (like|prefer)\b|\bplease\b` +
-		`|(^|[.!?:\n]\s*)(approve|confirm|decide|choose|sign off)\b`)
+		`|(^|[.!?:\n]\s*)(approve|confirm|decide|choose|sign off)\b` +
+		`|\bwait(s|ing)?\s+(on|for|until)\b[^.\n]*\b(approval|sign-?off|decision|answer|go-ahead|confirmation|permission|input)\b`)
 	// What a session says of a job it is waiting on, as the whole of how it ends.
 	waitingWords = regexp.MustCompile(`(?i)\bwait(s|ing)?\s+(on|for|until)\b` +
 		`|\b(still|now|is|are)\s+(\w+\s+)?(re-?)?(running|going|driving|compiling|replaying|in progress|queued|pending)\b` +

@@ -446,7 +446,7 @@ func (d *Driver) Ring(watch, note string) error {
 				break
 			}
 			if !noted {
-				_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindNote, Note: fmt.Sprintf("timer %q is due, and waits until the driver answers", note)})
+				_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindHeld, Note: note})
 				noted = true
 			}
 			d.sleep(d.poll() * 15)

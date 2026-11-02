@@ -114,6 +114,7 @@ func TestWhatAReplySaysDecidesTheWakeWhileItsJobRuns(t *testing.T) {
 		{"a report with a job left behind", report + "\n\nThe scratch worktrees are removed.", 10 * time.Minute, 11 * time.Minute},
 		{"anything unclear", "415 copies, no new failures.", 10 * time.Minute, 11 * time.Minute},
 		{"a wait that is over", "No longer waiting for CI. The change is merged and released.", 10 * time.Minute, 11 * time.Minute},
+		{"a wait for approval", "Waiting for approval before applying the production migration.", time.Minute, 2 * time.Minute},
 		{"says it waits", "Waiting on the replays.", 2 * time.Hour, 2*time.Hour + time.Minute},
 		{"says what comes after", report + "\n\nWhen the replays finish, I'll score them and report.", 2 * time.Hour, 2*time.Hour + time.Minute},
 	} {
@@ -464,6 +465,46 @@ func TestAWakeCloseBehindAnotherWaitsForItsRun(t *testing.T) {
 	}
 }
 
+// A run that acts on a session while pacing holds its wake leaves nothing to post
+// about the turn it moved past, and the new turn's end wakes the driver.
+func TestASessionActedOnMeanwhilePostsNothing(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r)
+	a, b := adopted(t, r, "A"), adopted(t, r, "B")
+	a.Busy("work")
+	a.Done("finished")
+	r.w.Clock.Sleep(2 * time.Minute)
+	watch(t, r, a, "A")
+	// B ended moments after A's post, so pacing holds its wake for that run.
+	b.Busy("work")
+	b.Done("finished too")
+	b.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} })
+	start := r.w.Clock.Now()
+	acting := *r.d
+	r.w.Clock.At(start.Add(90*time.Second), func() {
+		rd, err := acting.Read("B", drive.ReadLast, 10)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if _, err := acting.Send(rd.View.String(), drive.Step{Line: "next step"}, drive.SendOptions{}); err != nil {
+			t.Error(err)
+		}
+	})
+	got := -1
+	r.w.Clock.At(start.Add(20*time.Minute), func() {
+		got = l.count()
+		b.Done("next step finished")
+	})
+	watch(t, r, b, "B")
+	if got != 1 {
+		t.Fatalf("B moved on, so nothing is posted for its old turn: %d posts", got)
+	}
+	if n := l.count(); n != 2 || !strings.Contains(l.output(1), "next step finished") {
+		t.Fatalf("its new turn's end wakes the driver: %d posts", n)
+	}
+}
+
 // A post in flight holds the next, however long that one has waited: it would
 // otherwise cross the post that may yet carry it.
 func TestHeldPastItsLimitAWakeStillWaitsForAPostInFlight(t *testing.T) {
@@ -698,7 +739,12 @@ func TestATimerWaitsWhileNobodyAnswers(t *testing.T) {
 		t.Fatal(err)
 	}
 	alive := false
-	r.w.Clock.At(r.w.Clock.Now().Add(time.Minute), func() { alive = r.watches.Alive(name) })
+	var shown string
+	r.w.Clock.At(r.w.Clock.Now().Add(time.Minute), func() {
+		alive = r.watches.Alive(name)
+		st, _ := r.d.Status(false)
+		shown = strings.Join(st.TimersHeld, "\n")
+	})
 	if err := r.d.Ring(name, "veto"); err != nil {
 		t.Fatal(err)
 	}
@@ -714,8 +760,41 @@ func TestATimerWaitsWhileNobodyAnswers(t *testing.T) {
 	if r.watches.Alive(name) {
 		t.Fatal("it retires once it has posted")
 	}
-	if notes := r.events(batch.KindNote); len(notes) != 1 || !strings.Contains(notes[0].Note, `timer "veto" is due`) {
-		t.Fatalf("the record says it waits: %+v", notes)
+	if !strings.Contains(shown, `timer "veto" is due`) {
+		t.Fatalf("status says it waits: %q", shown)
+	}
+	if st, _ := r.d.Status(false); len(st.TimersHeld) != 0 {
+		t.Fatalf("not once it has rung: %q", st.TimersHeld)
+	}
+}
+
+// A timer stopped while it waits no longer waits, in status or on the page.
+func TestATimerStoppedWhileItWaitsIsNoLongerShown(t *testing.T) {
+	r := newRig(t, "webhook")
+	hook(t, r)
+	now := r.w.Clock.Now()
+	for i := range 3 {
+		_ = r.b.Append(batch.Event{At: now.Add(time.Duration(i) * time.Second), Kind: batch.KindWake, Session: "A", HTTP: 204})
+	}
+	r.w.Clock.Sleep(11 * time.Minute)
+	name := "drive-b1-timer-veto"
+	if err := r.watches.Start(name, []string{"x"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	r.w.Clock.At(r.w.Clock.Now().Add(time.Minute), func() {
+		ov, err := r.d.Overview(false)
+		if err != nil || !strings.Contains(string(ov.HTML(r.w.Clock.Now())), `timer &#34;veto&#34; is due`) {
+			t.Errorf("the page shows it: %v", err)
+		}
+		_ = r.watches.Stop(name)
+		st, _ := r.d.Status(false)
+		if len(st.TimersHeld) != 0 {
+			t.Errorf("stopped, it no longer waits: %q", st.TimersHeld)
+		}
+		_ = r.watches.Start(name, []string{"x"}, "") // for the rest of this run
+	})
+	if err := r.d.Ring(name, "veto"); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -890,6 +969,49 @@ func TestTheAnswerIsOnRecordBeforeTheStepIsTyped(t *testing.T) {
 	}
 }
 
+// A retry says what the record knows of the step, which is whether it went only
+// once something settled that.
+func TestARetryOfAnAnswerSaysWhatBecameOfItsStep(t *testing.T) {
+	r := newRig(t, "webhook")
+	c := adopted(t, r, "T1")
+	id, _ := r.d.Ask("T1", "Go on?", "yes", "it waits")
+	gate := make(chan struct{})
+	c.Edit(func(c *testkit.Claude) { c.TypeGate = gate })
+	done := make(chan error, 1)
+	run := *r.d
+	go func() {
+		_, _, err := run.AnswerAndSend(id, "yes", "recommended", false, drive.Step{Line: "go on"}, drive.SendOptions{})
+		done <- err
+	}()
+	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(time.Millisecond) {
+		if len(r.events(batch.KindAnswer)) > 0 {
+			break
+		}
+	}
+	retry := *r.d
+	_, _, err := retry.AnswerAndSend(id, "yes", "recommended", false, drive.Step{Line: "go on"}, drive.SendOptions{})
+	if !isRefused(err) || !strings.Contains(err.Error(), "nothing says yet whether its step reached the session") || !strings.Contains(err.Error(), "drive --batch b1 read T1 --user") {
+		t.Fatalf("mid-delivery it cannot say the step went: %v", err)
+	}
+	close(gate)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = retry.AnswerAndSend(id, "yes", "recommended", false, drive.Step{Line: "go on"}, drive.SendOptions{})
+	if !isRefused(err) || !strings.Contains(err.Error(), "its step arrived") {
+		t.Fatalf("settled, it says how it went: %v", err)
+	}
+	// An answer recorded with no step says only that.
+	alone, _ := r.d.Ask("T1", "Again?", "no", "it waits")
+	if _, err := r.d.Answer(alone, "no", "recommended", false); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = retry.AnswerAndSend(alone, "no", "recommended", false, drive.Step{Line: "go on"}, drive.SendOptions{})
+	if !isRefused(err) || !strings.Contains(err.Error(), "no step went with it") {
+		t.Fatalf("%v", err)
+	}
+}
+
 // A refused step leaves the ask open, so the one command can run again.
 func TestARefusedStepRecordsNoAnswer(t *testing.T) {
 	r := newRig(t, "webhook")
@@ -917,8 +1039,11 @@ type cleanupWorld struct {
 	refuse    map[string]string
 	removed   []string
 	landedErr error
+	stepsErr  error
 	unjudged  map[string]string // branches gwt failed on, and what it said
 }
+
+func (w *cleanupWorld) Steps(string) (progress.Steps, error) { return progress.Steps{}, w.stepsErr }
 
 func (w *cleanupWorld) Landed(dir string, branches []string, commits []progress.Commit) (progress.Landing, error) {
 	if w.landedErr != nil {
@@ -1038,6 +1163,29 @@ func TestACleanupThatCouldNotReadASessionStaysOpen(t *testing.T) {
 	st, _ = r.d.Status(true)
 	if !strings.Contains(strings.Join(st.Leftovers, "\n"), "bad object") || strings.Contains(strings.Join(st.Leftovers, "\n"), "cannot run") {
 		t.Fatalf("a branch gwt could not judge stays open, by what it said: %q", st.Leftovers)
+	}
+}
+
+// A session whose steps could not be read may have worked in a worktree only they
+// name, so that says nothing of what it left.
+func TestACleanupThatCouldNotReadItsStepsStaysOpen(t *testing.T) {
+	r := newRig(t, "webhook")
+	w := &cleanupWorld{prs: prs{}, merged: map[string]bool{"done-a": true}, stepsErr: errors.New("claude-steps: no answer within 30s")}
+	r.d.Progress = w
+	closedOn(t, r, "A", "done-a")
+	if _, err := r.d.Cleanup(""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := r.d.Status(true)
+	if !strings.Contains(strings.Join(st.Leftovers, "\n"), "what A left could not be checked: claude-steps") || len(w.removed) != 0 {
+		t.Fatalf("%q %q", st.Leftovers, w.removed)
+	}
+	w.stepsErr = nil
+	if _, err := r.d.Cleanup(""); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.removed) != 1 {
+		t.Fatalf("the next run judges it: %q", w.removed)
 	}
 }
 
