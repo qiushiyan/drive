@@ -3,11 +3,22 @@ Usage: drive park <view> <reason> ... [flags]
 Stop a session's wakes until a step is sent to it, keeping why.
 
 A parked session sends no wakes until a step is sent to it, so a session
-waiting on the owner, or on another session's hold, stops waking the driver.
+waiting on the owner, on another session's hold, or for a date stops waking
+the driver. Something on record has to end the park, or it is refused: an
+open ask about the session (drive record ask), a hold it was refused a step
+for, or --until. An ask answered with no step leaves the park with nothing
+to end it, and a time past its --until comes due: status lists either under
+the table, and the watchdog wakes the driver about it once.
 
 Arguments:
   <view>               The view the park was decided on.
-  <reason> ...         Why it waits, such as what only the owner can give; the record keeps it.
+  <reason> ...         Why it waits, in the owner's terms; the record keeps it and the owner's page
+                       shows it.
+
+Flags:
+      --until=WHEN     When to look at it again: a date or a date and time in the batch's zone, such
+                       as 2026-11-06 or "2026-11-06 09:00", or a duration such as 4h. The watchdog
+                       wakes you about it then.
 
 Inherited flags:
   -h, --help           Show context-sensitive help.

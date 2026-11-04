@@ -59,7 +59,7 @@ func TestARestartedSessionComesBackUnderItsLabel(t *testing.T) {
 	busy := adopted(t, r, "T1")
 	busy.Busy("build it")
 	parked := adopted(t, r, "T2")
-	if err := r.d.Park(r.view("T2"), "waits for the owner's call on D2"); err != nil {
+	if err := r.d.Park(r.view("T2"), "waits for the owner's call on D2", r.later()); err != nil {
 		t.Fatal(err)
 	}
 	r.w.Restart()
@@ -93,7 +93,8 @@ func TestARestartedSessionComesBackUnderItsLabel(t *testing.T) {
 		t.Fatalf("the Rex session starts again once: %d", n)
 	}
 	st, _ = r.d.Status(false)
-	if w := st.Rows[1].Watch; w != "parked: waits for the owner's call on D2" || !st.Rows[0].Armed || st.Rows[1].Armed {
+	// Its park comes back whole, the time it is to be looked at again with it.
+	if w := st.Rows[1].Watch; !strings.HasPrefix(w, "parked until ") || !strings.HasSuffix(w, ": waits for the owner's call on D2") || !st.Rows[0].Armed || st.Rows[1].Armed {
 		t.Fatalf("the parked label gets no wake, the other one does: %+v", st.Rows)
 	}
 	if st.Rows[1].LastSent != "start" || st.Rows[1].SID != parked.SID {

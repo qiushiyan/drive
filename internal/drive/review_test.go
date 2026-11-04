@@ -474,7 +474,7 @@ func TestAnActionOnAViewTheSessionMovedPastIsRefused(t *testing.T) {
 			return err
 		}},
 		{"an interrupt", true, func(r *rig, v string) error { _, err := r.d.Respond(v, "interrupt"); return err }},
-		{"a park", false, func(r *rig, v string) error { return r.d.Park(v, "waits on the owner") }},
+		{"a park", false, func(r *rig, v string) error { return r.d.Park(v, "waits on the owner", r.later()) }},
 		{"a close", false, func(r *rig, v string) error { return r.d.Close(v) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

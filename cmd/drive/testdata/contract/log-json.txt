@@ -108,10 +108,17 @@ exit 0
   },
   {
     "at": "2026-10-23T01:02:04Z",
+    "kind": "refused",
+    "session": "T1",
+    "reason": "nothing on record ends T1's park, so no wake would bring it back: no ask about it is open, it waits for no hold, and no --until was given"
+  },
+  {
+    "at": "2026-10-23T01:02:04Z",
     "kind": "park",
     "session": "T1",
     "reason": "design checkpoint",
-    "view": "T1@fefb9f5c"
+    "view": "T1@fefb9f5c",
+    "due": "2026-10-24T09:00:00+01:00"
   },
   {
     "at": "2026-10-23T01:02:04Z",

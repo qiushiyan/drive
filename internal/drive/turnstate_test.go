@@ -251,7 +251,7 @@ func TestAParkedWaiterSaysWhenItsHoldIsFree(t *testing.T) {
 	if _, err := r.d.Send(r.view("T2"), drive.Step{Line: "close it out"}, drive.SendOptions{Hold: "main"}); !isRefused(err) {
 		t.Fatalf("held: %v", err)
 	}
-	if err := r.d.Park(r.view("T2"), "waits for main, held by T1"); err != nil {
+	if err := r.d.Park(r.view("T2"), "waits for main, held by T1", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	a.Done("merged")

@@ -866,7 +866,7 @@ func TestTheWatchdogPostsOnlyWhatNeedsADriver(t *testing.T) {
 		t.Fatalf("armed with no model run: %+v, %d posts", reports[0], l.count())
 	}
 	// Every session parked: still nothing.
-	if err := r.d.Park(r.view("S1"), "waits on the owner"); err != nil {
+	if err := r.d.Park(r.view("S1"), "waits on the owner", r.w.Clock.Now().Add(48*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if reports, _ = r.d.DueAll(); len(reports[0].Armed) != 0 || l.count() != 0 {
@@ -954,11 +954,11 @@ func TestAFailedNoticeIsNotTold(t *testing.T) {
 func TestAnAnswerCanCarryItsStep(t *testing.T) {
 	r := newRig(t, "webhook")
 	c := adopted(t, r, "T1")
-	if err := r.d.Park(r.view("T1"), "waits on A1"); err != nil {
-		t.Fatal(err)
-	}
 	id, err := r.d.Ask("T1", "Count run 5 as a pass?", "yes", "T1 stays parked")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.d.Park(r.view("T1"), "waits on A1", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	sent, got, err := r.d.AnswerAndSend(id, "yes (chat)", "recommended", false, drive.Step{Line: "Count it, and run the pairs."}, drive.SendOptions{})

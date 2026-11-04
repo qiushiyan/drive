@@ -9,5 +9,5 @@ sends: 2 — 1 the owner's snippets, 0 slash commands typed, 1 the driver's own 
 snippets: land-pr 1
 wakes: 0 posted for sessions and 0 for timers or the watchdog, 0 failed; 0 carried by another session's post; 0 followed by no action on the session before its next wake or the batch's end
 turns left unwatched: 0 (a send or respond that no wake, park or close of its session followed)
-refused: already open 1, stale view 1
+refused: already open 1, park with nothing to end it 1, stale view 1
 --- stderr

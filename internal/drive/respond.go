@@ -151,11 +151,13 @@ func (d *Driver) Respond(view, response string) (res *Responded, err error) {
 	return out, nil
 }
 
-// Park stops waking the driver for a session and records why: it waits on
-// something only the owner can give. It is decided on a view like any
-// action, so a park decided before another driver's send never silences
-// the wake that send armed.
-func (d *Driver) Park(view, reason string) (err error) {
+// Park stops waking the driver for a session and records why. Something on
+// record has to end the park, since a driver keeps nothing between runs: an
+// open ask about the session, a hold it waits for, or until, the time to
+// look at it again, which the watchdog tells the driver of once it comes. It
+// is decided on a view like any action, so a park decided before another
+// driver's send never silences the wake that send armed.
+func (d *Driver) Park(view, reason string, until time.Time) (err error) {
 	v, err := turn.ParseView(view)
 	if err != nil {
 		return &Refused{Reason: err.Error()}
@@ -163,7 +165,15 @@ func (d *Driver) Park(view, reason string) (err error) {
 	if strings.TrimSpace(reason) == "" {
 		return &Refused{Reason: "say why it is parked; the report and the next driver read it"}
 	}
-	again := d.run("park", view, text(reason))
+	words := []any{"park", view}
+	if !until.IsZero() {
+		words = append(words, "--until", until.Format("2006-01-02 15:04"))
+	}
+	again := d.run(append(words, text(reason))...)
+	if !until.IsZero() && !until.After(d.now()) {
+		return &Refused{Reason: fmt.Sprintf("--until %s has passed", until.Format("2006-01-02 15:04")),
+			Next: "give the time you should look at it again, later than now"}
+	}
 	b, err := d.inBatch()
 	if err != nil {
 		return unsent(err, again)
@@ -177,10 +187,17 @@ func (d *Driver) Park(view, reason string) (err error) {
 	if b == nil || o.Member == nil {
 		return &Refused{Reason: fmt.Sprintf("%s is not in the batch", o.Label)}
 	}
+	evs, err := b.Events()
+	if err != nil {
+		return err
+	}
+	if endOf(evs, o.Member, until).none() {
+		return d.unended(o.Label, view, reason)
+	}
 	if d.Watches != nil {
 		_ = d.Watches.Stop(watchName(b, o.Session.Block))
 	}
-	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindPark, Session: o.Label, Reason: reason, View: v.String()}); err != nil {
+	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindPark, Session: o.Label, Reason: reason, View: v.String(), Due: until}); err != nil {
 		return &Failed{What: fmt.Sprintf("stopped %s's wake, but the park was not recorded: %v", o.Label, err), Next: "park it again: " + again}
 	}
 	return nil
@@ -207,8 +224,9 @@ func (d *Driver) Close(view string) (err error) {
 	o := a.o
 	st, state := o.Session.Status, o.State()
 	// A session left open is left untouched, so no wake of its own comes:
-	// one that waits on something is parked with why.
+	// one that waits on something is parked with why, and with what ends it.
 	park := func(why string) string { return d.run("park", view, text(why)) }
+	parkUntil := func(why string) string { return d.run("park", view, "--until", "WHEN", text(why)) }
 	switch {
 	case state == "working":
 		return &Refused{Reason: fmt.Sprintf("%s is working", o.Label),
@@ -218,11 +236,12 @@ func (d *Driver) Close(view string) (err error) {
 			Next: d.answerNext(o.Label, view, state)}
 	case o.Input == turn.InputTyped:
 		return &Refused{Reason: fmt.Sprintf("%s's input box holds an unsent line: %q", o.Label, clip(o.Typed, 80)),
-			Next: "leave the block, as the line may be the owner's, and park it so the report names it: " + park("an unsent line in its input box")}
+			Next: "leave the block, as the line may be the owner's: ask the owner about it (" + d.askAbout(o.Label, o.Label+"'s input box holds a line nobody sent; is it yours?") +
+				"), then park it so the report names it: " + park("an unsent line in its input box")}
 	case len(d.Host.Shells(st.PID)) > 0:
 		job := d.Host.Shells(st.PID)[0]
 		next := "if the job should have ended, have the session stop it, and close it once that turn ends: " + d.stopJob(view, job) +
-			"; if it should run on, park the session with why, as nothing wakes you when the job ends: " + park("a background job still runs")
+			"; if it should run on, park the session until you should look at it again, as nothing wakes you when the job ends: " + parkUntil("a background job still runs")
 		if webhook, _ := d.wakes(o); !webhook {
 			next = "if the job should have ended, have the session stop it, and close it once that turn ends: " + d.stopJob(view, job) +
 				fmt.Sprintf("; if it should run on, wait for it (%s) and close the session then", d.run("wait", o.Label))

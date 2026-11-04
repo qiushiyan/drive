@@ -376,6 +376,8 @@ func refusalKind(reason string) string {
 		return "still working"
 	case strings.Contains(reason, "already open"):
 		return "already open"
+	case strings.Contains(reason, "nothing on record ends"):
+		return "park with nothing to end it"
 	case strings.Contains(reason, "starts only when typed"):
 		return "typed-only skill in a file"
 	case strings.Contains(reason, "typed text"), strings.Contains(reason, "unsent line"):

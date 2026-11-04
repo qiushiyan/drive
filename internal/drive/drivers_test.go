@@ -49,7 +49,7 @@ func TestASessionAnotherDriverDrivesIsTheirs(t *testing.T) {
 			return err
 		},
 		"respond": func() error { _, err := r.d.Respond(v, "interrupt"); return err },
-		"park":    func() error { return r.d.Park(v, "waits") },
+		"park":    func() error { return r.d.Park(v, "waits", r.later()) },
 		"close":   func() error { return r.d.Close(v) },
 		"watch":   func() error { _, err := r.d.Watch(block); return err },
 	} {

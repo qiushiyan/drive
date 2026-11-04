@@ -206,6 +206,8 @@ type Wake struct {
 	// and HoldWhy why; zero while nothing does.
 	HoldsUntil time.Time
 	HoldWhy    string
+	// Park is what ends its park, while it is parked.
+	Park *parkEnd
 }
 
 // Status is the batch at a glance.
@@ -228,6 +230,9 @@ type Status struct {
 	// Leftovers are what closed sessions of this driver's batches left: a line
 	// each, with what becomes of it. Read only with progress, like the rows' stage.
 	Leftovers []string
+	// Parks are the parked sessions whose park needs the driver: its --until
+	// has come, or nothing on record ends it. A line each, with what to run.
+	Parks []string
 }
 
 // InFlight is an action admitted with no outcome yet.
@@ -263,7 +268,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 	// read before the rows.
 	holds := d.holdsNow(evs, members)
 	hearing := batch.Hearings(evs, d.now())
-	out.Rows, out.Others, out.Closed = d.rows(b, members, blocks, holds, hearing, out.Zone, withProgress)
+	out.Rows, out.Others, out.Closed = d.rows(b, evs, members, blocks, holds, hearing, out.Zone, withProgress)
 	if b != nil && b.Meta.Wake == "webhook" {
 		out.Unheard = unheardLine(hearing, out.Zone)
 		out.TimersHeld = d.timersHeld(b, evs)
@@ -284,6 +289,11 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 		out.NoGoal = fmt.Sprintf("no goal recorded for %s; the owner's page shows each session's goal: %s", strings.Join(none, ", "),
 			d.run("record", "goal", none[0], text("…")))
 	}
+	for _, r := range out.Rows {
+		if l := d.parkLine(r, out.Zone); l != "" {
+			out.Parks = append(out.Parks, l)
+		}
+	}
 	out.Holds = holdLines(holds, out.Zone)
 	grants, asks, _ := batch.Records(evs)
 	out.Grants = grants
@@ -299,7 +309,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 // rows reads every open session of the batch, and the other Claude
 // sessions among blocks, at once, each reader filling a slot of its own;
 // closed counts the batch's sessions closed since.
-func (d *Driver) rows(b *batch.Batch, members []*batch.Member, blocks []rex.Block, holds []holdNow, hearing batch.Hearing, zone *time.Location, withProgress bool) (rows, others []Row, closed int) {
+func (d *Driver) rows(b *batch.Batch, evs []batch.Event, members []*batch.Member, blocks []rex.Block, holds []holdNow, hearing batch.Hearing, zone *time.Location, withProgress bool) (rows, others []Row, closed int) {
 	window := map[string]string{}
 	seen := map[string]bool{}
 	for _, bl := range blocks {
@@ -332,7 +342,7 @@ func (d *Driver) rows(b *batch.Batch, members []*batch.Member, blocks []rex.Bloc
 			outside[i] = &r
 		})
 	}
-	rows = d.memberRows(b, members, window, holds, hearing, zone, withProgress)
+	rows = d.memberRows(b, evs, members, window, holds, hearing, zone, withProgress)
 	wg.Wait()
 	for _, r := range outside {
 		if r != nil {
@@ -345,7 +355,7 @@ func (d *Driver) rows(b *batch.Batch, members []*batch.Member, blocks []rex.Bloc
 // memberRows reads every open member of the batch at once, each reader
 // filling a slot of its own: its turn, its wake, and with withProgress its
 // stage and the pull requests it named. window places each block in Rex.
-func (d *Driver) memberRows(b *batch.Batch, members []*batch.Member, window map[string]string, holds []holdNow, hearing batch.Hearing, zone *time.Location, withProgress bool) []Row {
+func (d *Driver) memberRows(b *batch.Batch, evs []batch.Event, members []*batch.Member, window map[string]string, holds []holdNow, hearing batch.Hearing, zone *time.Location, withProgress bool) []Row {
 	free := map[string]string{} // a session waiting for a hold that is free, to that hold
 	for _, h := range holds {
 		for _, w := range h.waiting {
@@ -369,7 +379,11 @@ func (d *Driver) memberRows(b *batch.Batch, members []*batch.Member, window map[
 			if m.LastSend != nil {
 				r.LastSent, r.SentAt = sentLabel(m.LastSend), m.LastSend.At
 			}
-			r.Wake = d.wakeOf(b, m, r, hearing, zone, free[m.Label])
+			var end parkEnd
+			if m.Parked != "" {
+				end = endOf(evs, m, time.Time{})
+			}
+			r.Wake = d.wakeOf(b, m, r, hearing, zone, free[m.Label], end)
 			rows[i] = r
 		})
 	}
@@ -426,16 +440,20 @@ func (d *Driver) inFlight(evs []batch.Event, members []*batch.Member) []InFlight
 // then what the log says came of the last one, and why the watchdog should
 // arm it again. free is the hold a parked member waits for, when that hold
 // is free.
-func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, hearing batch.Hearing, zone *time.Location, free string) Wake {
+func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, hearing batch.Hearing, zone *time.Location, free string, end parkEnd) Wake {
 	alive := d.Watches != nil && b != nil && d.Watches.Alive(watchName(b, m.Block))
 	woken := !m.Woken.IsZero() && !m.Woken.Before(m.Watched)
+	parked := "parked " + end.words(zone)
+	if end.due(d.now()) {
+		parked += ", which has come"
+	}
 	switch {
 	case m.Parked != "" && free != "":
 		// A parked waiter whose hold is free wakes no one unless its watch is armed again.
-		return Wake{Watch: "parked: " + m.Parked + "; " + free + " is free now, and " + d.run("watch", "--due") + " wakes it",
-			Due: "waits for " + free + ", which is free"}
+		return Wake{Watch: parked + ": " + m.Parked + "; " + free + " is free now, and " + d.run("watch", "--due") + " wakes it",
+			Due: "waits for " + free + ", which is free", Park: &end}
 	case m.Parked != "":
-		return Wake{Watch: "parked: " + m.Parked}
+		return Wake{Watch: parked + ": " + m.Parked, Park: &end}
 	case alive:
 		plan := r.facts.plan()
 		switch {

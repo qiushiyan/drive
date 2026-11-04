@@ -31,6 +31,7 @@ exit 0
   "unknown": 0,
   "refusals": {
     "already open": 1,
+    "park with nothing to end it": 1,
     "stale view": 1
   },
   "failures": [],

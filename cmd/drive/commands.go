@@ -67,8 +67,12 @@ INPUT  empty | suggestion (Claude Code's dimmed guess; typing replaces it)
 WAKE   armed, or armed while a job of its holds the wake, by the time it says | stuck | posting
        | woken HH:MM (nothing done since: act on it or park it,
        or drive watch --due posts it once more, at the time it says)
-       | none, or ended without a wake: no wake comes until drive watch --due | parked: why
+       | none, or ended without a wake: no wake comes until drive watch --due
+       | parked, then what ends the park, then why: on A3 (an open ask) | behind HOLD
+       | until MM-DD HH:MM, "which has come" once it has | with nothing to end it
 Hold lines name who holds each hold, and who waits for it with the step it was refused.
+"park of" lines name each park whose time has come or that nothing ends, as after an
+ask answered with no step, with what to run; the watchdog wakes you about each once.
 "left by" lines name what a closed session left that stays, and why; each is a fact
 to know, not a question for the owner. Run without --quick.`},
 		{Title: "JSON", Body: `
@@ -93,6 +97,8 @@ in_flight   actions admitted with no outcome yet: kind, session, at, text, drive
 unheard     that the driver has stopped answering its wakes and when the next try is; left
             out while it answers
 timers_held a line per timer due and waiting for the driver to answer; left out when none is
+parks       a line per park whose time has come or that nothing ends, as the "park of" lines
+            print it; left out when none is
 leftovers   a line per branch a closed session left that stays, and how many closed sessions
             are not yet checked; left out with --quick or when there are none`}}
 }
@@ -458,18 +464,35 @@ func (c *TimerCmd) act(ctx *kong.Context, d *drive.Driver) error {
 type ParkCmd struct {
 	runs
 	View   string   `arg:"" help:"The view the park was decided on."`
-	Reason []string `arg:"" help:"Why it waits, such as what only the owner can give; the record keeps it."`
+	Reason []string `arg:"" help:"Why it waits, in the owner's terms; the record keeps it and the owner's page shows it."`
+	Until  string   `placeholder:"WHEN" help:"When to look at it again: a date or a date and time in the batch's zone, such as 2026-11-06 or \"2026-11-06 09:00\", or a duration such as 4h. The watchdog wakes you about it then."`
 }
 
 func (c *ParkCmd) Help() string {
 	return `
 A parked session sends no wakes until a step is sent to it, so a session
-waiting on the owner, or on another session's hold, stops waking the driver.`
+waiting on the owner, on another session's hold, or for a date stops waking
+the driver. Something on record has to end the park, or it is refused: an
+open ask about the session (drive record ask), a hold it was refused a step
+for, or --until. An ask answered with no step leaves the park with nothing
+to end it, and a time past its --until comes due: status lists either under
+the table, and the watchdog wakes the driver about it once.`
 }
 
 func (c *ParkCmd) act(ctx *kong.Context, d *drive.Driver) error {
-	if err := d.Park(c.View, strings.Join(c.Reason, " ")); err != nil {
+	var until time.Time
+	if c.Until != "" {
+		var err error
+		if until, err = parseUntil(c.Until, batchZone(d), d.Time()); err != nil {
+			return clikit.Usage(err)
+		}
+	}
+	if err := d.Park(c.View, strings.Join(c.Reason, " "), until); err != nil {
 		return err
+	}
+	if !until.IsZero() {
+		fmt.Fprintf(ctx.Stdout, "parked %s until %s: no wake until a step is sent to it, and the watchdog wakes you about it then\n", sessionOf(c.View), until.Format("2006-01-02 15:04"))
+		return nil
 	}
 	fmt.Fprintf(ctx.Stdout, "parked %s: no wake until a step is sent to it\n", sessionOf(c.View))
 	return nil
@@ -607,7 +630,13 @@ func (c *AnswerCmd) Validate() error { return c.atMostOne() }
 func (c *AnswerCmd) act(ctx *kong.Context, d *drive.Driver) error {
 	if c.File == "" && c.Snippet == "" && len(c.Line) == 0 {
 		id, err := d.Answer(c.Ask, c.Source, c.Took, c.Explained)
-		return recorded(ctx.Stdout, "answer", id, err)
+		if err := recorded(ctx.Stdout, "answer", id, err); err != nil {
+			return err
+		}
+		if next := d.LeftParked(id); next != "" {
+			fmt.Fprintf(ctx.Stdout, "next: %s\n", next)
+		}
+		return nil
 	}
 	sent, id, err := d.AnswerAndSend(c.Ask, c.Source, c.Took, c.Explained, c.step(), drive.SendOptions{Hold: c.Hold})
 	if sent != nil && sent.Outcome != "" {
@@ -669,13 +698,8 @@ if_unanswered, took, explained, note, goal, http, try, via, branch, jobs, why, d
 func (c *LogCmd) act(ctx *kong.Context, d *drive.Driver) error {
 	var since time.Time
 	if c.Since != "" {
-		// Read in the zone drive prints times in, so a time copied from its output means what it said.
-		zone := time.Local
-		if b, err := d.Batch(); err == nil {
-			zone = b.Zone()
-		}
 		var err error
-		if since, err = parseWhen(c.Since, zone); err != nil {
+		if since, err = parseWhen(c.Since, batchZone(d)); err != nil {
 			return clikit.Usage(err)
 		}
 	}
@@ -689,6 +713,27 @@ func (c *LogCmd) act(ctx *kong.Context, d *drive.Driver) error {
 	}
 	_, err = io.WriteString(ctx.Stdout, drive.LogText(b, evs, d.Time()))
 	return err
+}
+
+// batchZone is the zone drive prints the batch's times in, so a time copied
+// from its output means what it said.
+func batchZone(d *drive.Driver) *time.Location {
+	if b, err := d.Batch(); err == nil {
+		return b.Zone()
+	}
+	return time.Local
+}
+
+// parseUntil reads park's --until: a duration from now, or a date or a date
+// and time in zone.
+func parseUntil(s string, zone *time.Location, now time.Time) (time.Time, error) {
+	if dur, err := time.ParseDuration(s); err == nil {
+		return now.Add(dur).In(zone).Truncate(time.Minute), nil
+	}
+	if t, err := parseWhen(s, zone); err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("--until %q: give a date, a date and time, such as \"2026-11-06 09:00\", or a duration, such as 4h", s)
 }
 
 func parseWhen(s string, zone *time.Location) (time.Time, error) {

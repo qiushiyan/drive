@@ -277,6 +277,9 @@ func (st *Status) Text(now time.Time) string {
 	for _, g := range st.Grants {
 		fmt.Fprintf(&b, "grant %s (%s): %s — %s\n", g.ID, clock(g.At, st.Zone, now), g.Scope, g.Source)
 	}
+	for _, l := range st.Parks {
+		b.WriteString(l + "\n")
+	}
 	for _, q := range st.Asks {
 		fmt.Fprintf(&b, "open ask %s for %s, %s: %s — unanswered: %s\n", q.ID, orDash(q.Session), ago(now.Sub(q.At)), q.Question, q.IfUnanswered)
 	}

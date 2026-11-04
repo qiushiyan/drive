@@ -41,7 +41,7 @@ exit 0
       "input": "",
       "stage": "",
       "last_sent": "write the design",
-      "watch": "parked: waits for the owner's call on D2",
+      "watch": "parked on A1: waits for the owner's call on D2",
       "unhandled_wake": false,
       "error": "S2 (block a00002) cannot be read: rex block: Error: block target \"block:00000000-0000-0000-0000-000000a00002\" not found",
       "next": "bring it back under its label, its conversation resumed where it stopped: drive --batch 2026-10-28 open S2 --dir $ROOT/work --resume sid-2 --account acct@example.com",
@@ -51,7 +51,15 @@ exit 0
   "closed": 0,
   "others": [],
   "holds": [],
-  "open_asks": [],
+  "open_asks": [
+    {
+      "id": "A1",
+      "session": "S2",
+      "at": "2026-10-23T01:00:22Z",
+      "question": "Take D2 as the design recommends?",
+      "if_unanswered": "S2 stays parked"
+    }
+  ],
   "grants": [],
   "in_flight": []
 }

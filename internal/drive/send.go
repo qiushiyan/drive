@@ -166,8 +166,8 @@ func (d *Driver) ready(o *Observation, opt SendOptions, step Step) error {
 			Next: "someone already sent its next step; " + d.whenTurnEnds(o)}
 	case o.Input == turn.InputTyped:
 		return &Refused{Reason: fmt.Sprintf("%s's input box holds typed text nobody sent: %q; it may be the owner's", o.Label, clip(o.Typed, 80)),
-			Next: fmt.Sprintf("leave it, and park the session if it waits on the owner, as nothing wakes you for it: %s; if it is a step of yours that never went out, clear it: %s",
-				d.run("park", view, text("an unsent line in its input box")), d.run("respond", view, "clear"))}
+			Next: fmt.Sprintf("leave it, and if it waits on the owner, ask them about it (%s) and park the session, as nothing wakes you for it: %s; if it is a step of yours that never went out, clear it: %s",
+				d.askAbout(o.Label, o.Label+"'s input box holds a line nobody sent; is it yours?"), d.run("park", view, text("an unsent line in its input box")), d.run("respond", view, "clear"))}
 	case o.Input != turn.InputEmpty && o.Input != turn.InputSuggestion:
 		// Typing lands in whatever the screen shows: a dialog, a view, a shell.
 		return &Refused{Reason: fmt.Sprintf("%s's screen shows no input box to type into", o.Label),

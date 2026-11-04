@@ -26,6 +26,7 @@ type statusDoc struct {
 	Unheard    string        `json:"unheard,omitempty"`
 	Leftovers  []string      `json:"leftovers,omitempty"`
 	TimersHeld []string      `json:"timers_held,omitempty"`
+	Parks      []string      `json:"parks,omitempty"`
 }
 
 type batchDoc struct {
@@ -117,7 +118,7 @@ func (st *Status) JSON() any {
 		return out
 	}
 	doc := statusDoc{Sessions: rows(st.Rows), Closed: st.Closed, Others: rows(st.Others), Holds: list(st.Holds),
-		OpenAsks: []askDoc{}, Grants: []grantDoc{}, InFlight: []inFlightDoc{}, Unheard: st.Unheard, Leftovers: st.Leftovers, TimersHeld: st.TimersHeld}
+		OpenAsks: []askDoc{}, Grants: []grantDoc{}, InFlight: []inFlightDoc{}, Unheard: st.Unheard, Leftovers: st.Leftovers, TimersHeld: st.TimersHeld, Parks: st.Parks}
 	if m := st.Batch; m != nil {
 		doc.Batch = &batchDoc{Name: m.Name, Driver: batch.DriverOf(*m), Started: m.Started, Wake: m.Wake, Webhook: m.Webhook, RexSession: m.RexSession, TZ: m.TZ}
 	}

@@ -1065,3 +1065,7 @@ func TestClearEmptiesTheBoxWhereverTheCursorStands(t *testing.T) {
 		})
 	}
 }
+
+// later is an hour from the rig's now: a park's --until for a test whose park
+// is not about what ends it.
+func (r *rig) later() time.Time { return r.w.Clock.Now().Add(time.Hour) }

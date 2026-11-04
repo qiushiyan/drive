@@ -30,8 +30,12 @@ Columns:
   WAKE   armed, or armed while a job of its holds the wake, by the time it says | stuck | posting
          | woken HH:MM (nothing done since: act on it or park it,
          or drive watch --due posts it once more, at the time it says)
-         | none, or ended without a wake: no wake comes until drive watch --due | parked: why
+         | none, or ended without a wake: no wake comes until drive watch --due
+         | parked, then what ends the park, then why: on A3 (an open ask) | behind HOLD
+         | until MM-DD HH:MM, "which has come" once it has | with nothing to end it
   Hold lines name who holds each hold, and who waits for it with the step it was refused.
+  "park of" lines name each park whose time has come or that nothing ends, as after an
+  ask answered with no step, with what to run; the watchdog wakes you about each once.
   "left by" lines name what a closed session left that stays, and why; each is a fact
   to know, not a question for the owner. Run without --quick.
 
@@ -57,6 +61,8 @@ JSON:
   unheard     that the driver has stopped answering its wakes and when the next try is; left
               out while it answers
   timers_held a line per timer due and waiting for the driver to answer; left out when none is
+  parks       a line per park whose time has come or that nothing ends, as the "park of" lines
+              print it; left out when none is
   leftovers   a line per branch a closed session left that stays, and how many closed sessions
               are not yet checked; left out with --quick or when there are none
 

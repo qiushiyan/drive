@@ -166,7 +166,10 @@ func TestContracts(t *testing.T) {
 	c.run("record-note-session", "record", "note", "--session", "T2", "told the user")
 
 	v1 = view(t, c.run("read-label-again", "read", "T1"))
-	c.run("park", "park", v1, "design checkpoint")
+	c.run("park-unended", "park", v1, "design checkpoint")
+	c.run("park-until-bad", "park", v1, "--until", "Friday", "design checkpoint")
+	c.run("park", "park", v1, "--until", "2026-10-24 09:00", "design checkpoint")
+	c.run("status-parked", "status", "--quick")
 	c.run("watch-due", "watch", "--due")
 	c.run("watch-session", "watch", "T1")
 	c.run("watch-sleep", "watch", "--sleep", "300", "veto")
@@ -326,6 +329,7 @@ func TestContractRexRestart(t *testing.T) {
 	_, out, _ := cli(c.app, as("read", s2.Block[len(s2.Block)-6:])...)
 	cli(c.app, as("send", view(t, out), "--as", "S2", "write the design")...)
 	_, out, _ = cli(c.app, as("read", "S2")...)
+	cli(c.app, as("record", "ask", "S2", "--question", "Take D2 as the design recommends?", "--if-unanswered", "S2 stays parked")...)
 	cli(c.app, as("park", view(t, out), "waits for the owner's call on D2")...)
 	c.run("restart-stop-all", "watch", "--stop-all")
 

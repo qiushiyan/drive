@@ -642,7 +642,11 @@ func stripOf(ov *Overview, c Card, group string, now time.Time) stripView {
 		s.Facts = append(s.Facts, factView{Title: "Directory", Text: tilde(m.Dir)})
 	}
 	if m.Parked != "" && !m.Closed {
-		s.Facts = append(s.Facts, factView{Title: "Parked", Text: "Parked by the driver " + at(m.ParkedAt) + ". A parked session arms no wake until its next step."})
+		says := "Parked by the driver " + at(m.ParkedAt) + ". A parked session arms no wake until its next step."
+		if !m.ParkedUntil.IsZero() {
+			says = "Parked by the driver " + at(m.ParkedAt) + ", to be looked at again " + at(m.ParkedUntil) + ". A parked session arms no wake until its next step."
+		}
+		s.Facts = append(s.Facts, factView{Title: "Parked", Text: says})
 	}
 	if read && !m.Closed {
 		if len(r.Jobs) > 0 {

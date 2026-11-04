@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/qiushiyan/clikit"
@@ -68,3 +69,24 @@ func cli(a clikit.App, args ...string) (int, string, string) {
 }
 
 var viewForm = regexp.MustCompile(`view: (\S+@[0-9a-f]{8})`)
+
+// park --until takes a duration from now, or a date or a date and time in the
+// batch's zone; a bare date is its midnight.
+func TestParkUntilReadsADurationOrADate(t *testing.T) {
+	zone, _ := time.LoadLocation("Europe/London")
+	now := time.Date(2026, 11, 4, 12, 0, 30, 0, time.UTC)
+	for in, want := range map[string]time.Time{
+		"4h":               time.Date(2026, 11, 4, 16, 0, 0, 0, time.UTC),
+		"90m":              time.Date(2026, 11, 4, 13, 30, 0, 0, time.UTC),
+		"2026-11-06":       time.Date(2026, 11, 6, 0, 0, 0, 0, zone),
+		"2026-11-06 09:00": time.Date(2026, 11, 6, 9, 0, 0, 0, zone),
+	} {
+		got, err := parseUntil(in, zone, now)
+		if err != nil || !got.Equal(want) {
+			t.Errorf("%q: %v %v, want %v", in, got, err, want)
+		}
+	}
+	if _, err := parseUntil("Friday", zone, now); err == nil {
+		t.Error("a weekday is no date")
+	}
+}

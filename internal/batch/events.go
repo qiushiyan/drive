@@ -41,7 +41,7 @@ const (
 	// waits: Note is the timer's. A wake with that note ends it.
 	KindHeld = "held"
 	// KindTold is something the watchdog told the driver of a session, written
-	// as its post begins: Outcome gone or watch-failing, with Reason when that
+	// as its post begins: Outcome gone, watch-failing or park, with Reason when that
 	// post failed.
 	KindTold = "told"
 )
@@ -133,7 +133,8 @@ type Event struct {
 	Branch string `json:"branch,omitempty"` // on a cleanup, the branch it judged
 	Jobs   int    `json:"jobs,omitempty"`   // on a wake, the background jobs its session still ran
 	// On a posting and its wake: what made it go, such as asks or job-wait. On a
-	// posting alone: when it was due, and what last held it back past that.
+	// posting alone: when it was due, and what last held it back past that. On
+	// a park: when its driver should look at it again (park --until).
 	Why    string    `json:"why,omitempty"`
 	Due    time.Time `json:"due,omitzero"`
 	HeldBy string    `json:"held_by,omitempty"`
@@ -153,9 +154,12 @@ type Member struct {
 	Goal     string
 	Parked   string    // why, while parked; a later send unparks
 	ParkedAt time.Time // so what the park says can be read against what happened since
-	Closed   bool
-	ClosedAt time.Time
-	Resumed  bool // it carries on a session that read the notice in this batch
+	// ParkedUntil is when its driver should look at it again, given with the
+	// park; zero when the park named no time.
+	ParkedUntil time.Time
+	Closed      bool
+	ClosedAt    time.Time
+	Resumed     bool // it carries on a session that read the notice in this batch
 	// LastAction is the latest thing a driver did to it: a send, a respond, a park.
 	LastAction time.Time
 	LastSend   *Event
@@ -173,13 +177,17 @@ type Member struct {
 	PrevView   string    // the view the wake before it carried
 	WakeFailed time.Time // when a watch last ended without a wake
 	// Notices are what the watchdog told the driver of it, by what they are:
-	// gone or watch-failing. Each counts once a driver left a trace after it.
+	// gone, watch-failing or park. Each counts once a driver left a trace after it.
 	Notices map[string]Notice
 
 	posting   bool // a post has begun with no result yet
 	postHeard bool // a driver left a trace since that post began
 	woke      bool // that post was answered 2xx
 }
+
+// NoticePark is the watchdog telling a driver of a park nothing on record
+// ends, or one whose --until has come.
+const NoticePark = "park"
 
 // Notice is something the watchdog told a driver of a session.
 type Notice struct {
@@ -242,7 +250,7 @@ func Members(evs []Event) []*Member {
 					// restarted: what its driver did with it stands, its park
 					// among it. Its wake is the new block's.
 					m.SID = cmp.Or(m.SID, old.SID)
-					m.Parked, m.ParkedAt, m.LastAction, m.LastSend, m.Noticed = old.Parked, old.ParkedAt, old.LastAction, old.LastSend, old.Noticed
+					m.Parked, m.ParkedAt, m.ParkedUntil, m.LastAction, m.LastSend, m.Noticed = old.Parked, old.ParkedAt, old.ParkedUntil, old.LastAction, old.LastSend, old.Noticed
 				}
 				*old = *m // reopened under the same label
 				m = old
@@ -252,7 +260,8 @@ func Members(evs []Event) []*Member {
 			by[e.Session] = m
 		case KindSend:
 			if m != nil && e.Outcome != "" {
-				m.LastAction, m.LastSend, m.Parked = e.At, e, ""
+				m.LastAction, m.LastSend, m.Parked, m.ParkedUntil = e.At, e, "", time.Time{}
+				delete(m.Notices, NoticePark)
 				if e.Notice && (e.Outcome == "arrived" || e.Outcome == "queued" || e.Outcome == "recovered") {
 					m.Noticed, read[m.SID] = true, true
 				}
@@ -263,7 +272,9 @@ func Members(evs []Event) []*Member {
 			}
 		case KindPark:
 			if m != nil {
-				m.Parked, m.ParkedAt, m.LastAction = e.Reason, e.At, e.At
+				m.Parked, m.ParkedAt, m.ParkedUntil, m.LastAction = e.Reason, e.At, e.Due, e.At
+				// A new park is told of afresh, its own time with it.
+				delete(m.Notices, NoticePark)
 			}
 		case KindClose:
 			if m != nil {

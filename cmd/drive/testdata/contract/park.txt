@@ -1,5 +1,5 @@
-$ drive park T1@fefb9f5c design checkpoint
+$ drive park T1@fefb9f5c --until 2026-10-24 09:00 design checkpoint
 exit 0
 --- stdout
-parked T1: no wake until a step is sent to it
+parked T1 until 2026-10-24 09:00: no wake until a step is sent to it, and the watchdog wakes you about it then
 --- stderr

@@ -162,7 +162,7 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 		default:
 			holds := d.holdsNow(evs, members)
 			ov.Holds = holdLines(holds, ov.Zone)
-			read := d.memberRows(b, members, nil, holds, hearing, ov.Zone, true)
+			read := d.memberRows(b, evs, members, nil, holds, hearing, ov.Zone, true)
 			for i := range read {
 				rows[read[i].Label] = &read[i]
 			}

@@ -128,7 +128,7 @@ func pageBatch(t *testing.T) (*rig, *pageProgress) {
 	r.w.Clock.Sleep(time.Minute)
 	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWatch, Session: "E"})
 	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "E", HTTP: 200, View: r.view("E")})
-	if err := r.d.Park(r.view("P"), "waits on the S3 baseline"); err != nil {
+	if err := r.d.Park(r.view("P"), "waits on the S3 baseline", r.later()); err != nil {
 		t.Fatal(err)
 	}
 	q.Ask("pnpm install")
@@ -229,7 +229,7 @@ func TestTheOverviewGroupsSessionsByWhereTheyStand(t *testing.T) {
 	page := string(ov.HTML(r.w.Clock.Now()))
 	for _, want := range []string{
 		"Build the importer.", "No goal recorded.",
-		`<span class="why">waits on the S3 baseline</span>`, "Parked by the driver " + clockOf(t, r, batch.KindPark, "P") + ".",
+		`<span class="why">waits on the S3 baseline</span>`, "Parked by the driver " + clockOf(t, r, batch.KindPark, "P") + ", to be looked at again ",
 		`Closed</span><span class="for">` + clockOf(t, r, batch.KindClose, "C"), `Closed</span><span class="for">` + clockOf(t, r, batch.KindClose, "D"),
 		// A question links to its session's card, and the card back to the question.
 		`<article class="ask" id="b1/ask-A1" data-batch="b1">`, `<span class="ask-id">A1</span><a href="#b1/P">P</a>`, `<details class="strip st-park" id="b1/P">`,

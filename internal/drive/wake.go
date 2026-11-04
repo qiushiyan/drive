@@ -143,6 +143,7 @@ type Rearmed struct {
 	Failures int       // times its watch ended without a wake in this batch
 	Again    time.Time // for a wake nobody acted on that is not due yet: when it is
 	Gone     string    // for a session that is gone: how to bring it back
+	Park     string    // for a park whose --until has come or that nothing ends: status's line about it
 }
 
 // Due arms the wake of every session in a webhook batch that has none and
@@ -175,6 +176,9 @@ func (d *Driver) Due() (armed, later []Rearmed, err error) {
 		}
 		if r.Next != "" {
 			later = append(later, Rearmed{Label: r.Label, Gone: r.Next})
+		}
+		if l := d.parkLine(r, st.Zone); l != "" {
+			later = append(later, Rearmed{Label: r.Label, Park: l})
 		}
 		if r.Due == "" || r.Error != "" {
 			continue
@@ -537,7 +541,7 @@ func (d *Driver) post(label string, e *Ending, note string, p posting) error {
 		e.Waiting = d.waiterLines(b, e.Label) // ahead of next:, which the wake ends on
 		if e.Next == "" && e.State == "done" {
 			e.Next = fmt.Sprintf("decide from its reply: %s, %s or %s",
-				d.run("send", view, text("…")), d.run("park", view, text("…")), d.run("close", view))
+				d.run("send", view, text("…")), d.run("park", view, "--until", "WHEN", text("…")), d.run("close", view))
 		}
 		if strings.HasPrefix(e.Reply, "…") && e.Next != "" {
 			// What it asks may stand in what the wake cut.
@@ -719,6 +723,13 @@ func (d *Driver) postDue(b *batch.Batch, armed, later []Rearmed) (posted, held s
 		if r.Gone != "" && m != nil && noticeDue(m, "gone", now) {
 			lines = append(lines, fmt.Sprintf("%s is gone: %s", r.Label, r.Gone))
 			rows = append(rows, batch.Event{Kind: batch.KindTold, Session: m.Label, Block: m.Block, Outcome: "gone"})
+		}
+		// A park nothing ends, or whose time has come, is told once, and
+		// again only while no run has heard it, since parking it again or
+		// sending it a step clears it.
+		if r.Park != "" && m != nil && noticeDue(m, batch.NoticePark, now) {
+			lines = append(lines, r.Park)
+			rows = append(rows, batch.Event{Kind: batch.KindTold, Session: m.Label, Block: m.Block, Outcome: batch.NoticePark})
 		}
 	}
 	for _, r := range armed {

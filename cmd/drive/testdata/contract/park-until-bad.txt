@@ -1,0 +1,7 @@
+$ drive park T1@fefb9f5c --until Friday design checkpoint
+exit 2
+--- stdout
+--- stderr
+drive: error: --until "Friday": give a date, a date and time, such as "2026-11-06 09:00", or a duration, such as 4h
+Usage: drive park <view> <reason> ... [flags]
+Run "drive park --help" for details.

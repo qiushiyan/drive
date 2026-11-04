@@ -1,0 +1,6 @@
+$ drive park T1@fefb9f5c design checkpoint
+exit 1
+--- stdout
+--- stderr
+drive: error: nothing on record ends T1's park, so no wake would bring it back: no ask about it is open, it waits for no hold, and no --until was given
+next: if it waits on the owner, record the question (drive --batch b1 record ask T1 --question '…' --recommendation '…' --if-unanswered '…'), then park it again; if it waits for a date or for something outside the batch, park it until you should look again (drive --batch b1 park T1@fefb9f5c --until WHEN 'design checkpoint', WHEN a date such as 2026-11-06 09:00 or a duration such as 4h); if nothing is left for it to do, close it (drive --batch b1 close T1@fefb9f5c)

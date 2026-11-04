@@ -93,7 +93,7 @@ func TestEveryActionThatTouchesASessionLeavesItWatched(t *testing.T) {
 	if r.watches.Alive(watchOf(c)) {
 		t.Fatal("a refusal arms nothing")
 	}
-	if err := r.d.Park(r.view("T1"), "waits on the owner"); err != nil {
+	if err := r.d.Park(r.view("T1"), "waits on the owner", r.later()); err != nil {
 		t.Fatal(err)
 	}
 	if r.watches.Alive(watchOf(c)) {
@@ -119,7 +119,7 @@ func TestDueArmsWhatHasNoWake(t *testing.T) {
 	woken(r, b)
 	view := r.view("B")
 	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "B", HTTP: 204, View: view})
-	if err := r.d.Park(r.view("P"), "waits on the owner"); err != nil {
+	if err := r.d.Park(r.view("P"), "waits on the owner", r.later()); err != nil {
 		t.Fatal(err)
 	}
 	r.w.Clock.Sleep(11 * time.Minute)
