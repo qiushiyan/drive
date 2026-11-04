@@ -71,8 +71,8 @@ WAKE   armed, or armed while a job of its holds the wake, by the time it says | 
        | parked, then what ends the park, then why: on A3 (an open ask) | behind HOLD
        | until MM-DD HH:MM, "which has come" once it has | with nothing to end it
 Hold lines name who holds each hold, and who waits for it with the step it was refused.
-"park of" lines name each park whose --until has come or that nothing ends, with what
-to run; the watchdog wakes you about each once.
+"park of" lines name the parks whose --until has come, then those nothing ends, each
+line with what to run; the watchdog wakes you about each park once.
 "left by" lines name what a closed session left that stays, and why; each is a fact
 to know, not a question for the owner. Run without --quick.`},
 		{Title: "JSON", Body: `
@@ -97,8 +97,8 @@ in_flight   actions admitted with no outcome yet: kind, session, at, text, drive
 unheard     that the driver has stopped answering its wakes and when the next try is; left
             out while it answers
 timers_held a line per timer due and waiting for the driver to answer; left out when none is
-parks       a line per park whose time has come or that nothing ends, as the "park of" lines
-            print it; left out when none is
+parks       the "park of" lines, as the table's footer prints them; left out when there are
+            none
 leftovers   a line per branch a closed session left that stays, and how many closed sessions
             are not yet checked; left out with --quick or when there are none`}}
 }

@@ -289,11 +289,13 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 		out.NoGoal = fmt.Sprintf("no goal recorded for %s; the owner's page shows each session's goal: %s", strings.Join(none, ", "),
 			d.run("record", "goal", none[0], text("…")))
 	}
+	var needs []parkNeed
 	for _, r := range out.Rows {
-		if l := d.parkLine(r, out.Zone); l != "" {
-			out.Parks = append(out.Parks, l)
+		if n := d.parkNeedOf(r); n != nil {
+			needs = append(needs, *n)
 		}
 	}
+	out.Parks = d.parkLines(needs, out.Zone)
 	out.Holds = holdLines(holds, out.Zone)
 	grants, asks, _ := batch.Records(evs)
 	out.Grants = grants

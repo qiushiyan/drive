@@ -143,7 +143,7 @@ type Rearmed struct {
 	Failures int       // times its watch ended without a wake in this batch
 	Again    time.Time // for a wake nobody acted on that is not due yet: when it is
 	Gone     string    // for a session that is gone: how to bring it back
-	Park     string    // for a park whose --until has come or that nothing ends: status's line about it
+	Park     *parkNeed // for a park whose --until has come or that nothing ends
 }
 
 // Due arms the wake of every session in a webhook batch that has none and
@@ -177,8 +177,8 @@ func (d *Driver) Due() (armed, later []Rearmed, err error) {
 		if r.Next != "" {
 			later = append(later, Rearmed{Label: r.Label, Gone: r.Next})
 		}
-		if l := d.parkLine(r, st.Zone); l != "" {
-			later = append(later, Rearmed{Label: r.Label, Park: l})
+		if n := d.parkNeedOf(r); n != nil {
+			later = append(later, Rearmed{Label: r.Label, Park: n})
 		}
 		if r.Due == "" || r.Error != "" {
 			continue
@@ -718,6 +718,7 @@ func (d *Driver) postDue(b *batch.Batch, armed, later []Rearmed) (posted, held s
 	now := d.now()
 	var lines []string
 	var rows []batch.Event
+	var parks []parkNeed
 	for _, r := range later {
 		m := batch.Find(members, r.Label)
 		if r.Gone != "" && m != nil && noticeDue(m, "gone", now) {
@@ -727,11 +728,12 @@ func (d *Driver) postDue(b *batch.Batch, armed, later []Rearmed) (posted, held s
 		// A park nothing ends, or whose time has come, is told once, and
 		// again only while no run has heard it, since parking it again or
 		// sending it a step clears it.
-		if r.Park != "" && m != nil && noticeDue(m, batch.NoticePark, now) {
-			lines = append(lines, r.Park)
+		if r.Park != nil && m != nil && noticeDue(m, batch.NoticePark, now) {
+			parks = append(parks, *r.Park)
 			rows = append(rows, batch.Event{Kind: batch.KindTold, Session: m.Label, Block: m.Block, Outcome: batch.NoticePark})
 		}
 	}
+	lines = append(lines, d.parkLines(parks, b.Zone())...)
 	for _, r := range armed {
 		if m := batch.Find(members, r.Label); r.Failures >= 2 && m != nil && noticeDue(m, "watch-failing", now) {
 			lines = append(lines, fmt.Sprintf("%s's watch has ended without a wake %d times this batch; %s says why, so tell the owner once and record that you did: %s", r.Label, r.Failures,

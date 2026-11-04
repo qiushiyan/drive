@@ -189,3 +189,45 @@ func TestASendEndsTheParkAndItsTime(t *testing.T) {
 		t.Fatalf("%q", parks)
 	}
 }
+
+// Parks that need the same thing share one line, naming each with its view
+// and saying what to run once, in status and in the watchdog's post alike.
+func TestParksWithTheSameNeedShareALine(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r)
+	for _, label := range []string{"O1", "S6", "S8"} {
+		adopted(t, r, label)
+		id, err := r.d.Ask(label, "Leave "+label+" as it is?", "yes", label+" stays parked")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := r.d.Park(r.view(label), "waits on the owner", time.Time{}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.d.Answer(id, "moot", "moot", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, label := range []string{"T1", "T2"} {
+		adopted(t, r, label)
+		if err := r.d.Park(r.view(label), "the fleet read", r.w.Clock.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.w.Clock.Sleep(time.Hour + time.Minute)
+	_, parks := statusOf(t, r, "O1")
+	if len(parks) != 2 {
+		t.Fatalf("one line per need: %q", parks)
+	}
+	due, unended := parks[0], parks[1]
+	if !strings.HasPrefix(due, "park of T1 (until ") || !strings.Contains(due, " and T2 (until ") || strings.Count(due, "--until WHEN") != 1 {
+		t.Fatalf("%q", due)
+	}
+	if !strings.HasPrefix(unended, "park of O1 (O1@") || !strings.Contains(unended, ", S6 (S6@") || !strings.Contains(unended, " and S8 (S8@") ||
+		strings.Count(unended, "record ask LABEL") != 1 || strings.Count(unended, "close VIEW") != 1 {
+		t.Fatalf("%q", unended)
+	}
+	if _, err := r.d.DueAll(); err != nil || l.count() != 1 || strings.Count(l.output(0), "park of ") != 2 {
+		t.Fatalf("%d posts: %v", l.count(), err)
+	}
+}
