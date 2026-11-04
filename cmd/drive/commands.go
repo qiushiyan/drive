@@ -71,8 +71,8 @@ WAKE   armed, or armed while a job of its holds the wake, by the time it says | 
        | parked, then what ends the park, then why: on A3 (an open ask) | behind HOLD
        | until MM-DD HH:MM, "which has come" once it has | with nothing to end it
 Hold lines name who holds each hold, and who waits for it with the step it was refused.
-"park of" lines name each park whose time has come or that nothing ends, as after an
-ask answered with no step, with what to run; the watchdog wakes you about each once.
+"park of" lines name each park whose --until has come or that nothing ends, with what
+to run; the watchdog wakes you about each once.
 "left by" lines name what a closed session left that stays, and why; each is a fact
 to know, not a question for the owner. Run without --quick.`},
 		{Title: "JSON", Body: `
@@ -464,19 +464,23 @@ func (c *TimerCmd) act(ctx *kong.Context, d *drive.Driver) error {
 type ParkCmd struct {
 	runs
 	View   string   `arg:"" help:"The view the park was decided on."`
-	Reason []string `arg:"" help:"Why it waits, in the owner's terms; the record keeps it and the owner's page shows it."`
+	Reason []string `arg:"" help:"Why it waits, in the owner's terms, since their page shows it."`
 	Until  string   `placeholder:"WHEN" help:"When to look at it again: a date or a date and time in the batch's zone, such as 2026-11-06 or \"2026-11-06 09:00\", or a duration such as 4h. The watchdog wakes you about it then."`
 }
 
 func (c *ParkCmd) Help() string {
 	return `
-A parked session sends no wakes until a step is sent to it, so a session
-waiting on the owner, on another session's hold, or for a date stops waking
-the driver. Something on record has to end the park, or it is refused: an
-open ask about the session (drive record ask), a hold it was refused a step
-for, or --until. An ask answered with no step leaves the park with nothing
-to end it, and a time past its --until comes due: status lists either under
-the table, and the watchdog wakes the driver about it once.`
+A park is refused unless something on record ends it, since nothing else
+brings the session back to you: an open ask about it, a hold it was refused
+a step for, or --until.`
+}
+
+func (c *ParkCmd) HelpSections() []clikit.Section {
+	return []clikit.Section{{Title: "Examples", Body: `
+drive record ask S5 --question 'Start the build without #10137?' --if-unanswered 'S5 stays parked'
+drive park S5@… 'waits for your call on #10137'      # the open ask ends it
+drive park S6@… --until 2026-11-06 'waits for the 6 Nov fleet read'
+drive park S7@… 'waits for the release, held by S2'  # after a send refused on that hold`}}
 }
 
 func (c *ParkCmd) act(ctx *kong.Context, d *drive.Driver) error {

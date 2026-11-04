@@ -78,8 +78,8 @@ func (d *Driver) parkWays(label, view, reason string) string {
 	if reason == "" {
 		reason = "…"
 	}
-	return fmt.Sprintf("if it waits on the owner, record the question (%s), then park it again; "+
-		"if it waits for a date or for something outside the batch, park it until you should look again (%s, WHEN a date such as 2026-11-06 09:00 or a duration such as 4h); "+
+	return fmt.Sprintf("if it waits on the owner, ask (%s) and park it again; "+
+		"if it waits for a date or for something outside the batch, park it until you should look again (%s; WHEN is a date, such as 2026-11-06 09:00, or a duration, such as 4h); "+
 		"if nothing is left for it to do, close it (%s)",
 		d.run("record", "ask", label, "--question", "…", "--recommendation", "…", "--if-unanswered", "…"),
 		d.run("park", view, "--until", "WHEN", text(reason)),
@@ -110,8 +110,8 @@ func (d *Driver) parkLine(r Row, zone *time.Location) string {
 }
 
 // askAbout is the record ask that puts question, about label, to the owner.
-func (d *Driver) askAbout(label, question string) string {
-	return d.run("record", "ask", label, "--question", question, "--if-unanswered", "…")
+func (d *Driver) askAbout(label, question, ifUnanswered string) string {
+	return d.run("record", "ask", label, "--question", question, "--if-unanswered", ifUnanswered)
 }
 
 // LeftParked says what to do about the session an answered ask was about,
@@ -144,7 +144,7 @@ func (d *Driver) LeftParked(ask string) string {
 				view = e.View
 			}
 		}
-		return fmt.Sprintf("%s stays parked with nothing on record to end it now that %s is answered: send it the step the answer leads to (%s), or %s",
+		return fmt.Sprintf("%s stays parked with nothing on record to end it now that %s is answered: send it the step the answer leads to (%s); if it still waits, %s",
 			m.Label, ask, d.run("send", view, text("…")), d.parkWays(m.Label, view, m.Parked))
 	}
 	return ""

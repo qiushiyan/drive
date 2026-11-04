@@ -34,8 +34,8 @@ Columns:
          | parked, then what ends the park, then why: on A3 (an open ask) | behind HOLD
          | until MM-DD HH:MM, "which has come" once it has | with nothing to end it
   Hold lines name who holds each hold, and who waits for it with the step it was refused.
-  "park of" lines name each park whose time has come or that nothing ends, as after an
-  ask answered with no step, with what to run; the watchdog wakes you about each once.
+  "park of" lines name each park whose --until has come or that nothing ends, with what
+  to run; the watchdog wakes you about each once.
   "left by" lines name what a closed session left that stays, and why; each is a fact
   to know, not a question for the owner. Run without --quick.
 

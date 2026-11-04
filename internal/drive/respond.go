@@ -236,8 +236,8 @@ func (d *Driver) Close(view string) (err error) {
 			Next: d.answerNext(o.Label, view, state)}
 	case o.Input == turn.InputTyped:
 		return &Refused{Reason: fmt.Sprintf("%s's input box holds an unsent line: %q", o.Label, clip(o.Typed, 80)),
-			Next: "leave the block, as the line may be the owner's: ask the owner about it (" + d.askAbout(o.Label, o.Label+"'s input box holds a line nobody sent; is it yours?") +
-				"), then park it so the report names it: " + park("an unsent line in its input box")}
+			Next: "leave the block, as the line may be the owner's: ask them about it (" + d.askAbout(o.Label, o.Label+"'s input box holds a line nobody sent; is it yours?", "the line stays unsent") +
+				"), then park it: " + park("an unsent line in its input box")}
 	case len(d.Host.Shells(st.PID)) > 0:
 		job := d.Host.Shells(st.PID)[0]
 		next := "if the job should have ended, have the session stop it, and close it once that turn ends: " + d.stopJob(view, job) +

@@ -540,7 +540,7 @@ func (d *Driver) post(label string, e *Ending, note string, p posting) error {
 		}
 		e.Waiting = d.waiterLines(b, e.Label) // ahead of next:, which the wake ends on
 		if e.Next == "" && e.State == "done" {
-			e.Next = fmt.Sprintf("decide from its reply: %s, %s or %s",
+			e.Next = fmt.Sprintf("decide from its reply: %s; %s (when it waits on the owner, record its ask and leave out --until); or %s",
 				d.run("send", view, text("…")), d.run("park", view, "--until", "WHEN", text("…")), d.run("close", view))
 		}
 		if strings.HasPrefix(e.Reply, "…") && e.Next != "" {
