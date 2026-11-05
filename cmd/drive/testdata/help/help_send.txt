@@ -40,9 +40,13 @@ Steps:
   A step is one of:
     'one short line'        typed as is, a slash command too; an @PATH in it attaches
                             that file, as the owner's would ('/write-spec @/tmp/answers.md'),
-                            except in a step queued mid-turn, where it stays a path
+                            except in a step queued mid-turn, where it stays a path. A line
+                            typing would garble (over 500 bytes, a newline or control
+                            character, a leading ! or #) goes as a file instead
     --file PATH             typed as @<copy>, which attaches it, drive keeping the copy;
-                            queued mid-turn, a line asks the session to read the copy
+                            queued mid-turn, a line asks the session to read the copy. A
+                            file whose first line starts a skill that runs only when typed
+                            is typed as that line with the rest attached, never queued
     --snippet KEY 'TEXT'    the owner's snippet for the session's directory, with the
                             step's words, TEXT, where the owner would type after it
   Text that starts with a dash goes after --, which ends the flags.
