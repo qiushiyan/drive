@@ -25,9 +25,9 @@ const (
 	// unless its reply asks something: the job's end usually resumes it, and
 	// that turn's end is the wake that matters (in the 2026-11-02 batch, ten
 	// wakes posted ten minutes into such a turn drew no action, and each
-	// turn resumed, 4 minutes to 7 hours on). A job that never ends still
-	// reaches its driver, at this mark and at ever longer ones after each it
-	// heard.
+	// session moved on with none, its next wake 4 minutes to 7 hours on). A
+	// job that never ends still reaches its driver, at this mark and at ever
+	// longer ones after each it heard.
 	jobHold = 2 * time.Hour
 	// repostAfter is how long a wake nobody acted on waits before it is posted
 	// again: a run acting on it takes minutes.

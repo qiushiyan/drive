@@ -302,6 +302,36 @@ func TestARunThatAnswersBeforeThePostReturnsHeardIt(t *testing.T) {
 	}
 }
 
+// The two hours a job holds a turn's wake run from the turn's end, not from
+// when its watch was armed: a watch armed late, by watch --due or a driver's
+// watch, does not push the wake further off.
+func TestAJobsHoldRunsFromTheTurnsEnd(t *testing.T) {
+	t.Parallel()
+	report := strings.Repeat("What the round found and how it was settled. ", 40)
+	for _, tc := range []struct{ name, reply, why string }{
+		{"it reports", report, "job-running"},
+		{"it says it waits", "Waiting on the replays.", "job-wait"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t, "webhook")
+			hook(t, r).answeredBy(r)
+			c := adopted(t, r, "T1")
+			c.Busy("run the gate")
+			c.Job("gate-replay")
+			c.Done(tc.reply)
+			ended := r.w.Clock.Now()
+			r.w.Clock.Sleep(time.Hour)
+			r.w.Clock.At(ended.Add(4*time.Hour), func() { c.JobDone("Replays are in.") })
+			watch(t, r, c, "T1")
+			p := postings(r, "T1")[0]
+			if got := p.Due.Sub(ended); p.Why != tc.why || got < 2*time.Hour || got > 2*time.Hour+10*time.Second {
+				t.Fatalf("%s due %s after the turn ended, not two hours", p.Why, got)
+			}
+		})
+	}
+}
+
 // Attempts nobody heard do not stretch the backstop: a driver back from an outage
 // hears of a job at the first mark, not days on.
 func TestUnheardAttemptsDoNotStretchTheBackstop(t *testing.T) {

@@ -164,6 +164,7 @@ func TestContracts(t *testing.T) {
 	c.run("record-answer-step-answered", "record", "answer", "A1", "--source", "yes", "--took", "amended", "go on")
 	// The owner's words given as the answer's last words would be its step: refused before anything is sent.
 	c.run("record-answer-without-source", "record", "answer", "A2", "--took", "recommended", "Qiushi 11:54 GMT: yes, go on")
+	c.run("record-answer-blank-source", "record", "answer", "A2", "--source", "   ", "--took", "recommended", "go on")
 	c.run("record-note", "record", "note", "plan: T1 land-pr; T2 approve and build")
 	c.run("record-note-session", "record", "note", "--session", "T2", "told the user")
 

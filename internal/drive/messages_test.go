@@ -169,6 +169,9 @@ func TestABusyRefusalSaysWhatTheOtherDriverIsDoing(t *testing.T) {
 	if !isRefused(other) || !strings.Contains(other.Error(), "another driver is approving T1") {
 		t.Fatalf("the other driver's action, in words: %v", other)
 	}
+	if m, err := r.d.Metrics(); err != nil || m.Refusals["own run still acting"] != 1 {
+		t.Fatalf("metrics count the refusal over the driver's own run as its own kind: %+v %v", m, err)
+	}
 }
 
 // A read that fails before anything reached the session, such as a
