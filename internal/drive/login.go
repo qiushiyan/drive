@@ -32,22 +32,27 @@ func gone(err error) bool {
 func (d *Driver) reopen(b *batch.Batch, m *batch.Member) string {
 	opt := OpenOptions{Dir: m.Dir, Resume: m.SID, Account: m.Account}
 	until, out := d.unable(b)[m.Account]
+	stuck := false
 	if out {
-		others := d.otherAccounts(b, m.Account)
-		if len(others) == 0 {
-			when := "its owner logs in again"
-			if !until.IsZero() {
-				when = "its limit lifts"
-			}
-			return fmt.Sprintf("account %s takes no step %s, and no other account can take it here: tell the owner; once %s, bring it back under its label: %s",
-				m.Account, untilWords(until, zoneOf(b)), when, d.openCommand(m.Label, opt, Step{}))
+		if others := d.otherAccounts(b, m.Account); len(others) > 0 {
+			opt.Account = others[0]
+		} else {
+			stuck = true
 		}
-		opt.Account = others[0]
 	}
 	if opt.Account == "primary" && d.Cfg.PrimaryName == "" {
-		opt.Account = ""
+		opt.Account = "" // the launcher's choice: open refuses a primary whose launcher it does not know
 	}
-	return "bring it back under its label, its conversation resumed where it stopped: " + d.openCommand(m.Label, opt, Step{})
+	open := d.openCommand(m.Label, opt, Step{})
+	if stuck {
+		when := "its owner logs in again"
+		if !until.IsZero() {
+			when = "its limit lifts"
+		}
+		return fmt.Sprintf("account %s takes no step %s, and no other account can take it here: tell the owner; once %s, bring it back under its label: %s",
+			m.Account, untilWords(until, zoneOf(b)), when, open)
+	}
+	return "bring it back under its label, its conversation resumed where it stopped: " + open
 }
 
 // unable is the accounts batch b found taking no step as of now, each to

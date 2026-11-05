@@ -315,23 +315,38 @@ func accounts(r *rig, names ...string) {
 	}
 }
 
-// A limit a session meets mid-turn, which its wake finds, goes on record as
-// one a step meets does, so a later reopen steers clear of the account.
+// A limit a session meets mid-turn, which its wake or a driver's read finds,
+// goes on record as one a step meets does, so a later reopen steers clear of
+// the account: a driver that reads the limit and relaunches leaves no watch
+// to find it.
 func TestALimitMetMidTurnIsKeptOnRecord(t *testing.T) {
-	r := newRig(t, "webhook")
-	hook(t, r)
-	accounts(r, "acct@example.com", "other@example.com")
-	a := adopted(t, r, "T1")
-	b := adopted(t, r, "T2")
-	a.Busy("build it")
-	a.Limit(r.w.Clock.Now().Add(45 * time.Hour))
-	watch(t, r, a, "T1")
-	if err := r.w.Close(b.Block); err != nil {
-		t.Fatal(err)
-	}
-	rd, err := r.d.Read("T2", drive.ReadLast, 10)
-	if err != nil || !strings.Contains(rd.Next, "--account other@example.com") {
-		t.Fatalf("T2's reopen steers clear of the account T1's wake found limited: %+v %v", rd, err)
+	for _, tc := range []struct {
+		name  string
+		finds func(r *rig, c *testkit.Claude)
+	}{
+		{"its wake finds it", func(r *rig, c *testkit.Claude) { hook(r.t, r); watch(r.t, r, c, "T1") }},
+		{"a read finds it", func(r *rig, c *testkit.Claude) {
+			if _, err := r.d.Read("T1", drive.ReadLast, 10); err != nil {
+				r.t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t, "webhook")
+			accounts(r, "acct@example.com", "other@example.com")
+			a := adopted(t, r, "T1")
+			b := adopted(t, r, "T2")
+			a.Busy("build it")
+			a.Limit(r.w.Clock.Now().Add(45 * time.Hour))
+			tc.finds(r, a)
+			if err := r.w.Close(b.Block); err != nil {
+				t.Fatal(err)
+			}
+			rd, err := r.d.Read("T2", drive.ReadLast, 10)
+			if err != nil || !strings.Contains(rd.Next, "--account other@example.com") {
+				t.Fatalf("T2's reopen steers clear of the account found limited on T1: %+v %v", rd, err)
+			}
+		})
 	}
 }
 
@@ -395,5 +410,30 @@ func TestAGoneSessionWhoseAccountIsLimitedSaysWhyItCannotReopen(t *testing.T) {
 	rd, err := r.d.Read("T1", drive.ReadLast, 10)
 	if err != nil || !strings.Contains(rd.Next, "takes no step until "+resets.Format("Mon 2 Jan 15:04")) || !strings.Contains(rd.Next, "tell the owner") {
 		t.Fatalf("it says the account is out until its reset, and to tell the owner: %+v %v", rd, err)
+	}
+}
+
+// The open it gives for once the limit lifts runs then: on the primary, whose
+// launcher this drive does not know, it leaves the account to the launcher,
+// as every open on the primary does.
+func TestTheOpenForALimitedPrimaryRunsOnceItLifts(t *testing.T) {
+	r := newRig(t, "webhook")
+	_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".claude", "sessions"), 0o755)
+	r.w.Primary, r.d.Cfg.PrimaryName = "owner", "owner"
+	o, err := r.d.Open("T1", drive.Step{}, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work"), Account: "primary"})
+	if err != nil || o.Account != "primary" {
+		t.Fatalf("opened on the primary: %+v %v", o, err)
+	}
+	r.w.Session(o.Block).Reply = func(c *testkit.Claude, _ string) { c.Limit(r.w.Clock.Now().Add(45 * time.Hour)) }
+	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "build it"}, drive.SendOptions{}); err == nil {
+		t.Fatal("the step met the limit")
+	}
+	r.d.Cfg.PrimaryName = "" // read where the primary's launcher is not known
+	if err := r.w.Close(o.Block); err != nil {
+		t.Fatal(err)
+	}
+	rd, err := r.d.Read("T1", drive.ReadLast, 10)
+	if err != nil || !strings.Contains(rd.Next, "tell the owner") || strings.Contains(rd.Next, "--account primary") {
+		t.Fatalf("its open leaves the account to the launcher: %+v %v", rd, err)
 	}
 }

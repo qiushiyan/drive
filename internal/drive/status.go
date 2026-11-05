@@ -62,6 +62,7 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 		}
 		return nil, err
 	}
+	d.noteLimit(o.in, o) // a driver that reads a limit and relaunches leaves no watch to find it
 	r := &Reading{Label: o.Label, SID: o.Session.ID, State: o.State(), Account: o.Session.Account, Input: o.Input, Typed: o.Typed, View: o.View}
 	if o.Member != nil {
 		r.Goal = o.Member.Goal
