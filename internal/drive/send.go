@@ -326,16 +326,17 @@ func untypable(line string) string {
 
 // typedHead splits a file step whose first line, first, starts a typed-only
 // skill: the line typed, which leaves room for the rest's @-mention, and
-// the rest. A first line too long to type is typed as the command alone,
-// its words going with the rest.
+// the rest. A first line too long, or that typing would garble, is typed as
+// the command alone, its words going with the rest.
 func typedHead(first, body string) (command, rest string) {
 	_, after, _ := strings.Cut(strings.TrimLeft(body, "\n\t "), first)
 	rest = strings.TrimLeft(after, "\n")
 	if len(first) <= maxLine/2 && untypable(first) == "" {
 		return first, rest
 	}
-	name, args, _ := strings.Cut(first, " ")
-	return name, strings.TrimSpace(args + "\n\n" + rest)
+	command = "/" + skill.Command(first)
+	args := strings.TrimSpace(first[strings.Index(first, command)+len(command):])
+	return command, strings.TrimSpace(args + "\n\n" + rest)
 }
 
 func firstLine(s string) string {

@@ -145,7 +145,7 @@ func (m *Metrics) actions(evs []batch.Event, wakes bool) {
 			case e.Key != "":
 				m.Snippets++
 				m.ByKey[e.Key]++
-			case e.Mode == "typed" && skill.Command(e.Text) != "":
+			case skill.Command(e.Text) != "": // the line typed, a typed-only skill's with its file attached too
 				m.Commands++
 			default:
 				m.OwnWords++

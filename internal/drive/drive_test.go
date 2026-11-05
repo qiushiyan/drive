@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/config"
@@ -477,33 +478,127 @@ func contains(xs []string, x string) bool {
 
 // /strategic-review sent as a file pointer was refused inside the session
 // three times in one batch, and drive's refusal of it 15 times since, each
-// time a bot typed the line with the rest attached: drive does that itself.
+// time a bot typed the line with the rest attached: drive does that itself,
+// and what reaches the session is the skill's own line, typable as any
+// other.
 func TestATypedOnlySkillInAFileIsTypedWithTheRestAttached(t *testing.T) {
+	long := strings.TrimSpace(strings.Repeat("look at the door ", 20))
+	for _, tc := range []struct {
+		name, file string
+		noticed    bool   // the session read the notice before
+		typed      string // what is typed ahead of the attachment's mention, or all that is typed
+		attached   string // what the attachment holds; "" when there is none
+	}{
+		{"its words fit the line", "/strategic-review 9531\n\nLook hardest at the door.\n", false, "/strategic-review 9531", "Look hardest at the door."},
+		{"its words are too long to type", "/strategic-review " + long + "\n", false, "/strategic-review", long},
+		{"its words hold a tab", "/strategic-review\t9531\nLook hardest at the door.\n", false, "/strategic-review", "9531"},
+		{"it is only the line, the notice read", "/strategic-review 9531\n", true, "/strategic-review 9531", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t, "none")
+			c := r.w.Add("T1")
+			done(c, "onboard", "analysis")
+			typedOnly(t, r)
+			ref := c.Block[len(c.Block)-6:]
+			if tc.noticed {
+				if _, err := r.d.Send(r.view(ref), drive.Step{Line: "start"}, drive.SendOptions{Label: "T1"}); err != nil {
+					t.Fatal(err)
+				}
+				ref = "T1"
+			}
+			f := filepath.Join(r.w.Root, "sr.md")
+			_ = os.WriteFile(f, []byte(tc.file), 0o644)
+			sent, err := r.d.Send(r.view(ref), drive.Step{File: f}, drive.SendOptions{Label: "T1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if m, err := r.d.Metrics(); err != nil || m.Commands != 1 {
+				t.Fatalf("metrics count the skill's line as a slash command: %+v %v", m, err)
+			}
+			typed, _ := c.Seen()
+			got := typed[len(typed)-1]
+			if strings.ContainsFunc(got, unicode.IsControl) || !strings.Contains(sent.Text(), tc.typed) {
+				t.Fatalf("typed %q, printed %q", got, sent.Text())
+			}
+			if tc.attached == "" {
+				if got != tc.typed {
+					t.Fatalf("only the skill's line is typed: %q", got)
+				}
+				return
+			}
+			path, ok := strings.CutPrefix(got, tc.typed+" @")
+			if !ok {
+				t.Fatalf("the skill's line is typed, its rest attached: %q", got)
+			}
+			rest, _ := os.ReadFile(strings.TrimSpace(path))
+			if !strings.Contains(string(rest), tc.attached) || strings.Contains(string(rest), "/strategic-review") || !strings.Contains(string(rest), noticeText) {
+				t.Fatalf("the attachment is the rest, the notice ahead of it: %q", rest)
+			}
+		})
+	}
+	t.Run("queued, in a snippet, and on an open", func(t *testing.T) {
+		r := newRig(t, "none")
+		c := adopted(t, r, "T1")
+		typedOnly(t, r)
+		f := filepath.Join(r.w.Root, "sr.md")
+		_ = os.WriteFile(f, []byte("/strategic-review 9531\nLook hardest at the door.\n"), 0o644)
+		// Mid-turn a mention attaches nothing, so a queued one waits for the turn's end.
+		c.Busy("the review")
+		if _, err := r.d.Send(r.view("T1"), drive.Step{File: f}, drive.SendOptions{Queue: true}); !isRefused(err) || !strings.Contains(err.Error(), "starts only when typed") {
+			t.Fatalf("queued, it is refused: %v", err)
+		}
+		// claude-steps knows a snippet by the line its file is typed as, so one headed by the skill is refused.
+		c.Done("reviewed")
+		_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".config/tabtype"), 0o755)
+		_ = os.WriteFile(filepath.Join(r.d.Cfg.Home, ".config/tabtype/config.toml"),
+			[]byte("[[snippets]]\nkey = \"sr\"\nexpand = \"/strategic-review 9531\\nLook hardest at the door.\"\n"), 0o644)
+		intents := len(r.events(batch.KindSendIntent))
+		if _, err := r.d.Send(r.view("T1"), drive.Step{Key: "sr"}, drive.SendOptions{}); !isRefused(err) || !strings.Contains(err.Error(), "starts only when typed") {
+			t.Fatalf("a snippet headed by it is refused: %v", err)
+		}
+		if n := len(r.events(batch.KindSendIntent)); n != intents {
+			t.Fatalf("refused before anything is recorded: %d intents, not %d", n, intents)
+		}
+		// An open types it the same way.
+		o, err := r.d.Open("sr", drive.Step{File: f}, drive.OpenOptions{Dir: r.w.Root})
+		if err != nil || o.Sent == nil {
+			t.Fatalf("%+v %v", o, err)
+		}
+		if typed, _ := r.w.Session(o.Block).Seen(); len(typed) == 0 || !strings.HasPrefix(typed[len(typed)-1], "/strategic-review 9531 @") {
+			t.Fatalf("an open types the skill's line too: %q", typed)
+		}
+	})
+}
+
+// A relaunch carries the step the session was last sent as the session got
+// it: a typed-only skill's line with its file attached, typed again, since
+// the attached file alone no longer starts the skill.
+func TestARelaunchRetypesATypedOnlySkillsLine(t *testing.T) {
 	r := newRig(t, "none")
-	c := r.w.Add("T1")
-	done(c, "onboard", "analysis")
+	c := adopted(t, r, "T1")
+	typedOnly(t, r)
+	_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".claude-accounts", "other@example.com", "sessions"), 0o755)
+	f := filepath.Join(r.w.Root, "sr.md")
+	_ = os.WriteFile(f, []byte("/strategic-review 9531\nLook hardest at the door.\n"), 0o644)
+	sent, err := r.d.Send(r.view("T1"), drive.Step{File: f}, drive.SendOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Fail("authentication_failed", "Login expired · Please run /login")
+	c.Set("blocked", "auth", "Login expired · Please run /login")
+	rd, err := r.d.Read("T1", drive.ReadLast, 10)
+	if err != nil || !strings.Contains(rd.Next, "--account other@example.com '"+sent.Typed+"'") {
+		t.Fatalf("the relaunch types the skill's line and its attachment again (%s): %+v %v", sent.Typed, rd, err)
+	}
+}
+
+// typedOnly installs /strategic-review as a skill that starts only when typed.
+func typedOnly(t *testing.T, r *rig) {
+	t.Helper()
 	sk := filepath.Join(r.d.Cfg.Home, ".claude/skills/strategic-review")
 	_ = os.MkdirAll(sk, 0o755)
-	_ = os.WriteFile(filepath.Join(sk, "SKILL.md"), []byte("---\nname: strategic-review\ndisable-model-invocation: true\n---\nbody\n"), 0o644)
-	f := filepath.Join(r.w.Root, "sr.md")
-	_ = os.WriteFile(f, []byte("/strategic-review 9531\n\nLook hardest at the door.\n"), 0o644)
-	sent, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{File: f}, drive.SendOptions{Label: "T1"})
-	if err != nil || !strings.HasPrefix(sent.Typed, "/strategic-review 9531 @") {
-		t.Fatalf("the skill's line is typed, the rest attached: %+v %v", sent, err)
-	}
-	rest, _ := os.ReadFile(strings.TrimPrefix(sent.Typed, "/strategic-review 9531 @"))
-	if !strings.Contains(string(rest), "Look hardest at the door.") || strings.Contains(string(rest), "/strategic-review") || !strings.Contains(string(rest), noticeText) {
-		t.Fatalf("the attached file is the rest, the notice ahead of it: %q", rest)
-	}
-	// Mid-turn a mention attaches nothing, so a queued one waits for the turn's end.
-	c.Busy("the review")
-	if _, err := r.d.Send(r.view("T1"), drive.Step{File: f}, drive.SendOptions{Queue: true}); !isRefused(err) || !strings.Contains(err.Error(), "starts only when typed") {
-		t.Fatalf("queued, it is refused: %v", err)
-	}
-	// An open types it the same way.
-	o, err := r.d.Open("sr", drive.Step{File: f}, drive.OpenOptions{Dir: r.w.Root})
-	if err != nil || o.Sent == nil || !strings.HasPrefix(o.Sent.Typed, "/strategic-review 9531 @") {
-		t.Fatalf("an open types the skill's line too: %+v %v", o, err)
+	if err := os.WriteFile(filepath.Join(sk, "SKILL.md"), []byte("---\nname: strategic-review\ndisable-model-invocation: true\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
