@@ -44,7 +44,38 @@ const (
 	// as its post begins: Outcome gone, watch-failing or park, with Reason when that
 	// post failed.
 	KindTold = "told"
+	// KindLimit is an account's usage limit a session met mid-turn, found by
+	// its watch or wait: Account until Due, when the limit lifts. A step that
+	// meets one is a KindFailure with the same two fields.
+	KindLimit = "limit"
 )
+
+// Unable is the accounts the batch found taking no step as of now, each to
+// when it can again: a rejected login, recorded with no Due, for as long as
+// the batch lasts, since nothing says when its owner logs in again; a usage
+// limit until it lifts.
+func Unable(evs []Event, now time.Time) map[string]time.Time {
+	out := map[string]time.Time{}
+	for _, e := range evs {
+		if e.Account == "" || e.Kind != KindFailure && e.Kind != KindRefused && e.Kind != KindLimit {
+			continue
+		}
+		until, seen := out[e.Account]
+		switch {
+		case seen && until.IsZero():
+		case e.Due.IsZero():
+			out[e.Account] = time.Time{}
+		case e.Due.After(until):
+			out[e.Account] = e.Due
+		}
+	}
+	for account, until := range out {
+		if !until.IsZero() && !now.Before(until) {
+			delete(out, account)
+		}
+	}
+	return out
+}
 
 // ByDriver says a driver's command wrote e: a step or its intent, a prompt
 // answered, an open or its intent, a park, a close, a wake or timer armed,
@@ -134,7 +165,8 @@ type Event struct {
 	Jobs   int    `json:"jobs,omitempty"`   // on a wake, the background jobs its session still ran
 	// On a posting and its wake: what made it go, such as asks or job-wait. On a
 	// posting alone: when it was due, and what last held it back past that. On
-	// a park: when its driver should look at it again (park --until).
+	// a park: when its driver should look at it again (park --until). On a
+	// failure or a limit that names an account: when its usage limit lifts.
 	Why    string    `json:"why,omitempty"`
 	Due    time.Time `json:"due,omitzero"`
 	HeldBy string    `json:"held_by,omitempty"`

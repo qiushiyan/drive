@@ -451,6 +451,8 @@ func describe(e batch.Event, zone *time.Location) string {
 		return clip(e.Reason, 140)
 	case batch.KindWakeStop:
 		return "stopped by watch --stop-all"
+	case batch.KindLimit:
+		return fmt.Sprintf("account %s at its usage limit %s", e.Account, untilWords(e.Due, zone))
 	}
 	return clip(e.Note+" "+e.Reason, 140)
 }

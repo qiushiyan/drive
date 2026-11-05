@@ -138,6 +138,7 @@ func (d *Driver) wait(ref string, planFor func(o *Observation, t Turn, stable ti
 					e.Screen = lastLines(screen, 25)
 				}
 			}
+			d.noteLimit(b, o)
 			e.Next = d.nextFor(o, state, e.Jobs)
 			e.Covered, e.post = plan.covered, posting{why: plan.why, due: plan.at}
 			if plan.covered || mayEnd == nil || mayEnd(e) {

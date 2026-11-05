@@ -441,6 +441,9 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 				f.Next = d.limitNext(o, p.step) // and so does the one from a usage limit
 			}
 			e.Account = o.Session.Account // and every relaunch and reopen steers clear of this account
+			if lim := o.Frontier.Error; lim != nil && lim.Limit {
+				e.Due = lim.Resets // until its limit lifts
+			}
 		}
 		e.Kind, e.Reason = batch.KindFailure, err.Error()
 		record(e)

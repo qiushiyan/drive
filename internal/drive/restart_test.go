@@ -234,7 +234,7 @@ func TestStopAllStopsEveryLiveBatchsWakesUntilDue(t *testing.T) {
 // that had just hit its weekly limit.
 func TestAnAccountAtItsLimitIsNotOfferedAgain(t *testing.T) {
 	r := newRig(t, "webhook")
-	_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".claude-accounts", "other@example.com", "sessions"), 0o755)
+	accounts(r, "acct@example.com", "other@example.com")
 	c := adopted(t, r, "T1")
 	c.Reply = func(c *testkit.Claude, _ string) { c.Limit(r.w.Clock.Now().Add(45 * time.Hour)) }
 	_, err := r.d.Send(r.view("T1"), drive.Step{Line: "build it"}, drive.SendOptions{})
@@ -261,7 +261,7 @@ func TestAnAccountAtItsLimitIsNotOfferedAgain(t *testing.T) {
 // say "exit these sessions and continue with x --resume".
 func TestAStepThatMeetsAUsageLimitGoesOnAnotherAccount(t *testing.T) {
 	r := newRig(t, "webhook")
-	_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".claude-accounts", "other@example.com", "sessions"), 0o755)
+	accounts(r, "acct@example.com", "other@example.com")
 	c := adopted(t, r, "T1")
 	resets := r.w.Clock.Now().Add(45 * time.Hour)
 	c.Reply = func(c *testkit.Claude, _ string) { c.Limit(resets) }
@@ -305,5 +305,95 @@ func TestAUsageLimitWithNoOtherAccountParksUntilItLifts(t *testing.T) {
 		" --until '" + resets.In(time.UTC).Format("2006-01-02 15:04") + "' 'its account is at its usage limit'"
 	if f, ok := errors.AsType[*drive.Failed](err); !ok || !strings.Contains(f.Next, want) {
 		t.Fatalf("%v\nwant %s", err, want)
+	}
+}
+
+// accounts makes each account a session could be relaunched on.
+func accounts(r *rig, names ...string) {
+	for _, n := range names {
+		_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".claude-accounts", n, "sessions"), 0o755)
+	}
+}
+
+// A limit a session meets mid-turn, which its wake finds, goes on record as
+// one a step meets does, so a later reopen steers clear of the account.
+func TestALimitMetMidTurnIsKeptOnRecord(t *testing.T) {
+	r := newRig(t, "webhook")
+	hook(t, r)
+	accounts(r, "acct@example.com", "other@example.com")
+	a := adopted(t, r, "T1")
+	b := adopted(t, r, "T2")
+	a.Busy("build it")
+	a.Limit(r.w.Clock.Now().Add(45 * time.Hour))
+	watch(t, r, a, "T1")
+	if err := r.w.Close(b.Block); err != nil {
+		t.Fatal(err)
+	}
+	rd, err := r.d.Read("T2", drive.ReadLast, 10)
+	if err != nil || !strings.Contains(rd.Next, "--account other@example.com") {
+		t.Fatalf("T2's reopen steers clear of the account T1's wake found limited: %+v %v", rd, err)
+	}
+}
+
+// A limit lifts at its reset: an account whose limit has lifted takes steps
+// again, so a later limit on another account relaunches there rather than
+// parking for days.
+func TestALimitThatLiftedFreesItsAccount(t *testing.T) {
+	r := newRig(t, "webhook")
+	accounts(r, "acct@example.com", "other@example.com")
+	a := adopted(t, r, "T1")
+	a.Reply = func(c *testkit.Claude, _ string) { c.Limit(r.w.Clock.Now().Add(time.Hour)) }
+	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "build it"}, drive.SendOptions{}); err == nil {
+		t.Fatal("the step met the limit")
+	}
+	r.w.Clock.Sleep(2 * time.Hour)
+	o, err := r.d.Open("T2", drive.Step{}, drive.OpenOptions{Dir: a.Cwd, Account: "other@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := r.w.Session(o.Block)
+	b.Reply = func(c *testkit.Claude, _ string) { c.Limit(r.w.Clock.Now().Add(45 * time.Hour)) }
+	_, err = r.d.Send(r.view("T2"), drive.Step{Line: "build it"}, drive.SendOptions{})
+	if f, ok := errors.AsType[*drive.Failed](err); !ok || !strings.Contains(f.Next, "--account acct@example.com") || strings.Contains(f.Next, " park ") {
+		t.Fatalf("relaunched on the account whose limit lifted: %v", err)
+	}
+}
+
+// A relaunch's own first step can meet a limit too: its next steers clear of
+// every account the batch found taking no step, not only the one it opened on.
+func TestARelaunchThatMeetsALimitSkipsTheBatchsLimitedAccounts(t *testing.T) {
+	r := newRig(t, "webhook")
+	accounts(r, "acct@example.com", "other@example.com", "third@example.com")
+	a := adopted(t, r, "T1")
+	a.Reply = func(c *testkit.Claude, _ string) { c.Limit(r.w.Clock.Now().Add(45 * time.Hour)) }
+	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "build it"}, drive.SendOptions{}); err == nil {
+		t.Fatal("the step met the limit")
+	}
+	r.w.OnOpen = func(c *testkit.Claude) {
+		c.Reply = func(c *testkit.Claude, _ string) { c.Limit(r.w.Clock.Now().Add(45 * time.Hour)) }
+	}
+	_, err := r.d.Open("T9", drive.Step{Line: "build it"}, drive.OpenOptions{Dir: a.Cwd, Account: "other@example.com"})
+	f, ok := errors.AsType[*drive.Failed](err)
+	if !ok || !strings.Contains(f.Next, "--account third@example.com") || strings.Contains(f.Next, "--account acct@example.com") {
+		t.Fatalf("the open's limit relaunches on the one account left: %v", err)
+	}
+}
+
+// With no account that can take it, the open that brings a gone session back
+// says why rather than naming the account that cannot.
+func TestAGoneSessionWhoseAccountIsLimitedSaysWhyItCannotReopen(t *testing.T) {
+	r := newRig(t, "webhook")
+	a := adopted(t, r, "T1")
+	resets := r.w.Clock.Now().Add(45 * time.Hour)
+	a.Reply = func(c *testkit.Claude, _ string) { c.Limit(resets) }
+	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "build it"}, drive.SendOptions{}); err == nil {
+		t.Fatal("the step met the limit")
+	}
+	if err := r.w.Close(a.Block); err != nil {
+		t.Fatal(err)
+	}
+	rd, err := r.d.Read("T1", drive.ReadLast, 10)
+	if err != nil || !strings.Contains(rd.Next, "takes no step until "+resets.Format("Mon 2 Jan 15:04")) || !strings.Contains(rd.Next, "tell the owner") {
+		t.Fatalf("it says the account is out until its reset, and to tell the owner: %+v %v", rd, err)
 	}
 }

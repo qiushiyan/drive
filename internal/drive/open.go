@@ -164,7 +164,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return out, nil
 	}
 	f, _ := s.Frontier()
-	a.o = &Observation{Label: label, Session: s, Frontier: f, View: turn.ViewOf(label, s.ID, f)}
+	a.o = &Observation{in: b, Label: label, Session: s, Frontier: f, View: turn.ViewOf(label, s.ID, f)}
 	// A resumed session read the notice in the conversation it resumes.
 	p, err := d.plan(s.Dir, s.Config, d.run("send", a.o.View.String()), step, !d.readNotice(b, opt.Resume))
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/rex"
@@ -26,13 +27,22 @@ func gone(err error) bool {
 // unless b found that account taking no step, or the launcher's choice when
 // the primary's launcher is unknown here, since every account resumes it
 // from the shared transcript. Its park and the record of what was sent to
-// it carry over.
+// it carry over. With no account that can take it, it says so, and the open
+// waits until one can.
 func (d *Driver) reopen(b *batch.Batch, m *batch.Member) string {
 	opt := OpenOptions{Dir: m.Dir, Resume: m.SID, Account: m.Account}
-	if unable(b)[m.Account] {
-		if others := d.otherAccounts(b, m.Account); len(others) > 0 {
-			opt.Account = others[0]
+	until, out := d.unable(b)[m.Account]
+	if out {
+		others := d.otherAccounts(b, m.Account)
+		if len(others) == 0 {
+			when := "its owner logs in again"
+			if !until.IsZero() {
+				when = "its limit lifts"
+			}
+			return fmt.Sprintf("account %s takes no step %s, and no other account can take it here: tell the owner; once %s, bring it back under its label: %s",
+				m.Account, untilWords(until, zoneOf(b)), when, d.openCommand(m.Label, opt, Step{}))
 		}
+		opt.Account = others[0]
 	}
 	if opt.Account == "primary" && d.Cfg.PrimaryName == "" {
 		opt.Account = ""
@@ -40,20 +50,39 @@ func (d *Driver) reopen(b *batch.Batch, m *batch.Member) string {
 	return "bring it back under its label, its conversation resumed where it stopped: " + d.openCommand(m.Label, opt, Step{})
 }
 
-// unable is the accounts batch b found taking no step: a login rejected, or
-// a usage limit reached.
-func unable(b *batch.Batch) map[string]bool {
-	out := map[string]bool{}
+// unable is the accounts batch b found taking no step as of now, each to
+// when it can again (batch.Unable).
+func (d *Driver) unable(b *batch.Batch) map[string]time.Time {
 	if b == nil {
-		return out
+		return map[string]time.Time{}
 	}
 	evs, _ := b.Events()
-	for _, e := range evs {
-		if e.Account != "" && (e.Kind == batch.KindFailure || e.Kind == batch.KindRefused) {
-			out[e.Account] = true
-		}
+	return batch.Unable(evs, d.now())
+}
+
+// untilWords says until when an account takes no step: a limit's reset, in
+// zone, or, for a rejected login, until its owner logs in again.
+func untilWords(until time.Time, zone *time.Location) string {
+	if until.IsZero() {
+		return "until its owner logs in again"
 	}
-	return out
+	return "until " + until.In(zone).Format("Mon 2 Jan 15:04")
+}
+
+// noteLimit puts the usage limit a session met mid-turn on b's record, as a
+// step that meets one is, so no relaunch or reopen offers its account until
+// the limit lifts.
+func (d *Driver) noteLimit(b *batch.Batch, o *Observation) {
+	e := o.Frontier.Error
+	if b == nil || e == nil || !e.Limit || o.Session.Account == "" {
+		return
+	}
+	_ = b.Locked(func(evs []batch.Event) error {
+		if until, out := batch.Unable(evs, d.now())[o.Session.Account]; out && (until.IsZero() || !until.Before(e.Resets)) {
+			return nil
+		}
+		return b.Append(batch.Event{At: d.now(), Kind: batch.KindLimit, Session: o.Label, Account: o.Session.Account, Due: e.Resets})
+	})
 }
 
 // otherAccounts names the accounts a session could be relaunched on: not
@@ -61,22 +90,23 @@ func unable(b *batch.Batch) map[string]bool {
 // (~/.claude, which a session reports as "primary") is one when the name
 // its launcher takes is known.
 func (d *Driver) otherAccounts(b *batch.Batch, current string) []string {
-	rejected := unable(b)
-	rejected[current] = true
+	out := d.unable(b)
+	out[current] = time.Time{}
+	taken := func(account string) bool { _, ok := out[account]; return ok }
 	dirs, _ := filepath.Glob(filepath.Join(d.Cfg.Home, ".claude-accounts", "*"))
-	var out []string
+	var others []string
 	for _, dir := range dirs {
-		if st, err := os.Stat(filepath.Join(dir, "sessions")); err == nil && st.IsDir() && !rejected[filepath.Base(dir)] {
-			out = append(out, filepath.Base(dir))
+		if st, err := os.Stat(filepath.Join(dir, "sessions")); err == nil && st.IsDir() && !taken(filepath.Base(dir)) {
+			others = append(others, filepath.Base(dir))
 		}
 	}
-	sort.Strings(out)
-	if d.Cfg.PrimaryName != "" && !rejected["primary"] {
+	sort.Strings(others)
+	if d.Cfg.PrimaryName != "" && !taken("primary") {
 		if st, err := os.Stat(filepath.Join(d.Cfg.Home, ".claude", "sessions")); err == nil && st.IsDir() {
-			out = append(out, "primary")
+			others = append(others, "primary")
 		}
 	}
-	return out
+	return others
 }
 
 // relaunchHint says how to carry a session whose login was rejected over to
@@ -139,11 +169,11 @@ func (d *Driver) relaunchOn(o *Observation, step Step, account, first string) st
 // writes nothing, so the close is decided on the same view.
 func (d *Driver) limitNext(o *Observation, step Step) string {
 	e := o.Frontier.Error
-	until := "it resets"
+	until := "until it resets"
 	if !e.Resets.IsZero() {
-		until = e.Resets.In(o.zone()).Format("Mon 2 Jan 15:04")
+		until = untilWords(e.Resets, o.zone())
 	}
-	head := fmt.Sprintf("account %s takes no step until %s", o.Session.Account, until)
+	head := fmt.Sprintf("account %s takes no step %s", o.Session.Account, until)
 	view, stop := viewNow(o), ""
 	if s, err := session.Locate(d.Term, d.Host, o.Session.Block); err == nil && turnState(s, o.Frontier).onPrompt() {
 		stop = d.run("respond", view, "approve") + " && "
