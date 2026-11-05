@@ -23,7 +23,7 @@ import (
 // Text is the line a send prints.
 func (s *Sent) Text() string {
 	what := s.Typed
-	if s.Path != "" {
+	if s.Path != "" && !strings.HasPrefix(s.Typed, "/") {
 		what = s.Path
 	}
 	extra := ""
@@ -35,6 +35,9 @@ func (s *Sent) Text() string {
 	}
 	if s.From != "" {
 		extra += ", snippet from " + s.From
+	}
+	if s.AsFile != "" {
+		extra += ", sent as a file since " + s.AsFile
 	}
 	if s.Watched {
 		extra += "; wake armed"

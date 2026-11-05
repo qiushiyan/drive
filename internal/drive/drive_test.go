@@ -476,8 +476,9 @@ func contains(xs []string, x string) bool {
 }
 
 // /strategic-review sent as a file pointer was refused inside the session
-// three times in one batch.
-func TestTypedOnlySkillInAFileIsRefused(t *testing.T) {
+// three times in one batch, and drive's refusal of it 15 times since, each
+// time a bot typed the line with the rest attached: drive does that itself.
+func TestATypedOnlySkillInAFileIsTypedWithTheRestAttached(t *testing.T) {
 	r := newRig(t, "none")
 	c := r.w.Add("T1")
 	done(c, "onboard", "analysis")
@@ -486,17 +487,23 @@ func TestTypedOnlySkillInAFileIsRefused(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(sk, "SKILL.md"), []byte("---\nname: strategic-review\ndisable-model-invocation: true\n---\nbody\n"), 0o644)
 	f := filepath.Join(r.w.Root, "sr.md")
 	_ = os.WriteFile(f, []byte("/strategic-review 9531\n\nLook hardest at the door.\n"), 0o644)
-	_, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{File: f}, drive.SendOptions{})
-	if !isRefused(err) || !strings.Contains(err.Error(), "starts only when typed") || !strings.Contains(err.Error(), "/strategic-review 9531") {
-		t.Fatalf("a typed-only skill in a file is refused with the line to type, got %v", err)
+	sent, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{File: f}, drive.SendOptions{Label: "T1"})
+	if err != nil || !strings.HasPrefix(sent.Typed, "/strategic-review 9531 @") {
+		t.Fatalf("the skill's line is typed, the rest attached: %+v %v", sent, err)
 	}
-	if typed, _ := c.Seen(); len(typed) != 0 {
-		t.Fatalf("nothing typed, got %q", typed)
+	rest, _ := os.ReadFile(strings.TrimPrefix(sent.Typed, "/strategic-review 9531 @"))
+	if !strings.Contains(string(rest), "Look hardest at the door.") || strings.Contains(string(rest), "/strategic-review") || !strings.Contains(string(rest), noticeText) {
+		t.Fatalf("the attached file is the rest, the notice ahead of it: %q", rest)
 	}
-	// On an open, the line to type goes on the open.
-	_, err = r.d.Open("sr", drive.Step{File: f}, drive.OpenOptions{Dir: r.w.Root})
-	if !isRefused(err) || !strings.Contains(err.Error(), "drive --batch b1 open sr --dir "+r.w.Root+" '/strategic-review 9531") {
-		t.Fatalf("an open refused for a typed-only skill prints the open to run: %v", err)
+	// Mid-turn a mention attaches nothing, so a queued one waits for the turn's end.
+	c.Busy("the review")
+	if _, err := r.d.Send(r.view("T1"), drive.Step{File: f}, drive.SendOptions{Queue: true}); !isRefused(err) || !strings.Contains(err.Error(), "starts only when typed") {
+		t.Fatalf("queued, it is refused: %v", err)
+	}
+	// An open types it the same way.
+	o, err := r.d.Open("sr", drive.Step{File: f}, drive.OpenOptions{Dir: r.w.Root})
+	if err != nil || o.Sent == nil || !strings.HasPrefix(o.Sent.Typed, "/strategic-review 9531 @") {
+		t.Fatalf("an open types the skill's line too: %+v %v", o, err)
 	}
 }
 

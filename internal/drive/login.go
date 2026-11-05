@@ -11,6 +11,7 @@ import (
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/rex"
 	"github.com/qiushiyan/drive/internal/session"
+	"github.com/qiushiyan/drive/internal/skill"
 )
 
 // gone says a session could not be read because it no longer runs: its
@@ -92,6 +93,9 @@ func lastStep(b *batch.Batch, label string) Step {
 
 			if e.Kind != batch.KindSendIntent || e.Session != label || e.Mode == "notice" {
 				continue
+			}
+			if e.Path != "" && skill.Command(e.Text) != "" {
+				return Step{Line: e.Text} // a typed-only skill's line, its file attached
 			}
 			if e.Path != "" {
 				return Step{File: e.Path}

@@ -236,9 +236,10 @@ func TestADriverGoneAfterTheNoticeLeavesItsStepToSettle(t *testing.T) {
 	}
 }
 
-// A line Claude Code would not record as typed is refused before anything,
-// the notice included, reaches the session.
-func TestAStepRefusedBeforeAnyEffect(t *testing.T) {
+// A line Claude Code would not record as typed goes as a file, which it
+// records as written: the bots met this refusal 15 times in four batches
+// and each time wrote the line to a file and sent that.
+func TestALineTypingWouldLoseGoesAsAFile(t *testing.T) {
 	for _, line := range []string{
 		strings.Repeat("x", 600), // Claude Code keeps only the end
 		"run the suite\tthen merge",
@@ -250,15 +251,16 @@ func TestAStepRefusedBeforeAnyEffect(t *testing.T) {
 			r := newRig(t, "none")
 			c := r.w.Add("T1")
 			done(c, "onboard", "analysis")
-			_, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: line}, drive.SendOptions{Label: "T1"})
-			if !isRefused(err) {
-				t.Fatalf("refused: %v", err)
+			sent, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: line}, drive.SendOptions{Label: "T1"})
+			if err != nil || sent.Path == "" || sent.AsFile == "" || !strings.Contains(sent.Text(), "sent as a file since") {
+				t.Fatalf("sent as a file, saying why: %+v %v", sent, err)
 			}
-			if typed, _ := c.Seen(); len(typed) != 0 {
-				t.Fatalf("refused means nothing was sent, the notice included: %q", typed)
+			data, _ := os.ReadFile(sent.Path)
+			if !strings.HasSuffix(strings.TrimRight(string(data), "\n"), line) {
+				t.Fatalf("the file holds the line as written: %q", data)
 			}
-			if len(r.events(batch.KindFailure)) != 0 {
-				t.Fatalf("a refusal is not a failure: %+v", r.events(batch.KindFailure))
+			if typed, _ := c.Seen(); len(typed) != 1 || !strings.HasPrefix(typed[0], "@") || strings.Contains(typed[0], line) {
+				t.Fatalf("only the file's mention is typed: %q", typed)
 			}
 		})
 	}
@@ -567,7 +569,7 @@ func TestAnOpenThatNeverStartsLeavesItsBlockOnRecord(t *testing.T) {
 // An open whose step would be refused opens nothing.
 func TestAnOpenChecksItsStepFirst(t *testing.T) {
 	r := newRig(t, "none")
-	_, err := r.d.Open("T9", drive.Step{Line: strings.Repeat("x", 600)}, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work")})
+	_, err := r.d.Open("T9", drive.Step{File: filepath.Join(r.w.Root, "no-such-step.md")}, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work")})
 	if !isRefused(err) {
 		t.Fatalf("refused: %v", err)
 	}

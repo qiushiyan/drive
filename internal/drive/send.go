@@ -53,6 +53,7 @@ type Sent struct {
 	Notice  bool
 	Watched bool
 	From    string // the snippet's file
+	AsFile  string // why a line went as a file: what typing it would have lost
 	line    string // the step's own line, when the notice rode it
 }
 
@@ -108,6 +109,10 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 	p, err := d.plan(o.Session.Dir, o.Session.Config, d.run("send", o.View.String()), step, o.Member == nil || !o.Member.Noticed && !o.Member.Resumed)
 	if err != nil {
 		return nil, err
+	}
+	if p.command != "" && opt.Queue {
+		return nil, &Refused{Reason: fmt.Sprintf("%s starts only when typed, and the file it attaches attaches nothing typed mid-turn", strings.Fields(p.command)[0]),
+			Next: d.whenTurnEnds(o) + ", and send it then"}
 	}
 	return a.send(p, opt, v.String())
 }
@@ -213,11 +218,16 @@ type plan struct {
 	ride   bool   // or as an @-mention after the typed step, when it fits
 	text   []byte // the notice, when it goes alone
 	typed  string // what is typed for the step; a file step's pointer once saved
-	line   string // the step's own line, when the notice rides it
-	body   string // a file step's text, the notice ahead of it when it rides along
-	path   string
-	key    string
-	from   string
+	// command is a typed-only skill's line from the head of a file step,
+	// typed with the rest of the file attached, as the skill starts only
+	// when typed.
+	command string
+	asFile  string // why a line goes as a file
+	line    string // the step's own line, when the notice rides it
+	body    string // a file step's text, the notice ahead of it when it rides along
+	path    string
+	key     string
+	from    string
 }
 
 func (p *plan) mode() string {
@@ -236,10 +246,15 @@ func (d *Driver) plan(dir, config, resend string, step Step, notice bool) (*plan
 	switch {
 	case step.Line != "":
 		line := strings.TrimSpace(step.Line)
-		if err := typable(line); err != nil {
-			return nil, err
+		if line == "" {
+			return nil, &Refused{Reason: "the typed step is empty"}
 		}
-		p.typed = line
+		if why := untypable(line); why != "" {
+			// Typing would lose it, so it goes as a file, as a driver would send it.
+			p.body, p.asFile = line, why
+		} else {
+			p.typed = line
+		}
 	case step.Key != "":
 		sn, err := snippet.Expand(d.Cfg.Home, dir, step.Key, step.Text)
 		if err != nil {
@@ -264,10 +279,15 @@ func (d *Driver) plan(dir, config, resend string, step Step, notice bool) (*plan
 	if p.body != "" {
 		first := firstLine(p.body)
 		if name := skill.Command(first); name != "" && skill.TypedOnly(d.Cfg.Home, config, dir, name) {
-			return nil, &Refused{
-				Reason: fmt.Sprintf("/%s starts only when typed: a session told to run it from a file refuses", name),
-				Next: fmt.Sprintf("type the command, with the rest in a file it attaches: %s %s",
-					resend, join(text(first+" @<file>")))}
+			if step.Key != "" {
+				// claude-steps knows a snippet by the line its file is typed as.
+				return nil, &Refused{
+					Reason: fmt.Sprintf("/%s starts only when typed: a session told to run it from a file refuses", name),
+					Next: fmt.Sprintf("type the command, with the rest in a file it attaches: %s %s",
+						resend, join(text(first+" @<file>")))}
+			}
+			// The skill's line is typed, and the rest of the file attached to it.
+			p.command, p.body = typedHead(first, p.body)
 		}
 	}
 	if notice {
@@ -276,8 +296,8 @@ func (d *Driver) plan(dir, config, resend string, step Step, notice bool) (*plan
 			return nil, &Failed{What: fmt.Sprintf("the notice a session reads before its first step is missing (%s): %v", d.Cfg.Notice, err),
 				Next: "restore it, or set notice in ~/.config/drive/config.toml"}
 		}
-		if p.body != "" {
-			p.body = strings.TrimRight(string(text), "\n") + "\n\n" + p.body
+		if p.body != "" || p.command != "" {
+			p.body = strings.TrimRight(strings.TrimRight(string(text), "\n")+"\n\n"+p.body, "\n")
 		} else {
 			name := skill.Command(p.typed)
 			p.alone, p.text = true, text
@@ -287,24 +307,35 @@ func (d *Driver) plan(dir, config, resend string, step Step, notice bool) (*plan
 	return p, nil
 }
 
-// typable refuses a typed step Claude Code would record as something other
-// than what was typed: more than one short line, which it keeps only the end
-// of; a control character, which is a key press; a leading ! or #, which
-// switch its input box to a shell command or a memory.
-func typable(line string) error {
-	toFile := "write it to a file and send it with --file"
+// untypable says why Claude Code would record a typed line as something
+// other than what was typed, "" when it would not: more than one short
+// line, which it keeps only the end of; a control character, which is a key
+// press; a leading ! or #, which switch its input box to a shell command or
+// a memory.
+func untypable(line string) string {
 	switch {
-	case line == "":
-		return &Refused{Reason: "the typed step is empty"}
 	case strings.Contains(line, "\n") || len(line) > maxLine:
-		return &Refused{Reason: "a typed step is one short line: Claude Code keeps only the end of long typing", Next: toFile}
+		return "Claude Code keeps only the end of a line this long"
 	case strings.IndexFunc(line, unicode.IsControl) >= 0:
-		c := line[strings.IndexFunc(line, unicode.IsControl):][:1]
-		return &Refused{Reason: fmt.Sprintf("a typed step holds a control character (%q): typed into Claude Code it is a key press, not text", c), Next: toFile}
+		return fmt.Sprintf("a control character (%q) typed into Claude Code is a key press", line[strings.IndexFunc(line, unicode.IsControl):][:1])
 	case line[0] == '!' || line[0] == '#':
-		return &Refused{Reason: fmt.Sprintf("a typed step starting with %q is not a prompt: Claude Code takes ! as a shell command and # as a memory", line[:1]), Next: toFile}
+		return fmt.Sprintf("Claude Code takes a line starting with %q as a shell command or a memory", line[:1])
 	}
-	return nil
+	return ""
+}
+
+// typedHead splits a file step whose first line, first, starts a typed-only
+// skill: the line typed, which leaves room for the rest's @-mention, and
+// the rest. A first line too long to type is typed as the command alone,
+// its words going with the rest.
+func typedHead(first, body string) (command, rest string) {
+	_, after, _ := strings.Cut(strings.TrimLeft(body, "\n\t "), first)
+	rest = strings.TrimLeft(after, "\n")
+	if len(first) <= maxLine/2 && untypable(first) == "" {
+		return first, rest
+	}
+	name, args, _ := strings.Cut(first, " ")
+	return name, strings.TrimSpace(args + "\n\n" + rest)
 }
 
 func firstLine(s string) string {
@@ -371,7 +402,16 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 					View: view, Text: noticeLine, Mode: "notice", Notice: true})
 			}
 		}
-		if p.body != "" {
+		switch {
+		case p.command != "" && p.body == "":
+			p.typed = p.command // the file held only the skill's line
+		case p.command != "":
+			path, err := b.SaveSend(o.Label, []byte(strings.TrimRight(p.body, "\n")+"\n"))
+			if err != nil {
+				return err
+			}
+			p.path, p.typed = path, p.command+" "+pointer(path, false)
+		case p.body != "":
 			path, err := b.SaveSend(o.Label, []byte(strings.TrimRight(p.body, "\n")+"\n"))
 			if err != nil {
 				return err
@@ -450,7 +490,7 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 		o, a.o = after, after
 	}
 	outcome, err := a.deliver(p.typed)
-	sent := &Sent{Label: o.Label, Outcome: outcome, Typed: p.typed, Path: p.path, Notice: p.notice, From: p.from, line: p.line}
+	sent := &Sent{Label: o.Label, Outcome: outcome, Typed: p.typed, Path: p.path, Notice: p.notice, From: p.from, AsFile: p.asFile, line: p.line}
 	if outcome != "" {
 		record(batch.Event{Kind: batch.KindSend, Outcome: outcome, Mode: p.mode(), Text: p.typed, Path: p.path, Key: p.key, Notice: p.notice && !p.alone})
 	}
