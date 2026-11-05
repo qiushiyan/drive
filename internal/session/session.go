@@ -288,15 +288,35 @@ func (Machine) Shells(pid int) []Shell {
 }
 
 // JobCommand is the command a Claude Code Bash shell runs, from its command
-// line: the snapshot it sources and the setup around it are Claude Code's,
-// and the job is what it evals.
+// line as ps prints it: the snapshot it sources and the setup around it are
+// Claude Code's, and the job is the single-quoted word it evals, in which
+// Claude Code writes a quote as a closing quote, then \' or "'" by version,
+// then an opening one, and ps prints each newline as \012. A line that evals
+// no such word is the job itself.
 func JobCommand(line string) string {
-	i := strings.Index(line, "eval '")
-	j := strings.LastIndex(line, "' < /dev/null")
-	if i < 0 || j <= i {
+	_, rest, ok := strings.Cut(line, "eval '")
+	if !ok {
 		return line
 	}
-	return strings.ReplaceAll(line[i+len("eval '"):j], `'\''`, "'")
+	var b strings.Builder
+	for {
+		i := strings.IndexByte(rest, '\'')
+		if i < 0 {
+			return line
+		}
+		b.WriteString(rest[:i])
+		rest = rest[i+1:]
+		switch {
+		case strings.HasPrefix(rest, `"'"'`):
+			b.WriteByte('\'')
+			rest = rest[len(`"'"'`):]
+		case strings.HasPrefix(rest, `\''`):
+			b.WriteByte('\'')
+			rest = rest[len(`\''`):]
+		default:
+			return strings.ReplaceAll(b.String(), `\012`, "\n")
+		}
+	}
 }
 
 // Vim says whether the account whose config directory is config runs

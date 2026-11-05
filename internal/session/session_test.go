@@ -46,3 +46,16 @@ func TestAJobIsWhatItsShellEvals(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+// 2.1.316 sets variables ahead of the eval, ends it with no stdin redirect,
+// quotes a quote as '"'"', and ps prints each newline as \012 (paths
+// invented).
+func TestAJobIsWhatItsShellEvalsHoweverItIsQuoted(t *testing.T) {
+	line := `/bin/zsh -c source /Users/example/.claude/shell-snapshots/snapshot-zsh-1.sh 2>/dev/null || true && unset CODEX_THREAD_ID\012export AGENT=example\012: && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && { \builtin unalias -- 'which'; } >/dev/null 2>&1 || true && eval 'cd /work; cat > a.sql <<'"'"'SQL'"'"'\012SELECT 1\012SQL\012psql -f a.sql | head -3' && pwd -P >| /tmp/claude-1-cwd`
+	if got := JobCommand(line); got != "cd /work; cat > a.sql <<'SQL'\nSELECT 1\nSQL\npsql -f a.sql | head -3" {
+		t.Fatalf("%q", got)
+	}
+	if got := JobCommand("/usr/bin/node server.js"); got != "/usr/bin/node server.js" {
+		t.Fatalf("a line that evals nothing is the job itself: %q", got)
+	}
+}
