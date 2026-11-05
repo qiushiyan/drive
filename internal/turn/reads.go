@@ -14,8 +14,8 @@ type Reads int
 
 const (
 	// ReadsEnded is a reply that neither asks nor says it waits: a report, or
-	// anything unclear. It is the default, since a turn taken for waiting wakes
-	// no one.
+	// anything unclear. Like waiting, it holds its wake while a job the turn
+	// started runs; only asking wakes the driver within the minute.
 	ReadsEnded Reads = iota
 	// ReadsAsking asks someone for something: a question, or a decision only
 	// they can give.
