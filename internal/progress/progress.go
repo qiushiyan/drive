@@ -70,7 +70,7 @@ type PR struct {
 // which is how a change merged without a pull request is known.
 type Landing struct {
 	Repo     string            // the repository's main checkout
-	Trunk    string            // the trunk's name, such as main
+	Trunk    string            // the trunk's local branch, such as main, which a session in the main checkout names
 	Branches []string          // the branches judged, the newest worked on last
 	Commit   string            // the id of the session's newest commit, when the repository has it
 	Merged   map[string]bool   // each branch, and the commit, that could be judged: merged into the trunk or not
@@ -149,7 +149,8 @@ func (Tools) Landed(dir string, branches []string, commits []Commit) (Landing, e
 	out, runErr := cmd.Output()
 	var v struct {
 		Trunk struct {
-			Name string `json:"name"`
+			Name   string `json:"name"`   // origin/<branch> for a remote trunk, else a local branch
+			Remote string `json:"remote"` // absent for a local trunk
 		} `json:"trunk"`
 		Branches []struct {
 			Branch string `json:"branch"`
@@ -163,7 +164,11 @@ func (Tools) Landed(dir string, branches []string, commits []Commit) (Landing, e
 		}
 		return Landing{}, fmt.Errorf("gwt merged --json: %v", err)
 	}
-	l := Landing{Trunk: v.Trunk.Name, Branches: branches, Commit: commit, Merged: map[string]bool{}, Errors: map[string]string{}}
+	trunk := v.Trunk.Name
+	if v.Trunk.Remote != "" {
+		trunk = strings.TrimPrefix(trunk, v.Trunk.Remote+"/")
+	}
+	l := Landing{Trunk: trunk, Branches: branches, Commit: commit, Merged: map[string]bool{}, Errors: map[string]string{}}
 	for _, b := range v.Branches {
 		switch {
 		case b.Merged != nil:

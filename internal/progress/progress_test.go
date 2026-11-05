@@ -94,6 +94,30 @@ func TestLandedReadsVerdictsWhenOneBranchCannotBeJudged(t *testing.T) {
 	}
 }
 
+// gwt names a remote trunk as its remote-tracking branch (gwt trunk --json:
+// "origin/<branch> for a remote trunk, else a local branch"), and a session
+// that worked in the main checkout names the local branch, which is the
+// trunk all the same: no cleanup or merge count takes it for the session's
+// work.
+func TestLandedNamesTheTrunkAsTheLocalBranch(t *testing.T) {
+	for _, tc := range []struct{ trunk, want string }{
+		{`{"name":"origin/develop","commit":"829fd16c","remote":"origin","stale":true}`, "develop"},
+		{`{"name":"upstream/release/2026","commit":"829fd16c","remote":"upstream"}`, "release/2026"},
+		{`{"name":"main","commit":"829fd16c"}`, "main"},
+	} {
+		bin := t.TempDir()
+		out := `{"trunk":` + tc.trunk + `,"branches":[{"branch":"develop","commit":"4fce83d6","merged":true}]}`
+		if err := os.WriteFile(filepath.Join(bin, "gwt"), []byte("#!/bin/sh\necho '"+out+"'\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		l, err := Tools{}.Landed(t.TempDir(), []string{"develop"}, nil)
+		if err != nil || l.Trunk != tc.want {
+			t.Errorf("trunk %s: %q %v, want %q", tc.trunk, l.Trunk, err, tc.want)
+		}
+	}
+}
+
 // A session's newest commit is found by its subject in the repository and
 // judged by its id, which a closeout's removal of the branch leaves in place.
 func TestLandedJudgesTheNewestCommitByItsId(t *testing.T) {
