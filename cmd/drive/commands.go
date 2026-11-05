@@ -599,7 +599,7 @@ func (c *AskCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 
 type AnswerCmd struct {
 	Ask       string `arg:"" help:"The ask it answers, such as A3."`
-	Source    string `help:"The owner's words, or what showed the ask no longer holds."`
+	Source    string `required:"" help:"The owner's words, or what showed the ask no longer holds; words after the ask, outside any flag, are the step its session is sent."`
 	Took      string `required:"" enum:"recommended,amended,delegated,moot" help:"Whether the owner took the recommendation, amended it, handed the question to someone else, or it stopped mattering."`
 	Explained bool   `help:"The owner needed the question explained before answering."`
 	Step      `embed:""`
@@ -615,7 +615,15 @@ it records nothing and sends nothing.`
 
 func (c *AnswerCmd) HelpSections() []clikit.Section { return stepSections }
 
-func (c *AnswerCmd) Validate() error { return c.atMostOne() }
+// Validate refuses an answer without the owner's words: on 2026-11-03 an
+// answer given them as its last words typed them into the session as its
+// step, three times.
+func (c *AnswerCmd) Validate() error {
+	if strings.TrimSpace(c.Source) == "" {
+		return errors.New("an answer needs --source, the owner's words or what showed the ask no longer holds; words after the ask are the step sent to its session")
+	}
+	return c.atMostOne()
+}
 
 func (c *AnswerCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	if c.File == "" && c.Snippet == "" && len(c.Line) == 0 {

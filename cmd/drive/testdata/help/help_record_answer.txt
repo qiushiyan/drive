@@ -1,4 +1,4 @@
-Usage: drive record answer --took=TOOK <ask> [<line> ...] [flags]
+Usage: drive record answer --source=SOURCE --took=TOOK <ask> [<line> ...] [flags]
 
 Record the owner's answer to an ask.
 
@@ -12,7 +12,8 @@ Arguments:
                          text the owner would type after the key (optional).
 
 Flags:
-      --source=SOURCE    The owner's words, or what showed the ask no longer holds.
+      --source=SOURCE    The owner's words, or what showed the ask no longer holds; words after the
+                         ask, outside any flag, are the step its session is sent (required).
       --took=TOOK        Whether the owner took the recommendation, amended it, handed the question
                          to someone else, or it stopped mattering (required; one of: recommended,
                          amended, delegated, moot).

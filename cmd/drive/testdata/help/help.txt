@@ -63,7 +63,7 @@ Commands:
   record ask --question=QUESTION --if-unanswered=IF-UNANSWERED <session>
                                       Record a question put to the owner, with its recommendation
                                       and what happens unanswered.
-  record answer --took=TOOK <ask> [<line> ...]
+  record answer --source=SOURCE --took=TOOK <ask> [<line> ...]
                                       Record the owner's answer to an ask.
   record note <text> ...              Record a note, such as the plan, for the run after a reset to
                                       read.

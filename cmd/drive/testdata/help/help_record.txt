@@ -20,7 +20,7 @@ Commands:
   ask --question=QUESTION --if-unanswered=IF-UNANSWERED <session>
                                Record a question put to the owner, with its recommendation and what
                                happens unanswered.
-  answer --took=TOOK <ask> [<line> ...]
+  answer --source=SOURCE --took=TOOK <ask> [<line> ...]
                                Record the owner's answer to an ask.
   note <text> ...              Record a note, such as the plan, for the run after a reset to read.
   goal <session> <text> ...    Record what a session sets out to do, in plain terms for the owner.

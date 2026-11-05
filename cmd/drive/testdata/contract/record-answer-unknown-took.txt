@@ -3,5 +3,5 @@ exit 2
 --- stdout
 --- stderr
 drive: error: --took must be one of "recommended","amended","delegated","moot" but got "maybe"
-Usage: drive record answer --took=TOOK <ask> [<line> ...] [flags]
+Usage: drive record answer --source=SOURCE --took=TOOK <ask> [<line> ...] [flags]
 Run "drive record answer --help" for details.
