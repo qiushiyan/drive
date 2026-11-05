@@ -3,4 +3,4 @@ exit 1
 --- stdout
 --- stderr
 drive: error: A2 is about the batch, so it names no session to send a step to
-next: record the answer alone (drive --batch b1 record answer A2 --took recommended), then send the step to the session it is for
+next: record the answer alone (drive --batch b1 record answer A2 --took recommended --source=no), then send the step to the session it is for

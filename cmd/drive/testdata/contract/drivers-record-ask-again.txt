@@ -1,0 +1,5 @@
+$ drive --driver session-driver record ask ON --question Release tonight? --recommendation yes --if-unanswered it waits
+exit 0
+--- stdout
+recorded ask A2
+--- stderr

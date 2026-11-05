@@ -288,6 +288,9 @@ func TestContractDrivers(t *testing.T) {
 	c.run("drivers-watch-due-all", "watch", "--due-all")
 	c.run("drivers-record-ask", "--driver", "session-driver", "record", "ask", "ON", "--question", "Go on?", "--recommendation", "yes", "--if-unanswered", "it waits")
 	c.run("drivers-answer-with-step", "--driver", "session-driver", "record", "answer", "A1", "--source", "yes", "--took", "recommended", "--", "Go on, as you recommend.")
+	c.run("drivers-record-ask-again", "--driver", "session-driver", "record", "ask", "ON", "--question", "Release tonight?", "--recommendation", "yes", "--if-unanswered", "it waits")
+	on.Busy("the release notes")
+	c.run("drivers-answer-with-step-working", "--driver", "session-driver", "record", "answer", "A2", "--source", "Qiushi in chat: yes, tonight", "--took", "recommended", "Release tonight.")
 }
 
 // A step a rejected login answers exits 4 and prints the relaunch.

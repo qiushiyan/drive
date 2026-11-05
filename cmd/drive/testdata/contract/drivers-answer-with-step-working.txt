@@ -1,0 +1,6 @@
+$ drive --driver session-driver record answer A2 --source Qiushi in chat: yes, tonight --took recommended Release tonight.
+exit 1
+--- stdout
+--- stderr
+drive: error: ON is working (for under a minute); so the answer to A2 is not recorded either
+next: arm its wake, which comes when its turn ends: drive --batch 2026-10-27 watch ON, and its step is decided then; only a step meant to reach it mid-turn goes now: drive --batch 2026-10-27 send ON@9f5cfefb --queue 'Release tonight.'; record the answer to A2 as well, since a step sent another way goes alone: drive --batch 2026-10-27 record answer A2 --took recommended '--source=Qiushi in chat: yes, tonight'

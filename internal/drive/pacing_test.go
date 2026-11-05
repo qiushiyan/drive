@@ -1057,13 +1057,16 @@ func TestARetryOfAnAnswerSaysWhatBecameOfItsStep(t *testing.T) {
 	}
 }
 
-// A refused step leaves the ask open, so the one command can run again.
+// A refused step leaves the ask open, so the one command can run again. The
+// refusal's next sends the step alone, so it also says how to record the
+// answer, in the owner's words as given, or the answer is lost to whatever
+// the driver runs instead.
 func TestARefusedStepRecordsNoAnswer(t *testing.T) {
 	r := newRig(t, "webhook")
 	c := adopted(t, r, "T1")
 	id, _ := r.d.Ask("T1", "Go on?", "yes", "it waits")
 	c.Busy("still at work")
-	_, got, err := r.d.AnswerAndSend(id, "yes", "recommended", false, drive.Step{Line: "go on"}, drive.SendOptions{})
+	_, got, err := r.d.AnswerAndSend(id, "Qiushi in chat: yes, go on", "recommended", true, drive.Step{Line: "go on"}, drive.SendOptions{})
 	if !isRefused(err) || got != "" {
 		t.Fatalf("%q %v", got, err)
 	}
@@ -1071,9 +1074,21 @@ func TestARefusedStepRecordsNoAnswer(t *testing.T) {
 	if _, asks, _ := batch.Records(evs); asks[0].Answer != nil {
 		t.Fatalf("no answer recorded: %+v", asks[0])
 	}
+	record := "drive --batch b1 record answer A1 --took recommended '--source=Qiushi in chat: yes, go on' --explained"
+	if msg := err.Error(); !strings.Contains(msg, "T1 is working") || !strings.Contains(msg, "A1 is not recorded") || !strings.Contains(msg, record) {
+		t.Fatalf("the refusal says the answer waits, and how to record it:\n%s", msg)
+	}
 	batchAsk, _ := r.d.Ask("", "Release tonight?", "no", "it waits")
-	if _, _, err := r.d.AnswerAndSend(batchAsk, "no", "recommended", false, drive.Step{Line: "go on"}, drive.SendOptions{}); !isRefused(err) || !strings.Contains(err.Error(), "names no session") {
-		t.Fatalf("an ask about the batch has no session to send to: %v", err)
+	_, _, err = r.d.AnswerAndSend(batchAsk, "no, not tonight", "recommended", false, drive.Step{Line: "go on"}, drive.SendOptions{})
+	if !isRefused(err) || !strings.Contains(err.Error(), "names no session") || !strings.Contains(err.Error(), "'--source=no, not tonight'") {
+		t.Fatalf("an ask about the batch has no session to send to, and its answer keeps the owner's words: %v", err)
+	}
+	// A session that cannot be read refuses the same way.
+	gone, _ := r.d.Ask("T1", "Close it?", "yes", "it waits")
+	r.w.Close(c.Block)
+	_, _, err = r.d.AnswerAndSend(gone, "yes", "recommended", false, drive.Step{Line: "go on"}, drive.SendOptions{})
+	if !isRefused(err) || !strings.Contains(err.Error(), gone+" is not recorded") || !strings.Contains(err.Error(), "record answer "+gone+" --took recommended --source=yes") {
+		t.Fatalf("a session gone leaves the answer to record: %v", err)
 	}
 }
 

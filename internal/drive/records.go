@@ -78,15 +78,16 @@ func (d *Driver) AnswerAndSend(ask, source, took string, explained bool, step St
 	if refused != nil {
 		return nil, "", refused
 	}
+	answer := &AskAnswer{Ask: ask, Source: source, Took: took, Explained: explained}
 	if a.Session == "" {
 		return nil, "", &Refused{Reason: ask + " is about the batch, so it names no session to send a step to",
-			Next: "record the answer alone (" + d.run("record", "answer", ask, "--took", took) + "), then send the step to the session it is for"}
+			Next: "record the answer alone (" + d.answerCommand(answer) + "), then send the step to the session it is for"}
 	}
 	o, err := d.observe(b, members, a.Session)
 	if err != nil {
-		return nil, "", err
+		return nil, "", d.unanswered(err, answer)
 	}
-	opt.Answer = &AskAnswer{Ask: ask, Source: source, Took: took, Explained: explained}
+	opt.Answer = answer
 	sent, err := d.Send(o.View.String(), step, opt)
 	evs, rerr := b.Events()
 	if rerr != nil {
@@ -95,13 +96,43 @@ func (d *Driver) AnswerAndSend(ask, source, took string, explained bool, step St
 	_, asks, _ := batch.Records(evs)
 	answered := slices.ContainsFunc(asks, func(x *batch.Ask) bool { return x.ID == ask && x.Answer != nil })
 	if !answered {
-		return sent, "", err
+		return sent, "", d.unanswered(err, answer)
 	}
 	if r, ok := errors.AsType[*Refused](err); ok {
 		// Admitted and then refused, so the answer stands though the step did not go.
 		return sent, ask, &Failed{What: fmt.Sprintf("recorded the answer to %s, but the step did not go: %s", ask, r.Reason), Next: r.Next}
 	}
 	return sent, ask, err
+}
+
+// unanswered is a refusal of an answer's step, before the answer went on
+// record with it: whatever the driver runs instead, a send its next gives
+// included, sends the step alone, so it says how to record the answer too.
+func (d *Driver) unanswered(err error, a *AskAnswer) error {
+	r, ok := errors.AsType[*Refused](err)
+	if !ok {
+		return err
+	}
+	out := *r
+	out.Reason = fmt.Sprintf("%s; so the answer to %s is not recorded either", r.Reason, a.Ask)
+	record := "record the answer to " + a.Ask + " as well, since a step sent another way goes alone: " + d.answerCommand(a)
+	if r.Next == "" {
+		record = "record the answer to " + a.Ask + " alone: " + d.answerCommand(a)
+	}
+	out.Next = strings.TrimPrefix(r.Next+"; "+record, "; ")
+	return &out
+}
+
+// answerCommand is the drive record answer that records a, with no step.
+func (d *Driver) answerCommand(a *AskAnswer) string {
+	words := []any{"record", "answer", a.Ask, "--took", a.Took}
+	if a.Source != "" {
+		words = append(words, "--source="+a.Source) // one word, so words starting with a dash stay the flag's value
+	}
+	if a.Explained {
+		words = append(words, "--explained")
+	}
+	return d.run(words...)
 }
 
 // openAsk finds an ask no one has answered, or refuses saying why it cannot be
