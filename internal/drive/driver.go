@@ -287,12 +287,23 @@ func (d *Driver) target(members []*batch.Member, ref string) (label, block strin
 }
 
 // own takes the lock key, a session's block or a label being opened, for
-// one action described by what; release gives it back. A second driver
-// acting meanwhile is refused with what the first is doing.
+// one action in b described by what; release gives it back. A second driver
+// acting meanwhile is refused with what the first is doing, and a second run
+// of this batch's driver, as a chat bot's runs can overlap, is told the
+// first is its own.
 func (d *Driver) own(b *batch.Batch, label, key, what string) (release func(), err error) {
-	release, err = d.Store.Own(key, what)
+	name := ""
+	if b != nil {
+		name = b.Meta.Name
+	}
+	release, err = d.Store.Own(key, name, what)
 	if busy, ok := errors.AsType[*batch.Busy](err); ok {
-		return nil, &Refused{Reason: fmt.Sprintf("another driver is %s (pid %d, since %s)", busy.What, busy.PID, busy.Since.In(zoneOf(b)).Format("15:04:05")),
+		since := busy.Since.In(zoneOf(b)).Format("15:04:05")
+		if name != "" && busy.Batch == name {
+			return nil, &Refused{Reason: fmt.Sprintf("your own drive run is %s (pid %d, since %s), in this batch", busy.What, busy.PID, since),
+				Next: fmt.Sprintf("let it finish; once it is done, %s shows where it stands", d.run("read", label))}
+		}
+		return nil, &Refused{Reason: fmt.Sprintf("another driver is %s (pid %d, since %s)", busy.What, busy.PID, since),
 			Next: fmt.Sprintf("leave %s to it; once it is done, %s shows where it stands", label, d.run("read", label))}
 	}
 	return release, err

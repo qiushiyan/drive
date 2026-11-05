@@ -150,6 +150,22 @@ func TestABusyRefusalSaysWhatTheOtherDriverIsDoing(t *testing.T) {
 	if _, err := r.d.Respond(v, "approve"); err != nil {
 		t.Fatal(err)
 	}
+	if !isRefused(other) || !strings.Contains(other.Error(), "your own drive run is approving T1") {
+		t.Fatalf("a run of this batch's own, in words: %v", other)
+	}
+	// A driver acting in another batch is another driver.
+	if _, _, err := r.d.Store.New(batch.Meta{Name: "b2", Started: r.w.Clock.Now(), Wake: "none", Driver: "itell"}); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := *r.d
+	elsewhere.BatchName = "b2"
+	c.Ask("rm -rf dist")
+	v = r.view("T1")
+	byBlock := c.Block[len(c.Block)-6:] + v[len("T1"):] // the session as another batch names it
+	r.w.OnCapture = func() { _, other = elsewhere.Send(byBlock, drive.Step{Line: "go on"}, drive.SendOptions{}) }
+	if _, err := r.d.Respond(v, "approve"); err != nil {
+		t.Fatal(err)
+	}
 	if !isRefused(other) || !strings.Contains(other.Error(), "another driver is approving T1") {
 		t.Fatalf("the other driver's action, in words: %v", other)
 	}

@@ -15,6 +15,7 @@ type Owner struct {
 	PID   int       `json:"pid"`
 	What  string    `json:"what"`
 	Since time.Time `json:"since"`
+	Batch string    `json:"batch,omitempty"` // the batch it acts in; "" outside one, or from an older drive
 }
 
 // Busy is an action refused because another driver is acting on the same
@@ -29,11 +30,11 @@ func (s Store) lockPath(key string) string {
 	return filepath.Join(s.Dir, "locks", safe(key))
 }
 
-// Own takes the lock on one session for one action, held until release is
-// called or the process ends. It does not queue behind another driver:
-// whatever the second driver decided, it decided on what the first is
-// changing, so it gets a *Busy naming the first.
-func (s Store) Own(key, what string) (release func(), err error) {
+// Own takes the lock on one session for one action in batch, held until
+// release is called or the process ends. It does not queue behind another
+// driver: whatever the second driver decided, it decided on what the first
+// is changing, so it gets a *Busy naming the first.
+func (s Store) Own(key, batch, what string) (release func(), err error) {
 	p := s.lockPath(key)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return nil, err
@@ -58,7 +59,7 @@ func (s Store) Own(key, what string) (release func(), err error) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	b, _ := json.Marshal(Owner{PID: os.Getpid(), What: what, Since: time.Now()})
+	b, _ := json.Marshal(Owner{PID: os.Getpid(), What: what, Since: time.Now(), Batch: batch})
 	_ = f.Truncate(0)
 	_, _ = f.WriteAt(b, 0)
 	return func() {

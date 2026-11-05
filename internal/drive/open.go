@@ -245,7 +245,7 @@ func (d *Driver) openBlock(o rex.Open) (string, error) {
 // half a minute for it.
 func (d *Driver) waitOwn(key, what string) (func(), error) {
 	for end := d.now().Add(30 * time.Second); ; d.sleep(time.Second / 4) {
-		release, err := d.Store.Own(key, what)
+		release, err := d.Store.Own(key, "", what)
 		if _, busy := errors.AsType[*batch.Busy](err); !busy || !d.now().Before(end) {
 			return release, err
 		}

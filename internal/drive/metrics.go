@@ -362,6 +362,8 @@ func refusalKind(reason string) string {
 		return "stale view"
 	case strings.Contains(reason, "another driver"):
 		return "concurrent driver"
+	case strings.Contains(reason, "your own drive run"):
+		return "own run still acting"
 	case strings.Contains(reason, "is held by"):
 		return "held resource"
 	case strings.Contains(reason, "login was rejected"):

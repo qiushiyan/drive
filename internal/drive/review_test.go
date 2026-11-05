@@ -520,7 +520,7 @@ func TestADecisionOvertakenMidReadIsRefused(t *testing.T) {
 		t.Fatalf("one of two sends decided on one view goes: %d typed, A %v, B %v", n, aErr, bErr)
 	}
 	for _, err := range []error{aErr, bErr} {
-		if err != nil && (!isRefused(err) || !strings.Contains(err.Error(), "another driver is sending T1")) {
+		if err != nil && (!isRefused(err) || !strings.Contains(err.Error(), "your own drive run is sending T1")) {
 			t.Fatalf("the loser hears another driver is sending: %v", err)
 		}
 	}
@@ -541,7 +541,7 @@ func TestCloseWaitsForADriverMidSend(t *testing.T) {
 	err := r.d.Close(v)
 	close(gate)
 	wg.Wait()
-	if !isRefused(err) || !strings.Contains(err.Error(), "another driver") {
+	if !isRefused(err) || !strings.Contains(err.Error(), "your own drive run") {
 		t.Fatalf("a close while another driver sends is refused: %v", err)
 	}
 	if r.w.Session(c.Block) == nil {
@@ -632,7 +632,7 @@ func TestTwoOpensOfOneLabelOpenOneBlock(t *testing.T) {
 	if _, err := r.d.Open("T9", drive.Step{Line: "go"}, drive.OpenOptions{Dir: dir}); err != nil {
 		t.Fatal(err)
 	}
-	if !isRefused(second) || !strings.Contains(second.Error(), "another driver is opening T9") {
+	if !isRefused(second) || !strings.Contains(second.Error(), "your own drive run is opening T9") {
 		t.Fatalf("the second is refused while the first opens: %v", second)
 	}
 	if blocks, _ := r.w.Blocks(""); len(blocks) != 1 {

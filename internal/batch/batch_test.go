@@ -166,7 +166,7 @@ func TestDerivedViews(t *testing.T) {
 
 func TestOwnRefusesASecondDriver(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
-	release, err := s.Own("block:1", "sending T1 \"recap\"")
+	release, err := s.Own("block:1", "b1", "sending T1 \"recap\"")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,17 +174,17 @@ func TestOwnRefusesASecondDriver(t *testing.T) {
 		t.Fatalf("busy names the owner: %+v", o)
 	}
 	var busy *Busy
-	if _, err := s.Own("block:1", "closing T1"); !errors.As(err, &busy) || busy.What != "sending T1 \"recap\"" {
+	if _, err := s.Own("block:1", "b1", "closing T1"); !errors.As(err, &busy) || busy.What != "sending T1 \"recap\"" {
 		t.Fatalf("a second owner is refused with the first's action: %v", err)
 	}
-	if _, err := s.Own("block:2", "x"); err != nil {
+	if _, err := s.Own("block:2", "b1", "x"); err != nil {
 		t.Fatalf("another session is free: %v", err)
 	}
 	release()
 	if s.Busy("block:1") != nil {
 		t.Fatal("released")
 	}
-	again, err := s.Own("block:1", "closing T1")
+	again, err := s.Own("block:1", "b1", "closing T1")
 	if err != nil {
 		t.Fatal(err)
 	}

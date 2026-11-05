@@ -134,7 +134,7 @@ func TestTwoDriversOneView(t *testing.T) {
 	if ferr := <-first; ferr != nil {
 		t.Fatalf("the first goes: %v", ferr)
 	}
-	if !isRefused(err) || !strings.Contains(err.Error(), "another driver is sending T1") {
+	if !isRefused(err) || !strings.Contains(err.Error(), "your own drive run is sending T1") {
 		t.Fatalf("the second is refused while the first holds the session: %v", err)
 	}
 	if typed, _ := c.Seen(); contains(typed, "step from B") {
