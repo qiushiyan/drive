@@ -101,6 +101,7 @@ func watch(t *testing.T, r *rig, c *testkit.Claude, label string) *drive.Ending 
 // A turn ended while a job it started runs. What the reply says decides when
 // the driver hears, and a question never waits on a job.
 func TestWhatAReplySaysDecidesTheWakeWhileItsJobRuns(t *testing.T) {
+	t.Parallel()
 	report := strings.Repeat("What the round found and how it was settled. ", 40)
 	for _, tc := range []struct {
 		name, reply string
@@ -119,6 +120,7 @@ func TestWhatAReplySaysDecidesTheWakeWhileItsJobRuns(t *testing.T) {
 		{"says what comes after", report + "\n\nWhen the replays finish, I'll score them and report.", 2 * time.Hour, 2*time.Hour + time.Minute},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			r := newRig(t, "webhook")
 			l := hook(t, r).answeredBy(r)
 			c := adopted(t, r, "T1")
@@ -192,6 +194,7 @@ func TestAJobHoldsBackNoPromptErrorOrInterrupt(t *testing.T) {
 // A recap goes before a park or a close, so a driver waits to read it,
 // whatever it says and whatever still runs.
 func TestARecapWakesWhateverStillRuns(t *testing.T) {
+	t.Parallel()
 	r := newRig(t, "webhook")
 	l := hook(t, r).answeredBy(r)
 	c := adopted(t, r, "T1")
@@ -214,6 +217,7 @@ func TestARecapWakesWhateverStillRuns(t *testing.T) {
 // backstop along the way, where a wake every ten minutes cost thirty. The
 // watch stays armed throughout, so no run has to arm it again.
 func TestAFiveHourJobCostsOneWakeAndABackstop(t *testing.T) {
+	t.Parallel()
 	r := newRig(t, "webhook")
 	l := hook(t, r).answeredBy(r)
 	c := adopted(t, r, "T1")
@@ -252,6 +256,7 @@ func TestAFiveHourJobCostsOneWakeAndABackstop(t *testing.T) {
 // A report with a job left behind wakes once, and not again for that view until
 // the backstop, whose marks grow further apart.
 func TestAReplyIsToldOncePerView(t *testing.T) {
+	t.Parallel()
 	r := newRig(t, "webhook")
 	l := hook(t, r).answeredBy(r)
 	c := adopted(t, r, "T1")
@@ -274,6 +279,7 @@ func TestAReplyIsToldOncePerView(t *testing.T) {
 
 // A run can act before its post returns: that run heard the wake.
 func TestARunThatAnswersBeforeThePostReturnsHeardIt(t *testing.T) {
+	t.Parallel()
 	r := newRig(t, "webhook")
 	l := hook(t, r)
 	run := *r.d
@@ -297,6 +303,7 @@ func TestARunThatAnswersBeforeThePostReturnsHeardIt(t *testing.T) {
 // Attempts nobody heard do not stretch the backstop: a driver back from an outage
 // hears of a job at the first mark, not days on.
 func TestUnheardAttemptsDoNotStretchTheBackstop(t *testing.T) {
+	t.Parallel()
 	r := newRig(t, "webhook")
 	l := hook(t, r)
 	c := adopted(t, r, "T1")
@@ -325,6 +332,7 @@ func TestUnheardAttemptsDoNotStretchTheBackstop(t *testing.T) {
 // A job that ends with the session still idle, which no notification resumed,
 // is news the driver has no other way to hear, though the view is the same.
 func TestAJobThatEndsWithoutResumingStillWakes(t *testing.T) {
+	t.Parallel()
 	r := newRig(t, "webhook")
 	l := hook(t, r).answeredBy(r)
 	c := adopted(t, r, "T1")
@@ -642,6 +650,7 @@ func TestWakesNobodyAnswersBackOffAndNoneIsLost(t *testing.T) {
 // While nobody answers, posts come further and further apart, to one every two
 // hours, and what they carry still arrives.
 func TestUnansweredWakesGetFurtherApart(t *testing.T) {
+	t.Parallel()
 	r := newRig(t, "webhook")
 	l := hook(t, r)
 	c := adopted(t, r, "T1")
@@ -1450,6 +1459,7 @@ func postings(r *rig, label string) []batch.Event {
 // that took longer, so a late wake can be explained and a batch's wakes counted by
 // cause from its record instead of inferred from when they came.
 func TestAPostRecordsWhyItWent(t *testing.T) {
+	t.Parallel()
 	report := strings.Repeat("What the round found and how it was settled. ", 40)
 	for _, tc := range []struct {
 		name, reply, why string
@@ -1460,6 +1470,7 @@ func TestAPostRecordsWhyItWent(t *testing.T) {
 		{"it says it waits", "Waiting on the replays.", "job-wait", 2 * time.Hour},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			r := newRig(t, "webhook")
 			hook(t, r).answeredBy(r)
 			c := adopted(t, r, "T1")
@@ -1482,6 +1493,7 @@ func TestAPostRecordsWhyItWent(t *testing.T) {
 		})
 	}
 	t.Run("the same view again", func(t *testing.T) {
+		t.Parallel()
 		r := newRig(t, "webhook")
 		hook(t, r).answeredBy(r)
 		c := adopted(t, r, "T1")
@@ -1499,6 +1511,7 @@ func TestAPostRecordsWhyItWent(t *testing.T) {
 		}
 	})
 	t.Run("nobody answered", func(t *testing.T) {
+		t.Parallel()
 		r := newRig(t, "webhook")
 		hook(t, r)
 		c := adopted(t, r, "T1")
@@ -1512,6 +1525,7 @@ func TestAPostRecordsWhyItWent(t *testing.T) {
 		}
 	})
 	t.Run("a prompt and an error", func(t *testing.T) {
+		t.Parallel()
 		for why, end := range map[string]func(c *testkit.Claude){
 			"prompt":  func(c *testkit.Claude) { c.Ask("rm -rf /tmp/x") },
 			"stopped": func(c *testkit.Claude) { c.Fail("overloaded", "Overloaded") },
@@ -1528,6 +1542,7 @@ func TestAPostRecordsWhyItWent(t *testing.T) {
 		}
 	})
 	t.Run("a repost", func(t *testing.T) {
+		t.Parallel()
 		r := newRig(t, "webhook")
 		hook(t, r)
 		c := adopted(t, r, "T1")
