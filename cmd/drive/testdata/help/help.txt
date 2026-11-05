@@ -77,7 +77,7 @@ Commands:
                                       session's goal, where it stands, its pull requests, and what
                                       waits on them.
   batch show                          Print the batch: its driver, start, wakes, Rex session, zone,
-                                      sessions and directory (default).
+                                      sessions and directory (default of batch).
   batch new <name>                    Start a batch and make it its driver's current one.
   batch use <name>                    Make a batch its driver's current one again.
   batch end                           End a batch whose drive is over and whose record the owner has

@@ -115,34 +115,21 @@ var app = clikit.App{
 		3: "tried and did not end as asked; the message says what did happen",
 		4: "the session's login was rejected; next: relaunches it on another account, or says to tell the owner",
 	},
+	// Every command's error, so no command can let a refusal exit as a
+	// failure: 1 for a refusal, which did nothing, 4 for a rejected login,
+	// and FailureCode for anything else that failed.
+	Outcome: func(err error) error {
+		if r, ok := errors.AsType[*drive.Refused](err); ok {
+			return clikit.Fail(1, r)
+		}
+		if f, ok := errors.AsType[*drive.Failed](err); ok && f.Login {
+			return clikit.Fail(4, f)
+		}
+		return err
+	},
 }
 
 func main() { os.Exit(app.Run(upgrade(os.Args[1:]))) }
-
-// actor is a command's work. Every command embeds runs, whose Run calls the
-// selected command's act and classifies what it returns, so no command can
-// let a refusal exit as a failure.
-type actor interface {
-	act(ctx *kong.Context, d *drive.Driver) error
-}
-
-type runs struct{}
-
-func (runs) Run(ctx *kong.Context, d *drive.Driver) error {
-	return classify(ctx.Selected().Target.Addr().Interface().(actor).act(ctx, d))
-}
-
-// classify gives an error drive's exit status: 1 for a refusal, which did
-// nothing, 4 for a rejected login, and 3 for anything else that failed.
-func classify(err error) error {
-	if r, ok := errors.AsType[*drive.Refused](err); ok {
-		return clikit.Fail(1, r)
-	}
-	if f, ok := errors.AsType[*drive.Failed](err); ok && f.Login {
-		return clikit.Fail(4, f)
-	}
-	return err
-}
 
 // upgrade rewrites the command lines an older drive still runs into this
 // one's: a watch or timer it started before an install re-execs this

@@ -42,7 +42,6 @@ func writeJSON(w io.Writer, v any) error {
 func sessionOf(view string) string { return strings.SplitN(view, "@", 2)[0] }
 
 type StatusCmd struct {
-	runs
 	JSON  bool `help:"Print one JSON document instead of the table."`
 	Quick bool `help:"Skip reading each session's pull request and merge state, which costs a gh call per session."`
 }
@@ -103,7 +102,7 @@ leftovers   a line per branch a closed session left that stays, and how many clo
             are not yet checked; left out with --quick or when there are none`}}
 }
 
-func (c *StatusCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *StatusCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	st, err := d.Status(!c.Quick)
 	if err != nil {
 		return err
@@ -117,7 +116,6 @@ func (c *StatusCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type ReadCmd struct {
-	runs
 	Session string `arg:"" help:"The session: a label in the batch, or a block id for one outside it."`
 	Prompts *int   `xor:"mode" placeholder:"N" help:"Print the last N prompts it was told instead of its reply: what it is working on and how it got there."`
 	Pending bool   `xor:"mode" help:"Print the tool call its permission prompt waits on."`
@@ -150,7 +148,7 @@ func (c *ReadCmd) Validate() error {
 	return nil
 }
 
-func (c *ReadCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *ReadCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	mode, n := drive.ReadLast, 10
 	switch {
 	case c.Prompts != nil:
@@ -175,7 +173,6 @@ func (c *ReadCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type WaitCmd struct {
-	runs
 	Session string `arg:"" help:"The session to wait for."`
 	Quiet   uint   `default:"60" placeholder:"SECONDS" help:"How long the turn must stay over before the wait ends, so a session that pauses between tools is not taken for done."`
 	Bg      uint   `default:"600" placeholder:"SECONDS" help:"How long to wait on a turn that ended while background jobs it started still run; such a turn usually resumes when they finish."`
@@ -206,7 +203,7 @@ func (c *WaitCmd) Validate() error {
 	return err
 }
 
-func (c *WaitCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *WaitCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	e, err := d.Wait(c.Session, time.Duration(c.Quiet)*time.Second, time.Duration(c.Bg)*time.Second)
 	if err != nil {
 		return err
@@ -255,7 +252,6 @@ The first step a session gets in a batch carries the owner's notice: at the head
 of its file, or attached after its line.`}}
 
 type SendCmd struct {
-	runs
 	View  string `arg:"" help:"The view the step was decided on, as read, wait, status or a wake printed it (T1@3fa91c07)."`
 	Step  `embed:""`
 	Queue bool   `help:"Send to a working session, which takes the step mid-turn: the view then needs only that no prompt came since. A session on a prompt takes nothing until it is answered."`
@@ -280,7 +276,7 @@ func (c *SendCmd) Validate() error {
 	return c.atMostOne()
 }
 
-func (c *SendCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *SendCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	sent, err := d.Send(c.View, c.step(), drive.SendOptions{Queue: c.Queue, Hold: c.Hold, Label: c.As})
 	if sent != nil && sent.Outcome != "" {
 		_, _ = io.WriteString(ctx.Stdout, sent.Text())
@@ -289,7 +285,6 @@ func (c *SendCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type OpenCmd struct {
-	runs
 	Label   string `arg:"" help:"The label the new session gets in the batch."`
 	Step    `embed:""`
 	Dir     string  `type:"existingdir" default:"." help:"The directory the session starts in."`
@@ -314,7 +309,7 @@ func (c *OpenCmd) HelpSections() []clikit.Section { return stepSections }
 
 func (c *OpenCmd) Validate() error { return c.atMostOne() }
 
-func (c *OpenCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *OpenCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	o, err := d.Open(c.Label, c.step(), drive.OpenOptions{Dir: c.Dir, Resume: c.Resume, Account: c.Account, Model: c.Model, Hold: c.Hold, Goal: c.Goal})
 	if o != nil {
 		_, _ = io.WriteString(ctx.Stdout, o.Text())
@@ -323,7 +318,6 @@ func (c *OpenCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type RespondCmd struct {
-	runs
 	View   string `arg:"" help:"The view the answer was decided on."`
 	Action string `arg:"" enum:"approve,deny,interrupt,clear" help:"approve or deny the prompt, interrupt the turn, or clear a line left in its input box."`
 }
@@ -336,7 +330,7 @@ which a send can answer in words; read --screen shows the options. It prints
 what the session reads afterwards.`
 }
 
-func (c *RespondCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *RespondCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	r, err := d.Respond(c.View, c.Action)
 	if r != nil {
 		_, _ = io.WriteString(ctx.Stdout, r.Text())
@@ -345,7 +339,6 @@ func (c *RespondCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type WatchCmd struct {
-	runs
 	Session string `arg:"" optional:"" help:"The session whose wake to arm."`
 	Due     bool   `help:"Arm every session whose wakes stopped coming, and post once more a wake nobody acted on: a chat driver's watchdog in one command."`
 	DueAll  bool   `name:"due-all" help:"Do what --due does in every live batch that wakes a driver, and post only what needs a driver's judgment: the machine's watchdog, which runs no model when nothing is due."`
@@ -393,7 +386,7 @@ func btoi(b bool) int {
 	return 0
 }
 
-func (c *WatchCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *WatchCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	if c.DueAll {
 		reports, err := d.DueAll()
 		if err != nil {
@@ -435,7 +428,6 @@ func (c *WatchCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type TimerCmd struct {
-	runs
 	Seconds uint     `arg:"" help:"How long until the wake."`
 	Note    []string `arg:"" help:"What the wake is for, such as veto; the wake carries it."`
 }
@@ -452,7 +444,7 @@ func (c *TimerCmd) Validate() error {
 	return err
 }
 
-func (c *TimerCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *TimerCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	after, note := time.Duration(c.Seconds)*time.Second, strings.Join(c.Note, " ")
 	if err := d.Timer(after, note); err != nil {
 		return err
@@ -462,7 +454,6 @@ func (c *TimerCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type ParkCmd struct {
-	runs
 	View   string   `arg:"" help:"The view the park was decided on."`
 	Reason []string `arg:"" help:"Why it waits, in the owner's terms, since their page shows it."`
 	Until  string   `placeholder:"WHEN" help:"When to look at it again: a date or a date and time in the batch's zone, such as 2026-11-06 or \"2026-11-06 09:00\", or a duration such as 4h. The watchdog wakes you about it then."`
@@ -483,7 +474,7 @@ drive park S6@… --until 2026-11-06 'waits for the 6 Nov fleet read'
 drive park S7@… 'waits for the release, held by S2'  # after a send refused on that hold`}}
 }
 
-func (c *ParkCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *ParkCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	var until time.Time
 	if c.Until != "" {
 		var err error
@@ -503,7 +494,6 @@ func (c *ParkCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type CloseCmd struct {
-	runs
 	View    string `arg:"" help:"The view the close was decided on."`
 	Cleanup bool   `help:"Then remove its branch and worktree once merged, as drive cleanup does."`
 }
@@ -515,7 +505,7 @@ line nobody sent: next: gives what to do first, such as the step that has
 the session stop its job.`
 }
 
-func (c *CloseCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *CloseCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	label := sessionOf(c.View)
 	if err := d.Close(c.View); err != nil {
 		return err
@@ -538,7 +528,6 @@ func cleanup(ctx *kong.Context, d *drive.Driver, session string) error {
 }
 
 type CleanupCmd struct {
-	runs
 	Session string `arg:"" optional:"" help:"One closed session of the batch, instead of every closed session of the driver's batches."`
 }
 
@@ -552,7 +541,7 @@ checked, is judged again on the next run, since a pull request can merge after
 its session closed. gwt keeps a recovery ref for anything it discards.`
 }
 
-func (c *CleanupCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *CleanupCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	return cleanup(ctx, d, c.Session)
 }
 
@@ -581,7 +570,6 @@ func recorded(w io.Writer, kind, id string, err error) error {
 }
 
 type GrantCmd struct {
-	runs
 	Source string `required:"" help:"The owner's words, and where and when they said them."`
 	Scope  string `required:"" help:"What the grant covers."`
 }
@@ -592,26 +580,24 @@ A grant lives as long as the batch it was given in: a new batch starts with
 none.`
 }
 
-func (c *GrantCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *GrantCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	id, err := d.Grant(c.Source, c.Scope)
 	return recorded(ctx.Stdout, "grant", id, err)
 }
 
 type AskCmd struct {
-	runs
 	Session        string `arg:"" help:"The session the question holds, or - for the batch."`
 	Question       string `required:"" help:"The question, as the owner reads it."`
 	Recommendation string `help:"What you recommend."`
 	IfUnanswered   string `required:"" help:"What happens while nobody answers."`
 }
 
-func (c *AskCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *AskCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	id, err := d.Ask(strings.TrimPrefix(c.Session, "-"), c.Question, c.Recommendation, c.IfUnanswered)
 	return recorded(ctx.Stdout, "ask", id, err)
 }
 
 type AnswerCmd struct {
-	runs
 	Ask       string `arg:"" help:"The ask it answers, such as A3."`
 	Source    string `help:"The owner's words, or what showed the ask no longer holds."`
 	Took      string `required:"" enum:"recommended,amended,delegated,moot" help:"Whether the owner took the recommendation, amended it, handed the question to someone else, or it stopped mattering."`
@@ -631,7 +617,7 @@ func (c *AnswerCmd) HelpSections() []clikit.Section { return stepSections }
 
 func (c *AnswerCmd) Validate() error { return c.atMostOne() }
 
-func (c *AnswerCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *AnswerCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	if c.File == "" && c.Snippet == "" && len(c.Line) == 0 {
 		id, err := d.Answer(c.Ask, c.Source, c.Took, c.Explained)
 		if err := recorded(ctx.Stdout, "answer", id, err); err != nil {
@@ -653,18 +639,16 @@ func (c *AnswerCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type NoteCmd struct {
-	runs
 	Session string   `placeholder:"SESSION" help:"The session the note is about."`
 	Text    []string `arg:"" help:"The note."`
 }
 
-func (c *NoteCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *NoteCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	id, err := d.Note(c.Session, strings.Join(c.Text, " "))
 	return recorded(ctx.Stdout, "note", id, err)
 }
 
 type GoalCmd struct {
-	runs
 	Session string   `arg:"" help:"The session, by its label in the batch; a closed one too."`
 	Text    []string `arg:"" help:"What it sets out to do, in plain terms for the owner: one short paragraph, at most 600 bytes."`
 }
@@ -677,7 +661,7 @@ session's purpose or scope changes. read and the owner's page show the
 latest.`
 }
 
-func (c *GoalCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *GoalCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	if err := d.Goal(c.Session, strings.Join(c.Text, " ")); err != nil {
 		return err
 	}
@@ -686,7 +670,6 @@ func (c *GoalCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type LogCmd struct {
-	runs
 	Since string `placeholder:"TIME" help:"Print only what happened from this time on, a date or a date and time such as \"2026-10-22 16:00\", read in the zone drive prints times in."`
 	JSON  bool   `help:"Print the events as the batch recorded them, as one JSON array."`
 }
@@ -699,7 +682,7 @@ reason, hold, view, action, call, id, ref, source, scope, question, recommendati
 if_unanswered, took, explained, note, goal, http, try, via, branch, jobs, why, due, held_by.`}}
 }
 
-func (c *LogCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *LogCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	var since time.Time
 	if c.Since != "" {
 		var err error
@@ -750,7 +733,6 @@ func parseWhen(s string, zone *time.Location) (time.Time, error) {
 }
 
 type PageCmd struct {
-	runs
 	Listen string `default:"127.0.0.1:8792" placeholder:"ADDR" help:"The address to serve it on."`
 }
 
@@ -778,7 +760,7 @@ that tailscale serve publishes on the tailnet.`
 // replaced by an install.
 var replacedEvery = 30 * time.Second
 
-func (c *PageCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *PageCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	ln, err := net.Listen("tcp", c.Listen)
 	if err != nil {
 		return err
@@ -815,7 +797,6 @@ func (c *PageCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type MetricsCmd struct {
-	runs
 	JSON bool `help:"Print one JSON document instead of text."`
 }
 
@@ -829,7 +810,7 @@ refusals (counts by kind), failures; wakes, timers, wake_fails, carried, wakes_b
 by what made them go), unhandled, unwatched`}}
 }
 
-func (c *MetricsCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *MetricsCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	m, err := d.Metrics()
 	if err != nil {
 		return err
@@ -850,9 +831,9 @@ type BatchCmd struct {
 	List BatchListCmd `cmd:"" help:"List every batch, with its driver, each driver's current one starred."`
 }
 
-type BatchShowCmd struct{ runs }
+type BatchShowCmd struct{}
 
-func (c *BatchShowCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *BatchShowCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	b, err := d.Batch()
 	if err != nil {
 		return err
@@ -867,7 +848,6 @@ func (c *BatchShowCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type BatchNewCmd struct {
-	runs
 	Name       string `arg:"" help:"The batch's name, such as the date."`
 	Webhook    string `placeholder:"DRIVER" help:"Wake this chat driver by its webhook, the file ~/.config/drive/webhooks/DRIVER that the owner writes; DRIVER is also the driver's name. Without it, the driver waits itself."`
 	RexSession string `placeholder:"SESSION" help:"The Rex session new sessions open in, recorded by its label and started whenever it is not running; defaults to the configuration's, then the one drive runs in."`
@@ -892,7 +872,7 @@ func (c *BatchNewCmd) Validate() error {
 	return nil
 }
 
-func (c *BatchNewCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *BatchNewCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	wake := "none"
 	if c.Webhook != "" {
 		wake = "webhook"
@@ -910,11 +890,10 @@ func (c *BatchNewCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type BatchUseCmd struct {
-	runs
 	Name string `arg:"" help:"The batch to make its driver's current one."`
 }
 
-func (c *BatchUseCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *BatchUseCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	b, err := d.UseBatch(c.Name)
 	if err != nil {
 		return err
@@ -927,7 +906,7 @@ func (c *BatchUseCmd) act(ctx *kong.Context, d *drive.Driver) error {
 	return nil
 }
 
-type BatchEndCmd struct{ runs }
+type BatchEndCmd struct{}
 
 func (c *BatchEndCmd) Help() string {
 	return `
@@ -935,7 +914,7 @@ Its record stays, read with --batch NAME. A batch left running stays on the
 page until its driver's next one replaces it.`
 }
 
-func (c *BatchEndCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *BatchEndCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	e, err := d.EndBatch()
 	if e != nil {
 		_, _ = io.WriteString(ctx.Stdout, e.Text())
@@ -943,9 +922,9 @@ func (c *BatchEndCmd) act(ctx *kong.Context, d *drive.Driver) error {
 	return err
 }
 
-type BatchListCmd struct{ runs }
+type BatchListCmd struct{}
 
-func (c *BatchListCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *BatchListCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	metas, drivers, err := d.Batches()
 	if err != nil {
 		return err
@@ -955,7 +934,6 @@ func (c *BatchListCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type SnippetCmd struct {
-	runs
 	Key  string   `arg:"" help:"The snippet's key, such as land-pr."`
 	Dir  string   `arg:"" optional:"" default:"." help:"The directory it resolves in: a project's own snippets win over the owner's global ones."`
 	Text []string `arg:"" optional:"" help:"The text the owner would type after the key."`
@@ -967,7 +945,7 @@ It prints the expanded text on stdout and the file it came from on stderr,
 to check what a send --snippet would type before sending it.`
 }
 
-func (c *SnippetCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *SnippetCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	s, err := d.Snippet(c.Dir, c.Key, strings.Join(c.Text, " "))
 	if err != nil {
 		return err
@@ -978,11 +956,10 @@ func (c *SnippetCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type SnipsCmd struct {
-	runs
 	Dir string `arg:"" optional:"" default:"." help:"The directory whose keys to list."`
 }
 
-func (c *SnipsCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *SnipsCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	from, keys, err := d.Snippets(c.Dir)
 	if err != nil {
 		return err
@@ -1013,11 +990,10 @@ func onKill(d *drive.Driver, label string) string {
 }
 
 type NotifyCmd struct {
-	runs
 	Label string `arg:"" help:"The session to wait for."`
 }
 
-func (c *NotifyCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *NotifyCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	watch := onKill(d, c.Label)
 	e, err := d.Notify(watch, c.Label, drive.WakeQuiet, drive.WakeCap)
 	if err != nil {
@@ -1033,12 +1009,11 @@ func (c *NotifyCmd) act(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type RingCmd struct {
-	runs
 	Seconds uint     `arg:"" help:"How long to sleep."`
 	Note    []string `arg:"" help:"The timer's note."`
 }
 
-func (c *RingCmd) act(ctx *kong.Context, d *drive.Driver) error {
+func (c *RingCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	note := strings.Join(c.Note, " ")
 	watch := onKill(d, "timer "+note)
 	time.Sleep(time.Duration(c.Seconds) * time.Second)
