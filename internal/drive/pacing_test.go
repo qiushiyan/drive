@@ -91,7 +91,7 @@ func (l *webhookLog) answeredBy(r *rig) *webhookLog {
 func watch(t *testing.T, r *rig, c *testkit.Claude, label string) *drive.Ending {
 	t.Helper()
 	run := *r.d
-	e, err := run.Notify(watchOf(c), label, drive.WakeQuiet, drive.WakeCap)
+	e, err := run.Notify(watchOf(c), label, drive.WakeQuiet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,9 +112,10 @@ func TestWhatAReplySaysDecidesTheWakeWhileItsJobRuns(t *testing.T) {
 		{"a decision that needs someone", report + "\n\nOn your word I'll end the loop here.", time.Minute, 2 * time.Minute},
 		{"asks, and waits as well", "Is the heads-up enough? Waiting on CI meanwhile.", time.Minute, 2 * time.Minute},
 		{"an approval, and a wait", "Please approve the production migration. Waiting on CI meanwhile.", time.Minute, 2 * time.Minute},
-		{"a report with a job left behind", report + "\n\nThe scratch worktrees are removed.", 10 * time.Minute, 11 * time.Minute},
-		{"anything unclear", "415 copies, no new failures.", 10 * time.Minute, 11 * time.Minute},
-		{"a wait that is over", "No longer waiting for CI. The change is merged and released.", 10 * time.Minute, 11 * time.Minute},
+		// Neither asking nor waiting, its own job's end usually resumes the turn.
+		{"a report with a job left behind", report + "\n\nThe scratch worktrees are removed.", 2 * time.Hour, 2*time.Hour + time.Minute},
+		{"anything unclear", "415 copies, no new failures.", 2 * time.Hour, 2*time.Hour + time.Minute},
+		{"a wait that is over", "No longer waiting for CI. The change is merged and released.", 2 * time.Hour, 2*time.Hour + time.Minute},
 		{"a wait for approval", "Waiting for approval before applying the production migration.", time.Minute, 2 * time.Minute},
 		{"says it waits", "Waiting on the replays.", 2 * time.Hour, 2*time.Hour + time.Minute},
 		{"says what comes after", report + "\n\nWhen the replays finish, I'll score them and report.", 2 * time.Hour, 2*time.Hour + time.Minute},
@@ -253,8 +254,9 @@ func TestAFiveHourJobCostsOneWakeAndABackstop(t *testing.T) {
 	}
 }
 
-// A report with a job left behind wakes once, and not again for that view until
-// the backstop, whose marks grow further apart.
+// A report with a job left behind wakes once that job has run two hours, and
+// not again for that view until the next mark, the marks growing further
+// apart.
 func TestAReplyIsToldOncePerView(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "webhook")
@@ -264,16 +266,16 @@ func TestAReplyIsToldOncePerView(t *testing.T) {
 	c.Job("tail -f server.log")
 	c.Done("PR #41 is open and its description is written.")
 	start := r.w.Clock.Now()
-	var at90m, at5h, at11h int
-	r.w.Clock.At(start.Add(90*time.Minute), func() { at90m = l.count() })
-	r.w.Clock.At(start.Add(5*time.Hour), func() { at5h = l.count() })
-	r.w.Clock.At(start.Add(11*time.Hour), func() {
-		at11h = l.count()
+	var at3h, at7h, at13h int
+	r.w.Clock.At(start.Add(3*time.Hour), func() { at3h = l.count() })
+	r.w.Clock.At(start.Add(7*time.Hour), func() { at7h = l.count() })
+	r.w.Clock.At(start.Add(13*time.Hour), func() {
+		at13h = l.count()
 		c.JobDone("Stopped.")
 	})
 	watch(t, r, c, "T1")
-	if at90m != 1 || at5h != 2 || at11h != 2 {
-		t.Fatalf("one wake, then one some hours on, and none soon after: %d, %d, %d", at90m, at5h, at11h)
+	if at3h != 1 || at7h != 2 || at13h != 2 {
+		t.Fatalf("one wake, then one some hours on, and none soon after: %d, %d, %d", at3h, at7h, at13h)
 	}
 }
 
@@ -290,13 +292,13 @@ func TestARunThatAnswersBeforeThePostReturnsHeardIt(t *testing.T) {
 	c.Job("tail -f server.log")
 	c.Done("PR #41 is open and its description is written.")
 	got := -1
-	r.w.Clock.At(r.w.Clock.Now().Add(90*time.Minute), func() {
+	r.w.Clock.At(r.w.Clock.Now().Add(3*time.Hour), func() {
 		got = l.count()
 		c.JobDone("Stopped.")
 	})
 	watch(t, r, c, "T1")
 	if got != 1 {
-		t.Fatalf("heard before the post returned, it needs no repeat: %d wakes in 90 minutes", got)
+		t.Fatalf("heard before the post returned, it needs no repeat: %d wakes in 3 hours", got)
 	}
 }
 
@@ -405,7 +407,7 @@ func TestWatchesEndingTogetherMakeOnePost(t *testing.T) {
 	for label, c := range sessions {
 		run := *r.d
 		wg.Go(func() {
-			e, err := run.Notify(watchOf(c), label, drive.WakeQuiet, drive.WakeCap)
+			e, err := run.Notify(watchOf(c), label, drive.WakeQuiet)
 			if err != nil {
 				t.Error(err)
 				return
@@ -536,7 +538,7 @@ func TestHeldPastItsLimitAWakeStillWaitsForAPostInFlight(t *testing.T) {
 	run := *r.d
 	go func() {
 		defer close(aDone)
-		_, _ = run.Notify(watchOf(a), "A", drive.WakeQuiet, drive.WakeCap)
+		_, _ = run.Notify(watchOf(a), "A", drive.WakeQuiet)
 	}()
 	<-inFlight
 	b.Busy("work")
@@ -1466,7 +1468,7 @@ func TestAPostRecordsWhyItWent(t *testing.T) {
 		after            time.Duration
 	}{
 		{"it asks", "Should run 5 count as a pass?", "asks", time.Minute},
-		{"it reports", report, "job-running", 10 * time.Minute},
+		{"it reports", report, "job-running", 2 * time.Hour},
 		{"it says it waits", "Waiting on the replays.", "job-wait", 2 * time.Hour},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1500,7 +1502,7 @@ func TestAPostRecordsWhyItWent(t *testing.T) {
 		c.Busy("land it")
 		c.Job("tail -f server.log")
 		c.Done("PR #41 is open.")
-		r.w.Clock.At(r.w.Clock.Now().Add(5*time.Hour), func() { c.Edit(func(c *testkit.Claude) { c.Shells = nil }) })
+		r.w.Clock.At(r.w.Clock.Now().Add(7*time.Hour), func() { c.Edit(func(c *testkit.Claude) { c.Shells = nil }) })
 		watch(t, r, c, "T1")
 		var whys []string
 		for _, p := range postings(r, "T1") {

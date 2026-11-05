@@ -102,7 +102,7 @@ func (d *Driver) Watch(ref string) (*Watched, error) {
 		if m != nil && m.Watched.After(stable) {
 			stable = m.Watched
 		}
-		if !factsOf(o, d.turnNow(o), m, stable, WakeQuiet, WakeCap).plan().stuck(d.now()) {
+		if !factsOf(o, d.turnNow(o), m, stable, WakeQuiet).plan().stuck(d.now()) {
 			return &Watched{Label: o.Label, Already: true}, nil
 		}
 		if err := d.Watches.Stop(name); err != nil {
@@ -323,7 +323,7 @@ func (d *Driver) WatchFailed(label string, err error) {
 // end usually resumes the session, and that turn's end is what the driver is
 // waiting to hear, so nobody has to arm it again. watch is the watch's name,
 // "" when run by hand.
-func (d *Driver) Notify(watch, ref string, quiet, bgCap time.Duration) (*Ending, error) {
+func (d *Driver) Notify(watch, ref string, quiet time.Duration) (*Ending, error) {
 	b, err := d.Batch()
 	if err != nil {
 		return nil, err
@@ -331,7 +331,7 @@ func (d *Driver) Notify(watch, ref string, quiet, bgCap time.Duration) (*Ending,
 	for {
 		var p pace
 		e, err := d.wait(ref, func(o *Observation, t Turn, stable time.Time) wakePlan {
-			return factsOf(o, t, d.memberNow(b, o.Label), stable, quiet, bgCap).plan()
+			return factsOf(o, t, d.memberNow(b, o.Label), stable, quiet).plan()
 		}, func(e *Ending) bool {
 			if p.ready.IsZero() {
 				p.ready = d.now()
@@ -450,7 +450,7 @@ func (d *Driver) carried(b *batch.Batch, evs []batch.Event, e *Ending) []Carried
 		if n := d.nextFor(o, t.State, jobs); n != "" {
 			next = "read its reply first (" + next + "); then " + n
 		}
-		plan := factsOf(o, t, m, o.Session.Since(), WakeQuiet, WakeCap).plan()
+		plan := factsOf(o, t, m, o.Session.Since(), WakeQuiet).plan()
 		out = append(out, Carried{Label: m.Label, Block: m.Block, State: t.State, View: view, Next: next, Jobs: len(jobs), post: posting{why: plan.why, due: plan.at}})
 	}
 	return out

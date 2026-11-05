@@ -534,7 +534,7 @@ func (d *Driver) row(b *batch.Batch, members []*batch.Member, label string, with
 	if m := o.Member; m != nil && m.Watched.After(stable) {
 		stable = m.Watched
 	}
-	r.facts = factsOf(o, d.turnNow(o), o.Member, stable, WakeQuiet, WakeCap)
+	r.facts = factsOf(o, d.turnNow(o), o.Member, stable, WakeQuiet)
 	if withProgress && d.Progress != nil && o.Session.ID != "" {
 		if s, err := d.Progress.Steps(o.Session.ID); err != nil {
 			r.StepsErr = firstLine(err.Error())

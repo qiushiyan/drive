@@ -21,14 +21,13 @@ import (
 const (
 	// WakeQuiet is how long a turn stays over before its wake.
 	WakeQuiet = time.Minute
-	// WakeCap is how long a turn whose job runs waits when its reply neither
-	// asks nor says it waits: such a turn may yet resume, and a report with a
-	// job left behind should not sit for hours.
-	WakeCap = 10 * time.Minute
-	// jobHold is how long a turn that says it waits on its own job stays
-	// quiet: its job's end resumes it, and that turn's end is the wake that
-	// matters. A job that never ends still reaches its driver, at this mark
-	// and at ever longer ones after each it heard.
+	// jobHold is how long a turn whose own job still runs stays quiet,
+	// unless its reply asks something: the job's end usually resumes it, and
+	// that turn's end is the wake that matters (in the 2026-11-02 batch, ten
+	// wakes posted ten minutes into such a turn drew no action, and each
+	// turn resumed, 4 minutes to 7 hours on). A job that never ends still
+	// reaches its driver, at this mark and at ever longer ones after each it
+	// heard.
 	jobHold = 2 * time.Hour
 	// repostAfter is how long a wake nobody acted on waits before it is posted
 	// again: a run acting on it takes minutes.
@@ -62,7 +61,7 @@ const (
 	whyGone       = "gone"        // its session is gone
 	whyAsks       = "asks"        // a job runs, and the reply asks something
 	whyRecap      = "recap"       // a job runs, and the driver sent for this reply
-	whyJobRunning = "job-running" // a job runs, and the reply neither asks nor waits
+	whyJobRunning = "job-running" // a job runs, the reply neither asks nor says it waits, and the job has run past jobHold
 	whyOlderJob   = "older-job"   // only a job from before this turn runs
 	whyJobWait    = "job-wait"    // the reply says it waits, and its job has run past jobHold
 	whyJobCheck   = "job-check"   // a driver heard this reply, and its job has run on
@@ -98,7 +97,6 @@ type wakeFacts struct {
 	since  time.Time // when the session's state last changed
 	stable time.Time // when the watch asking saw it last change
 	quiet  time.Duration
-	bgCap  time.Duration
 }
 
 // turnNow reads where the turn a session's newest prompt started stands.
@@ -112,8 +110,8 @@ func (d *Driver) turnNow(o *Observation) Turn {
 
 // factsOf gathers a session's wake facts, m being its member as the log says
 // now.
-func factsOf(o *Observation, t Turn, m *batch.Member, stable time.Time, quiet, bgCap time.Duration) wakeFacts {
-	return wakeFacts{member: m, turn: t, view: o.View.String(), reads: replyReads(o), since: o.Session.Since(), stable: stable, quiet: quiet, bgCap: bgCap}
+func factsOf(o *Observation, t Turn, m *batch.Member, stable time.Time, quiet time.Duration) wakeFacts {
+	return wakeFacts{member: m, turn: t, view: o.View.String(), reads: replyReads(o), since: o.Session.Since(), stable: stable, quiet: quiet}
 }
 
 // replyReads is what the session's newest reply says of its turn.
@@ -175,11 +173,11 @@ func (f wakeFacts) plan() wakePlan {
 	case f.reads == turn.ReadsAsking:
 		return wakePlan{at: f.stable.Add(f.quiet), why: whyAsks}
 	case f.reads == turn.ReadsWaiting:
-		return wakePlan{at: f.since.Add(max(jobHold, f.bgCap)), held: "it says it waits on its own job", why: whyJobWait}
+		return wakePlan{at: f.since.Add(jobHold), held: "it says it waits on its own job", why: whyJobWait}
 	case t.Shells == 0:
 		return wakePlan{at: f.stable.Add(f.quiet), why: whyOlderJob} // only older jobs run, and this turn answered its step
 	}
-	return wakePlan{at: f.stable.Add(f.bgCap), why: whyJobRunning}
+	return wakePlan{at: f.since.Add(jobHold), held: "a job it started still runs, and its end usually resumes the turn", why: whyJobRunning}
 }
 
 // sentForReply says the driver sent for a reply to read, which is news whatever

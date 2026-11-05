@@ -720,7 +720,7 @@ func TestRecordsAndMetrics(t *testing.T) {
 	r.d.Cfg.Webhook = config.Webhook{URL: srv.URL}
 	notify := func(c *testkit.Claude, label string) {
 		t.Helper()
-		if _, err := r.d.Notify("drive-b1-"+c.Block[len(c.Block)-6:], label, time.Second, time.Minute); err != nil {
+		if _, err := r.d.Notify("drive-b1-"+c.Block[len(c.Block)-6:], label, time.Second); err != nil {
 			t.Fatal(err)
 		}
 	}

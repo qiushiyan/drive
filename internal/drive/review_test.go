@@ -672,7 +672,7 @@ func TestASendDuringAWakeArmsAFreshWatch(t *testing.T) {
 	name := watchOf(c)
 	woke := make(chan error, 1)
 	go func() {
-		_, err := r.d.Notify(name, "T1", time.Second, time.Minute)
+		_, err := r.d.Notify(name, "T1", time.Second)
 		woke <- err
 	}()
 	<-posting

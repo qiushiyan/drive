@@ -354,12 +354,12 @@ turn ends, at once on an API error or an interrupt, and when the session
 stops on a prompt, and ends with next: where the ending decides what to do.
 A refused action armed nothing. Watch arms one by hand.
 
-A turn that ended while its own background jobs run wakes no one while the
-last sentence of its reply says it waits on them: the wake comes when that
-turn ends, or by two hours on, and then at ever longer marks. A reply that asks
-something wakes the driver about a minute on, and any other reply ten minutes
-on, each once per view a driver heard. Either way the watch stays armed, and
-watch on it says the run heard the wake. Endings close together share one post,
+A turn that ended while background jobs it started run wakes no one unless
+its reply asks something: a job's end usually resumes the turn, so the wake
+comes when that turn ends, or by two hours on, and then at ever longer marks.
+A reply that asks wakes the driver about a minute on, once per view a driver
+heard. Either way the watch stays armed, and watch on it says the run heard
+the wake. Endings close together share one post,
 at most one every three minutes; every wake a driver does not answer pushes the
 next further off, up to two hours, until a drive command shows it runs.
 
@@ -1003,7 +1003,7 @@ type NotifyCmd struct {
 
 func (c *NotifyCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	watch := onKill(d, c.Label)
-	e, err := d.Notify(watch, c.Label, drive.WakeQuiet, drive.WakeCap)
+	e, err := d.Notify(watch, c.Label, drive.WakeQuiet)
 	if err != nil {
 		return err
 	}
