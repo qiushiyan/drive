@@ -252,3 +252,58 @@ func TestAnAccountAtItsLimitIsNotOfferedAgain(t *testing.T) {
 		t.Fatalf("the open that brings it back is on another account: %+v %v", rd, err)
 	}
 }
+
+// A usage limit lifts only at its reset, days away for a weekly one, so a
+// step that meets it goes on another account, and the next: that says so
+// runs as written: Stop on the limit's menu, which writes nothing, the close
+// on the same view, and the session resumed there with the step. On
+// 2026-11-03 drive offered a 15-minute retry timer, and the owner had to
+// say "exit these sessions and continue with x --resume".
+func TestAStepThatMeetsAUsageLimitGoesOnAnotherAccount(t *testing.T) {
+	r := newRig(t, "webhook")
+	_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".claude-accounts", "other@example.com", "sessions"), 0o755)
+	c := adopted(t, r, "T1")
+	resets := r.w.Clock.Now().Add(45 * time.Hour)
+	c.Reply = func(c *testkit.Claude, _ string) { c.Limit(resets) }
+	_, err := r.d.Send(r.view("T1"), drive.Step{Line: "build it"}, drive.SendOptions{})
+	f, ok := errors.AsType[*drive.Failed](err)
+	if !ok || f.Login {
+		t.Fatalf("a usage limit is a failure of the step, not a rejected login: %v", err)
+	}
+	v := r.view("T1")
+	want := "drive --batch b1 respond " + v + " approve && drive --batch b1 close " + v + " && drive --batch b1 open T1 --dir " + c.Cwd +
+		" --resume " + c.SID + " --account other@example.com 'build it'"
+	if !strings.Contains(f.Next, "takes no step until "+resets.Format("Mon 2 Jan 15:04")) || !strings.Contains(f.Next, want) {
+		t.Fatalf("the next relaunches it with its step, saying until when its account is out:\n%s\nwant %s", f.Next, want)
+	}
+	rd, err := r.d.Read("T1", drive.ReadLast, 10)
+	if err != nil || !strings.Contains(rd.Next, want) {
+		t.Fatalf("read says the same of the session on its limit's menu: %+v %v", rd, err)
+	}
+	if _, err := r.d.Respond(v, "approve"); err != nil {
+		t.Fatalf("approve takes Stop: %v", err)
+	}
+	if err := r.d.Close(v); err != nil {
+		t.Fatalf("the close is decided on the same view: %v", err)
+	}
+	o, err := r.d.Open("T1", drive.Step{Line: "build it"}, drive.OpenOptions{Dir: c.Cwd, Resume: c.SID, Account: "other@example.com"})
+	if err != nil || o.Account != "other@example.com" || o.Sent == nil || o.Sent.Outcome != "arrived" {
+		t.Fatalf("it resumes on the other account with its step: %+v %v", o, err)
+	}
+}
+
+// With no other account to take it, the owner is told, and the session
+// parks until the limit lifts.
+func TestAUsageLimitWithNoOtherAccountParksUntilItLifts(t *testing.T) {
+	r := newRig(t, "webhook")
+	c := adopted(t, r, "T1")
+	resets := r.w.Clock.Now().Add(45 * time.Hour)
+	c.Reply = func(c *testkit.Claude, _ string) { c.Limit(resets) }
+	_, err := r.d.Send(r.view("T1"), drive.Step{Line: "build it"}, drive.SendOptions{})
+	v := r.view("T1")
+	want := "tell the owner, and park it until then: drive --batch b1 respond " + v + " approve && drive --batch b1 park " + v +
+		" --until '" + resets.In(time.UTC).Format("2006-01-02 15:04") + "' 'its account is at its usage limit'"
+	if f, ok := errors.AsType[*drive.Failed](err); !ok || !strings.Contains(f.Next, want) {
+		t.Fatalf("%v\nwant %s", err, want)
+	}
+}

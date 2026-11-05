@@ -114,8 +114,14 @@ func (d *Driver) relaunch(o *Observation, step Step) string {
 	if len(others) == 0 {
 		return "every other account's login was rejected in this batch too: tell the owner, and park the session until they log in again"
 	}
+	return d.relaunchOn(o, step, others[0], "")
+}
+
+// relaunchOn is the relaunch on account, after first, a command the close
+// waits for, when there is one.
+func (d *Driver) relaunchOn(o *Observation, step Step, account, first string) string {
 	// Claude Code finds a session to resume under its working directory's project.
-	cmd := d.run("close", viewNow(o)) + " && " + d.openCommand(o.Label, OpenOptions{Dir: o.Session.Dir, Resume: o.Session.ID, Account: others[0]}, step)
+	cmd := first + d.run("close", viewNow(o)) + " && " + d.openCommand(o.Label, OpenOptions{Dir: o.Session.Dir, Resume: o.Session.ID, Account: account}, step)
 	what := "relaunch it on another account with the step it was to take"
 	if step.empty() {
 		what = "relaunch it on another account, then send it the step it was to take on the view the open prints"
@@ -124,6 +130,33 @@ func (d *Driver) relaunch(o *Observation, step Step) string {
 		return fmt.Sprintf("%s once its background job (%s) ends, as close refuses until then: %s", what, clip(jobs[0].Command, 120), cmd)
 	}
 	return what + ": " + cmd
+}
+
+// limitNext says how to carry on a session whose account reached its usage
+// limit, which lifts only at its reset, days away for a weekly one: on
+// another account, which takes step now. On the menu Claude Code shows
+// meanwhile, approve takes its first option, Stop, which ends the turn and
+// writes nothing, so the close is decided on the same view.
+func (d *Driver) limitNext(o *Observation, step Step) string {
+	e := o.Frontier.Error
+	until := "it resets"
+	if !e.Resets.IsZero() {
+		until = e.Resets.In(o.zone()).Format("Mon 2 Jan 15:04")
+	}
+	head := fmt.Sprintf("account %s takes no step until %s", o.Session.Account, until)
+	view, stop := viewNow(o), ""
+	if s, err := session.Locate(d.Term, d.Host, o.Session.Block); err == nil && turnState(s, o.Frontier).onPrompt() {
+		stop = d.run("respond", view, "approve") + " && "
+	}
+	others := d.otherAccounts(o.in, o.Session.Account)
+	if len(others) == 0 {
+		if e.Resets.IsZero() {
+			return head + ", and no other account can take it here: tell the owner"
+		}
+		return head + ", and no other account can take it here: tell the owner, and park it until then: " +
+			stop + d.run("park", view, "--until", e.Resets.In(o.zone()).Format("2006-01-02 15:04"), text("its account is at its usage limit"))
+	}
+	return head + "; " + d.relaunchOn(o, step, others[0], stop)
 }
 
 func (d *Driver) retryHint(o *Observation, kind string) string {

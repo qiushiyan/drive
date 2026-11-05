@@ -437,6 +437,8 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 		if f, ok := errors.AsType[*Failed](err); ok && (f.Login || f.account != "") {
 			if f.Login {
 				f.Next = d.relaunch(o, p.step) // the relaunch carries this step
+			} else {
+				f.Next = d.limitNext(o, p.step) // and so does the one from a usage limit
 			}
 			e.Account = o.Session.Account // and every relaunch and reopen steers clear of this account
 		}

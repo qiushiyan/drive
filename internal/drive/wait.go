@@ -155,6 +155,8 @@ func (d *Driver) nextFor(o *Observation, state State, jobs []session.Shell) stri
 	switch {
 	case state == "blocked:auth":
 		return d.relaunchHint(o)
+	case o.Frontier.Error != nil && o.Frontier.Error.Limit:
+		return d.limitNext(o, lastStep(o.in, o.Label))
 	case state.onPrompt():
 		return d.answerNext(o.Label, o.View.String(), state)
 	case state == "error" && o.Frontier.Error != nil && o.Frontier.Error.Kind == "rate_limit":

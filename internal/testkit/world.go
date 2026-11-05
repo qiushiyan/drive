@@ -131,8 +131,9 @@ type Claude struct {
 	// Reply decides what a taken prompt does. The default answers "ok" and ends the turn.
 	Reply func(c *Claude, prompt string)
 
-	Typed []string
-	Keys  []string
+	Typed     []string
+	Keys      []string
+	limitMenu bool // the menu a usage limit shows, which Enter or Escape stops
 }
 
 // Add puts a running session in a new block.
@@ -291,6 +292,9 @@ func (c *Claude) Limit(resets time.Time) {
 		"apiError": "usage_limit_reached", "apiErrorParams": map[string]any{"rate_limit_info": map[string]any{"status": "rejected", "resetsAt": resets.Unix(), "rateLimitType": "seven_day"}},
 		"message": map[string]any{"role": "assistant", "model": "<synthetic>", "content": []map[string]any{{"type": "text", "text": text}}}})
 	c.Set("blocked", "question", text)
+	c.w.mu.Lock()
+	c.limitMenu = true
+	c.w.mu.Unlock()
 }
 
 // Set changes what the session publishes to Rex, and its own registry with
@@ -684,6 +688,13 @@ func (w *World) Key(block string, keys ...string) error {
 			if c.LoseEnter {
 				continue
 			}
+			if c.limitMenu {
+				// Its first option, Stop and wait for limit to reset, ends
+				// the turn and writes nothing (2.1.316): no hook fires either.
+				c.limitMenu = false
+				c.activity("idle", "")
+				continue
+			}
 			if c.Activity == "waiting" {
 				// Enter approves; whatever was typed into the prompt is gone.
 				c.Input = ""
@@ -738,6 +749,11 @@ func (w *World) Key(block string, keys ...string) error {
 		// the transcript records it and Rex keeps what it last heard. The
 		// session itself is idle at once.
 		case "escape":
+			if c.limitMenu {
+				c.limitMenu = false
+				c.activity("idle", "")
+				continue
+			}
 			if c.Activity == "waiting" || c.running {
 				c.Write(map[string]any{"type": "user", "uuid": c.w.uuid(), "message": map[string]any{"role": "user",
 					"content": []map[string]any{{"type": "tool_result", "tool_use_id": c.tool, "is_error": true,
