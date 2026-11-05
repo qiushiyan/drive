@@ -280,3 +280,20 @@ func TestAParkedWaiterSaysWhenItsHoldIsFree(t *testing.T) {
 		t.Fatalf("--due arms the parked waiter: %+v %v", armed, err)
 	}
 }
+
+// A queued step is news on its view's prompt half, which is all --queue
+// checks: a second step queued on the view the first was decided on is
+// refused, as two drivers reading one working session would otherwise both
+// land a step mid-turn.
+func TestAQueuedStepMovesItsViewsPromptHalf(t *testing.T) {
+	r := newRig(t, "none")
+	c := adopted(t, r, "T1")
+	c.Busy("the build")
+	v := r.view("T1")
+	if _, err := r.d.Send(v, drive.Step{Line: "also run the lint"}, drive.SendOptions{Queue: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.Send(v, drive.Step{Line: "skip the lint"}, drive.SendOptions{Queue: true}); !isRefused(err) || !strings.Contains(err.Error(), "received another prompt") {
+		t.Fatalf("the second queued step is refused on the view the first moved: %v", err)
+	}
+}
