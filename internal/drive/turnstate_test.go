@@ -197,6 +197,21 @@ func TestAHoldKeptForALaterStepSaysSo(t *testing.T) {
 	}
 }
 
+// A holder waiting on a prompt still holds: the closeout it was sent asks
+// to run its push, and is not over until someone answers.
+func TestAHoldStandsWhileItsHolderWaitsOnAPrompt(t *testing.T) {
+	r := newRig(t, "none")
+	a := adopted(t, r, "T1")
+	adopted(t, r, "T2")
+	a.Edit(func(c *testkit.Claude) { c.Reply = func(c *testkit.Claude, _ string) { c.Ask("git push") } })
+	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "close it out"}, drive.SendOptions{Hold: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.Send(r.view("T2"), drive.Step{Line: "close it out"}, drive.SendOptions{Hold: "main"}); !isRefused(err) || !strings.Contains(err.Error(), "waits on a prompt") {
+		t.Fatalf("the hold stands while its holder waits on a prompt, and says why: %v", err)
+	}
+}
+
 // A compaction answers with its output, not a reply; read shows it.
 func TestACompactionsOutputIsItsAnswer(t *testing.T) {
 	r := newRig(t, "none")
