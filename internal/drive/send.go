@@ -394,9 +394,11 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 	}
 	failed := func(err error) {
 		var e batch.Event
-		if f := (*Failed)(nil); errors.As(err, &f) && f.Login {
-			f.Next = d.relaunch(o, p.step) // the relaunch carries this step
-			e.Account = o.Session.Account  // and steers clear of this account
+		if f, ok := errors.AsType[*Failed](err); ok && (f.Login || f.account != "") {
+			if f.Login {
+				f.Next = d.relaunch(o, p.step) // the relaunch carries this step
+			}
+			e.Account = o.Session.Account // and every relaunch and reopen steers clear of this account
 		}
 		e.Kind, e.Reason = batch.KindFailure, err.Error()
 		record(e)

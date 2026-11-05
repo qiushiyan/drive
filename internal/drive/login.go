@@ -20,33 +20,48 @@ func gone(err error) bool {
 	return errors.Is(err, rex.ErrNoBlock) || errors.Is(err, session.ErrNoClaude)
 }
 
-// reopen says how to bring back a member whose session is gone: its own
-// conversation resumed under its label, where it worked, on its account, or
-// the launcher's choice when the primary's launcher is unknown here, since
-// every account resumes it from the shared transcript. Its park and the
-// record of what was sent to it carry over.
-func (d *Driver) reopen(m *batch.Member) string {
+// reopen says how to bring back a member of b whose session is gone: its
+// own conversation resumed under its label, where it worked, on its account
+// unless b found that account taking no step, or the launcher's choice when
+// the primary's launcher is unknown here, since every account resumes it
+// from the shared transcript. Its park and the record of what was sent to
+// it carry over.
+func (d *Driver) reopen(b *batch.Batch, m *batch.Member) string {
 	opt := OpenOptions{Dir: m.Dir, Resume: m.SID, Account: m.Account}
+	if unable(b)[m.Account] {
+		if others := d.otherAccounts(b, m.Account); len(others) > 0 {
+			opt.Account = others[0]
+		}
+	}
 	if opt.Account == "primary" && d.Cfg.PrimaryName == "" {
 		opt.Account = ""
 	}
 	return "bring it back under its label, its conversation resumed where it stopped: " + d.openCommand(m.Label, opt, Step{})
 }
 
-// otherAccounts names the accounts a session could be relaunched on: not
-// the one it runs on, and none whose login this batch saw rejected. The
-// primary (~/.claude, which a session reports as "primary") is one when the
-// name its launcher takes is known.
-func (d *Driver) otherAccounts(b *batch.Batch, current string) []string {
-	rejected := map[string]bool{current: true}
-	if b != nil {
-		evs, _ := b.Events()
-		for _, e := range evs {
-			if e.Account != "" && (e.Kind == batch.KindFailure || e.Kind == batch.KindRefused) {
-				rejected[e.Account] = true
-			}
+// unable is the accounts batch b found taking no step: a login rejected, or
+// a usage limit reached.
+func unable(b *batch.Batch) map[string]bool {
+	out := map[string]bool{}
+	if b == nil {
+		return out
+	}
+	evs, _ := b.Events()
+	for _, e := range evs {
+		if e.Account != "" && (e.Kind == batch.KindFailure || e.Kind == batch.KindRefused) {
+			out[e.Account] = true
 		}
 	}
+	return out
+}
+
+// otherAccounts names the accounts a session could be relaunched on: not
+// the one it runs on, and none this batch found taking no step. The primary
+// (~/.claude, which a session reports as "primary") is one when the name
+// its launcher takes is known.
+func (d *Driver) otherAccounts(b *batch.Batch, current string) []string {
+	rejected := unable(b)
+	rejected[current] = true
 	dirs, _ := filepath.Glob(filepath.Join(d.Cfg.Home, ".claude-accounts", "*"))
 	var out []string
 	for _, dir := range dirs {

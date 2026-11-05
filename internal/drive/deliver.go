@@ -188,9 +188,13 @@ func (d *Driver) checkAnswer(o *Observation, at time.Time) error {
 		}
 		o.Frontier = f
 		if f.Error != nil && !f.Error.At.Before(at) {
-			return &Failed{Login: f.Error.Kind == "authentication_failed",
+			failed := &Failed{Login: f.Error.Kind == "authentication_failed",
 				What: fmt.Sprintf("%s took the step and answered %q (%s, account %s)", o.Label, f.Error.Text, f.Error.Kind, o.Session.Account),
 				Next: d.retryHint(o, f.Error.Kind)}
+			if f.Error.Limit {
+				failed.account = o.Session.Account
+			}
+			return failed
 		}
 		if f.Last != nil && !f.Last.At.Before(at) {
 			return nil

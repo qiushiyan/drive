@@ -2,6 +2,8 @@ package drive_test
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/drive"
 	"github.com/qiushiyan/drive/internal/rex"
+	"github.com/qiushiyan/drive/internal/testkit"
 )
 
 // inRexSession makes the rig's batch one whose sessions open in the Rex
@@ -221,5 +224,31 @@ func TestStopAllStopsEveryLiveBatchsWakesUntilDue(t *testing.T) {
 	}
 	if armed, _, err := r.d.Due(); err != nil || len(armed) != 1 || armed[0].Label != "P1" {
 		t.Fatalf("watch --due arms it again: %+v %v", armed, err)
+	}
+}
+
+// An account at its usage limit takes no step from any session until the
+// limit lifts, days away for a weekly one, so the failure keeps the account
+// on record, and the open that brings the session back once it is gone
+// resumes it on another: on 2026-11-03 S8's gone wake named the account
+// that had just hit its weekly limit.
+func TestAnAccountAtItsLimitIsNotOfferedAgain(t *testing.T) {
+	r := newRig(t, "webhook")
+	_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".claude-accounts", "other@example.com", "sessions"), 0o755)
+	c := adopted(t, r, "T1")
+	c.Reply = func(c *testkit.Claude, _ string) { c.Limit(r.w.Clock.Now().Add(45 * time.Hour)) }
+	_, err := r.d.Send(r.view("T1"), drive.Step{Line: "build it"}, drive.SendOptions{})
+	if f, ok := errors.AsType[*drive.Failed](err); !ok || !strings.Contains(f.What, "weekly limit") {
+		t.Fatalf("the step met the limit: %v", err)
+	}
+	if evs := r.events(batch.KindFailure); len(evs) != 1 || evs[0].Account != "acct@example.com" {
+		t.Fatalf("the failure keeps the account: %+v", evs)
+	}
+	if err := r.w.Close(c.Block); err != nil {
+		t.Fatal(err)
+	}
+	rd, err := r.d.Read("T1", drive.ReadLast, 10)
+	if err != nil || rd.State != "gone" || !strings.Contains(rd.Next, "--resume "+c.SID+" --account other@example.com") {
+		t.Fatalf("the open that brings it back is on another account: %+v %v", rd, err)
 	}
 }

@@ -37,6 +37,10 @@ type APIError struct {
 	At   time.Time
 	Kind string // "authentication_failed", "rate_limit", …
 	Text string // what the session showed, such as "Login expired · Please run /login"
+	// Limit is the account's usage limit, which takes no step from any
+	// session of that account until it lifts, at Resets when the row says.
+	Limit  bool
+	Resets time.Time
 }
 
 // ToolCall is a tool call the session has made and not received a result for.
@@ -124,16 +128,22 @@ func AsTyped(text string) string {
 }
 
 type row struct {
-	Type             string                 `json:"type"`
-	Subtype          string                 `json:"subtype"`
-	UUID             string                 `json:"uuid"`
-	Timestamp        string                 `json:"timestamp"`
-	IsMeta           bool                   `json:"isMeta"`
-	IsCompactSummary bool                   `json:"isCompactSummary"`
-	IsAPIError       bool                   `json:"isApiErrorMessage"`
-	Error            string                 `json:"error"`
-	Origin           *struct{ Kind string } `json:"origin"`
-	Message          *struct {
+	Type             string `json:"type"`
+	Subtype          string `json:"subtype"`
+	UUID             string `json:"uuid"`
+	Timestamp        string `json:"timestamp"`
+	IsMeta           bool   `json:"isMeta"`
+	IsCompactSummary bool   `json:"isCompactSummary"`
+	IsAPIError       bool   `json:"isApiErrorMessage"`
+	Error            string `json:"error"`
+	APIError         string `json:"apiError"` // "usage_limit_reached" for an account's limit
+	APIErrorParams   *struct {
+		RateLimitInfo struct {
+			ResetsAt int64 `json:"resetsAt"` // Unix seconds
+		} `json:"rate_limit_info"`
+	} `json:"apiErrorParams"`
+	Origin  *struct{ Kind string } `json:"origin"`
+	Message *struct {
 		Model   string          `json:"model"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
@@ -254,7 +264,10 @@ func Read(r io.Reader) (Frontier, error) {
 				if kind == "" {
 					kind = "api_error"
 				}
-				f.Error = &APIError{At: e.at(), Kind: kind, Text: entry.Text}
+				f.Error = &APIError{At: e.at(), Kind: kind, Text: entry.Text, Limit: e.APIError == "usage_limit_reached"}
+				if p := e.APIErrorParams; f.Error.Limit && p != nil && p.RateLimitInfo.ResetsAt > 0 {
+					f.Error.Resets = time.Unix(p.RateLimitInfo.ResetsAt, 0)
+				}
 				continue
 			}
 			f.Error = nil

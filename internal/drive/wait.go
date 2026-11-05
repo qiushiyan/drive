@@ -107,7 +107,7 @@ func (d *Driver) wait(ref string, planFor func(o *Observation, t Turn, stable ti
 			if m := batch.Find(members, ref); m != nil {
 				e.Block = m.Block
 				if gone(err) {
-					e.Next = d.reopen(m)
+					e.Next = d.reopen(b, m)
 				}
 			}
 			return e, nil

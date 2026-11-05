@@ -35,6 +35,21 @@ func TestLoginExpiredIsAnErrorAfterThePrompt(t *testing.T) {
 	}
 }
 
+// An account's usage limit is a rate_limit error that names when it lifts,
+// as Claude Code 2.1.316 writes it; a rate limit that names none is a
+// moment's, and says nothing of the account.
+func TestAUsageLimitSaysWhenItLifts(t *testing.T) {
+	limit := `{"type":"assistant","uuid":"a1","timestamp":"2026-11-04T11:16:36.249Z","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"You've hit your weekly limit · resets Nov 5 at 5pm (Europe/London)"}]},"apiError":"usage_limit_reached","apiErrorParams":{"rate_limit_info":{"status":"rejected","resetsAt":1793898000,"rateLimitType":"seven_day"}},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}`
+	f := read(t, prompt, limit)
+	if f.Error == nil || f.Error.Kind != "rate_limit" || !f.Error.Limit || f.Error.Resets.Unix() != 1793898000 {
+		t.Fatalf("the account's limit, until it resets: %+v", f.Error)
+	}
+	moment := `{"type":"assistant","uuid":"a1","timestamp":"2026-11-04T11:16:36Z","message":{"role":"assistant","content":[{"type":"text","text":"API Error: Request rejected (429)"}]},"error":"rate_limit","isApiErrorMessage":true}`
+	if f := read(t, prompt, moment); f.Error == nil || f.Error.Limit || !f.Error.Resets.IsZero() {
+		t.Fatalf("a moment's rate limit is no account's limit: %+v", f.Error)
+	}
+}
+
 // A slash command typed while busy: enqueue with no content, dequeue, then
 // the command markup (seen in a real transcript eight minutes apart).
 func TestQueuedSlashCommandHasNoText(t *testing.T) {

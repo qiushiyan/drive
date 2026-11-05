@@ -281,6 +281,18 @@ func (c *Claude) Fail(kind, text string) {
 	c.activity("idle", "")
 }
 
+// Limit answers with the account's usage limit, as Claude Code 2.1.316
+// does: a rate_limit row that names when the limit lifts, then a menu of
+// what to do meanwhile (stop, wait and continue, use credits), which reads
+// as a question.
+func (c *Claude) Limit(resets time.Time) {
+	text := "You've hit your weekly limit · resets " + resets.Format("Jan 2 at 3pm") + " (Europe/London)"
+	c.Write(map[string]any{"type": "assistant", "uuid": c.w.uuid(), "isApiErrorMessage": true, "error": "rate_limit", "apiErrorStatus": 429,
+		"apiError": "usage_limit_reached", "apiErrorParams": map[string]any{"rate_limit_info": map[string]any{"status": "rejected", "resetsAt": resets.Unix(), "rateLimitType": "seven_day"}},
+		"message": map[string]any{"role": "assistant", "model": "<synthetic>", "content": []map[string]any{{"type": "text", "text": text}}}})
+	c.Set("blocked", "question", text)
+}
+
 // Set changes what the session publishes to Rex, and its own registry with
 // it, as when a hook reports a change the session made.
 func (c *Claude) Set(state, kind, msg string) {

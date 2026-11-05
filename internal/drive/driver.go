@@ -92,6 +92,8 @@ type Failed struct {
 	What  string
 	Next  string
 	Login bool // the session's login or API was the failure, not the delivery
+
+	account string // an account the failure found taking no step: at its usage limit
 }
 
 func (f *Failed) Error() string {
