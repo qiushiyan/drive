@@ -63,6 +63,9 @@ type Frontier struct {
 	// one it was on most recently last: a session that built in a worktree
 	// and went back to merge names its branch, then the trunk.
 	Branches []string
+	// Dir is the directory the transcript last records the session in: the
+	// newest row's cwd, or where a /cd moved it. "" when no row says.
+	Dir string
 }
 
 // Newest is the newest prompt the session received, queued or taken.
@@ -152,6 +155,8 @@ type row struct {
 	Content    json.RawMessage `json:"content"`
 	Attachment json.RawMessage `json:"attachment"`
 	GitBranch  string          `json:"gitBranch"`
+	Cwd        string          `json:"cwd"`
+	Relocated  string          `json:"relocatedCwd"`
 }
 
 type block struct {
@@ -215,31 +220,6 @@ func ReadFile(path string) (Frontier, error) {
 	return Read(f)
 }
 
-// LastDir is the directory a transcript last records its session in: the newest
-// row's cwd, or the place a /cd moved the session to. "" when none says.
-func LastDir(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	var dir string
-	for dec := json.NewDecoder(f); ; {
-		var row struct {
-			Cwd       string `json:"cwd"`
-			Relocated string `json:"relocatedCwd"`
-		}
-		if dec.Decode(&row) != nil {
-			return dir
-		}
-		if row.Relocated != "" {
-			dir = row.Relocated
-		} else if row.Cwd != "" {
-			dir = row.Cwd
-		}
-	}
-}
-
 // Read reads a transcript stream.
 func Read(r io.Reader) (Frontier, error) {
 	var f Frontier
@@ -256,6 +236,11 @@ func Read(r io.Reader) (Frontier, error) {
 		var e row
 		if json.Unmarshal(line, &e) != nil {
 			continue
+		}
+		if e.Relocated != "" {
+			f.Dir = e.Relocated
+		} else if e.Cwd != "" {
+			f.Dir = e.Cwd
 		}
 		if b := e.GitBranch; b != "" && b != "HEAD" && (len(f.Branches) == 0 || f.Branches[len(f.Branches)-1] != b) {
 			f.Branches = append(slices.DeleteFunc(f.Branches, func(x string) bool { return x == b }), b)

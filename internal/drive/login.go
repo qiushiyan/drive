@@ -23,19 +23,25 @@ func gone(err error) bool {
 	return errors.Is(err, rex.ErrNoBlock) || errors.Is(err, session.ErrNoClaude)
 }
 
-// workedIn is where m's session last stood, by its transcript: a session that
-// moved into a worktree left the directory it opened in, and resumed there it
-// would stand on the main checkout. A directory since removed leaves the one
-// it opened in.
-func (d *Driver) workedIn(m *batch.Member) string {
-	dir := turn.LastDir(d.Host.Transcript(m.SID))
-	if dir == "" {
+// workedIn is where m's session last stood, by its transcript f, read here
+// when the caller has none: a session that moved into a worktree left the
+// directory it opened in, and resumed there it would stand on the main
+// checkout. A directory since removed leaves the one it opened in.
+func (d *Driver) workedIn(m *batch.Member, f *turn.Frontier) string {
+	if f == nil {
+		read, err := turn.ReadFile(d.Host.Transcript(m.SID))
+		if err != nil {
+			return m.Dir
+		}
+		f = &read
+	}
+	if f.Dir == "" {
 		return m.Dir
 	}
-	if _, err := os.Stat(dir); err != nil {
+	if _, err := os.Stat(f.Dir); err != nil {
 		return m.Dir
 	}
-	return dir
+	return f.Dir
 }
 
 // reopen says how to bring back a member of b whose session is gone: its
@@ -45,8 +51,8 @@ func (d *Driver) workedIn(m *batch.Member) string {
 // from the shared transcript. Its park and the record of what was sent to
 // it carry over. With no account that can take it, it says so, and the open
 // waits until one can.
-func (d *Driver) reopen(b *batch.Batch, m *batch.Member) string {
-	opt := OpenOptions{Dir: d.workedIn(m), Resume: m.SID, Account: m.Account}
+func (d *Driver) reopen(b *batch.Batch, m *batch.Member, f *turn.Frontier) string {
+	opt := OpenOptions{Dir: d.workedIn(m, f), Resume: m.SID, Account: m.Account}
 	until, out := d.unable(b)[m.Account]
 	stuck := false
 	if out {

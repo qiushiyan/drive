@@ -350,3 +350,18 @@ func TestBranchesAreTheOnesWorkedOnNewestLast(t *testing.T) {
 		t.Fatalf("branches: %s", got)
 	}
 }
+
+// Dir is where the transcript last records the session: a /cd's relocation,
+// then the cwd of each row after it, so a shell cd since is the answer.
+func TestDirIsWhereTheTranscriptLastRecordsTheSession(t *testing.T) {
+	f, err := Read(strings.NewReader(`{"type":"user","cwd":"/repo","message":{"role":"user","content":"go"}}
+{"type":"relocated","relocatedCwd":"/w/repo/feat"}
+{"type":"assistant","cwd":"/w/repo/feat/apps","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}
+`))
+	if err != nil || f.Dir != "/w/repo/feat/apps" {
+		t.Fatalf("Dir is the newest recorded directory: %q, %v", f.Dir, err)
+	}
+	if f, _ := Read(strings.NewReader(`{"type":"relocated","relocatedCwd":"/w/repo/feat"}` + "\n")); f.Dir != "/w/repo/feat" {
+		t.Fatalf("a relocation alone is the directory: %q", f.Dir)
+	}
+}

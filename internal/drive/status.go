@@ -109,7 +109,7 @@ func (d *Driver) readEnded(b *batch.Batch, m *batch.Member, state State, mode Re
 	}
 	r := &Reading{Label: m.Label, SID: m.SID, Goal: m.Goal, State: state, Account: m.Account}
 	if state == "gone" {
-		r.Next = d.reopen(b, m)
+		r.Next = d.reopen(b, m, &f)
 	}
 	return r, d.readText(r, f, mode, n, zoneOf(b))
 }
@@ -523,7 +523,7 @@ func (d *Driver) row(b *batch.Batch, members []*batch.Member, label string, with
 	if err != nil {
 		r.State, r.Error = "gone", firstLine(err.Error())
 		if m := batch.Find(members, label); m != nil && gone(err) {
-			r.Next = d.reopen(b, m)
+			r.Next = d.reopen(b, m, nil)
 		}
 		return r
 	}
