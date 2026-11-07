@@ -13,6 +13,7 @@ import (
 	"github.com/qiushiyan/drive/internal/rex"
 	"github.com/qiushiyan/drive/internal/session"
 	"github.com/qiushiyan/drive/internal/skill"
+	"github.com/qiushiyan/drive/internal/turn"
 )
 
 // gone says a session could not be read because it no longer runs: its
@@ -20,6 +21,21 @@ import (
 // Code did. A read that merely failed says neither.
 func gone(err error) bool {
 	return errors.Is(err, rex.ErrNoBlock) || errors.Is(err, session.ErrNoClaude)
+}
+
+// workedIn is where m's session last stood, by its transcript: a session that
+// moved into a worktree left the directory it opened in, and resumed there it
+// would stand on the main checkout. A directory since removed leaves the one
+// it opened in.
+func (d *Driver) workedIn(m *batch.Member) string {
+	dir := turn.LastDir(d.Host.Transcript(m.SID))
+	if dir == "" {
+		return m.Dir
+	}
+	if _, err := os.Stat(dir); err != nil {
+		return m.Dir
+	}
+	return dir
 }
 
 // reopen says how to bring back a member of b whose session is gone: its
@@ -30,7 +46,7 @@ func gone(err error) bool {
 // it carry over. With no account that can take it, it says so, and the open
 // waits until one can.
 func (d *Driver) reopen(b *batch.Batch, m *batch.Member) string {
-	opt := OpenOptions{Dir: m.Dir, Resume: m.SID, Account: m.Account}
+	opt := OpenOptions{Dir: d.workedIn(m), Resume: m.SID, Account: m.Account}
 	until, out := d.unable(b)[m.Account]
 	stuck := false
 	if out {

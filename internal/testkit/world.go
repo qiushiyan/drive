@@ -184,6 +184,13 @@ func (c *Claude) Transcript() string {
 	return filepath.Join(c.Config, "projects", "proj", c.SID+".jsonl")
 }
 
+// Relocate is the session's /cd: the transcript records the move and the
+// process stands in dir.
+func (c *Claude) Relocate(dir string) {
+	c.Write(map[string]any{"type": "relocated", "relocatedCwd": dir})
+	c.Cwd = dir
+}
+
 // Write appends rows to the transcript as Claude Code would.
 func (c *Claude) Write(rows ...map[string]any) {
 	f, err := os.OpenFile(c.Transcript(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)

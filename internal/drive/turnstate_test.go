@@ -1,6 +1,8 @@
 package drive_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -150,6 +152,43 @@ func TestACrashedSessionIsGone(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the wait never ended: Rex still reads working")
 	}
+}
+
+// A session that moved into a worktree comes back there: resumed where it
+// opened, it stands on the main checkout while its conversation says otherwise.
+// A worktree since removed leaves where it opened.
+func TestAGoneSessionReopensWhereItLastWorked(t *testing.T) {
+	gone := func(t *testing.T, r *rig) string {
+		t.Helper()
+		e, err := r.d.Wait("T1", time.Minute, 10*time.Minute)
+		if err != nil || e == nil || e.State != "gone" {
+			t.Fatalf("the wait reports the session gone: %+v, %v", e, err)
+		}
+		return e.Next
+	}
+	t.Run("moved", func(t *testing.T) {
+		r := newRig(t, "none")
+		c := adopted(t, r, "T1")
+		worktree := filepath.Join(r.w.Root, "worktree")
+		if err := os.MkdirAll(worktree, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		c.Relocate(worktree)
+		c.Crash()
+		if next := gone(t, r); !strings.Contains(next, "--dir "+worktree) {
+			t.Fatalf("the reopen names the worktree: %s", next)
+		}
+	})
+	t.Run("worktree removed", func(t *testing.T) {
+		r := newRig(t, "none")
+		c := adopted(t, r, "T1")
+		opened := c.Cwd
+		c.Relocate(filepath.Join(r.w.Root, "removed"))
+		c.Crash()
+		if next := gone(t, r); !strings.Contains(next, "--dir "+opened) {
+			t.Fatalf("the reopen falls back on where it opened: %s", next)
+		}
+	})
 }
 
 // A turn that ended with a background job running is done, the job named;

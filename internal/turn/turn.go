@@ -215,6 +215,31 @@ func ReadFile(path string) (Frontier, error) {
 	return Read(f)
 }
 
+// LastDir is the directory a transcript last records its session in: the newest
+// row's cwd, or the place a /cd moved the session to. "" when none says.
+func LastDir(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	var dir string
+	for dec := json.NewDecoder(f); ; {
+		var row struct {
+			Cwd       string `json:"cwd"`
+			Relocated string `json:"relocatedCwd"`
+		}
+		if dec.Decode(&row) != nil {
+			return dir
+		}
+		if row.Relocated != "" {
+			dir = row.Relocated
+		} else if row.Cwd != "" {
+			dir = row.Cwd
+		}
+	}
+}
+
 // Read reads a transcript stream.
 func Read(r io.Reader) (Frontier, error) {
 	var f Frontier
