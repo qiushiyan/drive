@@ -64,7 +64,8 @@ type Frontier struct {
 	// and went back to merge names its branch, then the trunk.
 	Branches []string
 	// Dir is the directory the transcript last records the session in: the
-	// newest row's cwd, or where a /cd moved it. "" when no row says.
+	// newest row's cwd, or the folder a relocated row names, which a /cd or a
+	// resume writes. "" when no row says.
 	Dir string
 }
 
