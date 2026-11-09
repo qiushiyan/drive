@@ -494,8 +494,10 @@ func (m *Metrics) Text() string {
 		sort.Strings(keys)
 		fmt.Fprintf(&b, "snippets: %s\n", strings.Join(keys, ", "))
 	}
-	fmt.Fprintf(&b, "wakes: %d posted for sessions and %d for timers or the watchdog, %d failed; %d carried by another session's post; %d followed by no action on the session before its next wake or the batch's end\n",
-		m.Wakes, m.Timers, m.WakeFails, m.Carried, m.Unhandled)
+	fmt.Fprintf(&b, "wakes: %d posted for sessions and %d for timers or the watchdog, %d failed; %d carried by another session's post\n",
+		m.Wakes, m.Timers, m.WakeFails, m.Carried)
+	fmt.Fprintf(&b, "what each session's wake drew before its next or the batch's end: %d a step, a prompt answered, a park or a close; %d a driver's run that left the session as it was; %d no trace of a run\n",
+		m.WakesActedOn, m.WakesHeardOnly, m.WakesUntraced)
 	if len(m.ByWhy) > 0 {
 		var causes []string
 		for _, why := range slices.Sorted(maps.Keys(m.ByWhy)) {

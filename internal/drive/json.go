@@ -228,7 +228,9 @@ type metricsDoc struct {
 	WakeFails           int            `json:"wake_fails"`
 	Carried             int            `json:"carried"`
 	WakesByWhy          map[string]int `json:"wakes_by_why"`
-	Unhandled           int            `json:"unhandled"`
+	WakesActedOn        int            `json:"wakes_acted_on"`
+	WakesHeardOnly      int            `json:"wakes_heard_only"`
+	WakesUntraced       int            `json:"wakes_untraced"`
 	Unwatched           int            `json:"unwatched"`
 }
 
@@ -255,7 +257,8 @@ func (m *Metrics) JSON() any {
 		MedianAnswerSeconds: seconds(m.MedianAnswer), Merged: []mergedDoc{}, PerMergeSeconds: seconds(m.PerMerge), Unread: m.Unread,
 		Sends: m.Sends, Snippets: m.Snippets, ByKey: counts(m.ByKey), Commands: m.Commands, OwnWords: m.OwnWords,
 		Recovered: m.Recovered, Garbled: m.Garbled, Other: m.Other, Unknown: m.Unknown, Refusals: counts(m.Refusals),
-		Failures: list(m.Failures), Wakes: m.Wakes, Timers: m.Timers, WakeFails: m.WakeFails, Carried: m.Carried, WakesByWhy: m.ByWhy, Unhandled: m.Unhandled, Unwatched: m.Unwatched}
+		Failures: list(m.Failures), Wakes: m.Wakes, Timers: m.Timers, WakeFails: m.WakeFails, Carried: m.Carried, WakesByWhy: m.ByWhy,
+		WakesActedOn: m.WakesActedOn, WakesHeardOnly: m.WakesHeardOnly, WakesUntraced: m.WakesUntraced, Unwatched: m.Unwatched}
 	for _, p := range m.Merged {
 		d.Merged = append(d.Merged, mergedDoc{Repo: p.Repo, Number: p.Number, Branch: p.Branch, Commit: p.Commit, At: p.At, Sessions: list(p.Sessions)})
 	}

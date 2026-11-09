@@ -847,8 +847,9 @@ func TestRecordsAndMetrics(t *testing.T) {
 	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "/compact"}, drive.SendOptions{}); err == nil {
 		t.Fatal("a line that lost its start in a turn that ended is reported")
 	}
-	if m, _ := r.d.Metrics(); m.Wakes != 2 || m.Unhandled != 0 {
-		t.Fatalf("a wake followed by a re-armed watch was handled: %d of %d unhandled", m.Unhandled, m.Wakes)
+	if m, _ := r.d.Metrics(); m.Wakes != 2 || m.WakesUntraced != 1 || m.WakesActedOn+m.WakesHeardOnly != 1 {
+		t.Fatalf("a watch armed again shows no driver, since the watchdog arms one with no run behind it: of %d wakes, %d acted on, %d heard only, %d untraced",
+			m.Wakes, m.WakesActedOn, m.WakesHeardOnly, m.WakesUntraced)
 	}
 	if _, err := r.d.Watch("T1"); err != nil {
 		t.Fatal(err)
@@ -932,8 +933,12 @@ func TestRecordsAndMetrics(t *testing.T) {
 	if m.Commands != 1 || m.OwnWords != 3 {
 		t.Fatalf("a typed /compact is a command, not the driver's own words; a typed line and a file are: %d commands, %d own", m.Commands, m.OwnWords)
 	}
-	if m.Wakes != 5 || m.Unhandled != 1 {
-		t.Fatalf("of five wakes, T1's last is the one no driver action followed: %d of %d unhandled", m.Unhandled, m.Wakes)
+	// T1's first wake drew a watch armed again and nothing else; its second a
+	// step, and both of T2's a step or an answered prompt; its last a note, and
+	// the driver's work on T2, with T1 left as it was.
+	if m.Wakes != 5 || m.WakesActedOn != 3 || m.WakesHeardOnly != 1 || m.WakesUntraced != 1 {
+		t.Fatalf("each of five wakes is counted once, by what followed it: %d acted on, %d heard only, %d untraced of %d",
+			m.WakesActedOn, m.WakesHeardOnly, m.WakesUntraced, m.Wakes)
 	}
 	if m.Unwatched != 1 {
 		t.Fatalf("the approval that left T2's turn with no wake after it is counted: %d", m.Unwatched)
@@ -946,6 +951,70 @@ func TestRecordsAndMetrics(t *testing.T) {
 	}
 	if len(m.Refusals) != 3 || m.Refusals["other"] != 0 {
 		t.Fatalf("a step into a prompt, a close over a running shell and a step on an unanswered prompt are each a kind: %v", m.Refusals)
+	}
+}
+
+// Five batches of 29 October to 2 November read "0 wakes no action followed"
+// while 27 of their 184 wakes had drawn no step: a watch armed again counted
+// as the wake handled, and the watchdog arms one with no run behind it.
+func TestAWakeIsCountedByWhatItDrew(t *testing.T) {
+	r := newRig(t, "webhook")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer srv.Close()
+	r.d.Cfg.Webhook = config.Webhook{URL: srv.URL}
+	c := r.w.Add("T1")
+	done(c, "onboard", "analysis")
+	first := r.view(c.Block[len(c.Block)-6:])
+	if _, err := r.d.Send(first, drive.Step{Line: "go"}, drive.SendOptions{Label: "T1"}); err != nil {
+		t.Fatal(err)
+	}
+	wake := func() {
+		t.Helper()
+		r.w.Clock.Sleep(2 * time.Minute)
+		if _, err := r.d.Notify("drive-b1-"+c.Block[len(c.Block)-6:], "T1", time.Second); err != nil {
+			t.Fatal(err)
+		}
+		r.w.Clock.Sleep(2 * time.Minute)
+	}
+	counts := func() [3]int {
+		t.Helper()
+		m, err := r.d.Metrics()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.WakesActedOn+m.WakesHeardOnly+m.WakesUntraced != m.Wakes+m.Carried {
+			t.Fatalf("every wake is one of the three: %+v", m)
+		}
+		return [3]int{m.WakesActedOn, m.WakesHeardOnly, m.WakesUntraced}
+	}
+
+	wake() // the watchdog arms it again, with no run behind it
+	if _, err := r.d.Watch("T1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := counts(); got != [3]int{0, 0, 1} {
+		t.Fatalf("a watch armed again is no trace of a driver: %v", got)
+	}
+	wake() // a run reads the batch and arms the watch again
+	r.d.Seen()
+	if _, err := r.d.Watch("T1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := counts(); got != [3]int{0, 1, 1} {
+		t.Fatalf("a run that read the batch and left the session was heard: %v", got)
+	}
+	wake() // a run refuses itself a step, then parks the session
+	if _, err := r.d.Send(first, drive.Step{Line: "go on"}, drive.SendOptions{}); !isRefused(err) {
+		t.Fatalf("a step on a view the session moved past is refused: %v", err)
+	}
+	if got := counts(); got != [3]int{0, 2, 1} {
+		t.Fatalf("a refusal changes nothing in the session: %v", got)
+	}
+	if err := r.d.Park(r.view("T1"), "waits on a release", r.w.Clock.Now().Add(48*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got := counts(); got != [3]int{1, 1, 1} {
+		t.Fatalf("a park is the driver's decision on the session: %v", got)
 	}
 }
 

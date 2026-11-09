@@ -819,7 +819,9 @@ amended, delegated, moot), explained; owner_wait_seconds, median_answer_seconds,
 per_merge_seconds; merged (repo, number or branch and commit, at, sessions), unread;
 sends, snippets, by_key, commands, own_words, recovered, garbled, other, unknown;
 refusals (counts by kind), failures; wakes, timers, wake_fails, carried, wakes_by_why (counts
-by what made them go), unhandled, unwatched`}}
+by what made them go); wakes_acted_on, wakes_heard_only, wakes_untraced (each session's wake
+by what it drew before its next: a step, a prompt answered, a park or a close; a driver's run
+that left the session as it was; no trace of a run); unwatched`}}
 }
 
 func (c *MetricsCmd) Run(ctx *kong.Context, d *drive.Driver) error {

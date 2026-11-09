@@ -40,7 +40,9 @@ exit 0
   "wake_fails": 0,
   "carried": 0,
   "wakes_by_why": {},
-  "unhandled": 0,
+  "wakes_acted_on": 0,
+  "wakes_heard_only": 0,
+  "wakes_untraced": 0,
   "unwatched": 0
 }
 --- stderr

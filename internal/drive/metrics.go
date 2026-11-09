@@ -48,10 +48,14 @@ type Metrics struct {
 	Carried   int            // endings another session's post carried, which took no post of their own
 	ByWhy     map[string]int // posted wakes, carried ones and timers included, by what made them go
 	WakeFails int            // wakes, a session's or a timer's, whose post failed
-	// Unhandled counts wakes posted that no driver action on their session
-	// followed before its next wake or the batch's end: a send, respond,
-	// park, close, re-armed watch, or a refusal of one.
-	Unhandled int
+	// What followed each session's wake, posted or carried, before its next
+	// one or the batch's end. Each wake is one of the three: a post is a paid
+	// run, so the last two are what a batch spent without moving a session.
+	// A wake armed again says nothing either way: a run arms one, and so does
+	// the watchdog with no run behind it.
+	WakesActedOn   int // a driver changed the session: a step, a prompt answered, a park or a close (batch.Acted)
+	WakesHeardOnly int // a driver ran, as batch.Heard hears one, and left the session as it was
+	WakesUntraced  int // nothing shows a driver ran
 	// Unwatched counts, in a batch that wakes its driver, the sends and
 	// responds that reached a session and that no wake, park or close of it
 	// followed before the batch's end: turns whose end woke no one, the lost
@@ -126,14 +130,31 @@ func (m *Metrics) asks(evs []batch.Event) {
 }
 
 // actions measures what drivers did from the log: sends by kind and
-// delivery, refusals, failures, wakes and the ones no action followed, and,
-// in a batch that wakes its driver, the turns left unwatched.
+// delivery, refusals, failures, wakes and what followed each, and, in a
+// batch that wakes its driver, the turns left unwatched.
 func (m *Metrics) actions(evs []batch.Event, wakes bool) {
-	woken := map[string]bool{}    // a session's posted wake that no driver action has followed yet
+	woken := map[string]wakeDrew{} // what a session's newest wake has drawn so far
+	settle := func(session string) {
+		switch woken[session] {
+		case drewActed:
+			m.WakesActedOn++
+		case drewHeard:
+			m.WakesHeardOnly++
+		case drewNothing:
+			m.WakesUntraced++
+		}
+	}
 	unwatched := map[string]int{} // a session's steps that no wake, park or close has followed yet
 	for _, e := range evs {
-		if e.Session != "" && batch.ByDriver(e) { // a driver's action on it shows the wake reached a driver
-			woken[e.Session] = false
+		if batch.Heard(e) { // a run is the driver's, whichever session it turned to
+			for s, drew := range woken {
+				if drew == drewNothing {
+					woken[s] = drewHeard
+				}
+			}
+		}
+		if _, open := woken[e.Session]; open && batch.Acted(e) {
+			woken[e.Session] = drewActed
 		}
 		switch e.Kind {
 		case batch.KindSend:
@@ -195,16 +216,12 @@ func (m *Metrics) actions(evs []batch.Event, wakes bool) {
 			} else {
 				m.Wakes++
 			}
-			if woken[e.Session] {
-				m.Unhandled++
-			}
-			woken[e.Session] = true
+			settle(e.Session) // the wake before it, by what came between the two
+			woken[e.Session] = drewNothing
 		}
 	}
-	for _, w := range woken {
-		if w {
-			m.Unhandled++ // its last wake, with nothing after it
-		}
+	for s := range woken {
+		settle(s) // its last wake, by what came before the batch's end
 	}
 	if wakes {
 		for _, n := range unwatched {
@@ -212,6 +229,15 @@ func (m *Metrics) actions(evs []batch.Event, wakes bool) {
 		}
 	}
 }
+
+// wakeDrew is the most a session's wake has drawn from a driver.
+type wakeDrew int
+
+const (
+	drewNothing wakeDrew = iota + 1 // no driver heard since
+	drewHeard                       // a driver ran
+	drewActed                       // a driver changed the session
+)
 
 // merges finds the changes the batch's sessions merged: every pull request
 // a session linked that merged since the batch started, counted once
