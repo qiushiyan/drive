@@ -764,6 +764,36 @@ func TestWaitIgnoresShellsOlderThanTheTurn(t *testing.T) {
 	}
 }
 
+// status listed Rex's blocks again for every Claude session outside the
+// batch, though the list it read them from was in hand: with ten outside
+// across nine Rex sessions, 237 rex commands where 37 read the same rows.
+func TestStatusListsRexsBlocksNoMoreForSessionsOutsideTheBatch(t *testing.T) {
+	r := newRig(t, "none")
+	adopted(t, r, "T1")
+	listings := func() (n int, st *drive.Status) {
+		t.Helper()
+		before := r.w.Listings
+		st, err := r.d.Status(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r.w.Listings - before, st
+	}
+	alone, _ := listings()
+	for _, label := range []string{"a", "b", "c", "d", "e"} {
+		done(r.w.Add(label), "onboard", "analysis")
+	}
+	shell := r.w.Add("a shell")
+	shell.Edit(func(c *testkit.Claude) { c.Running = false })
+	among, st := listings()
+	if len(st.Rows) != 1 || len(st.Others) != 5 {
+		t.Fatalf("the batch's session, and the five running Claude Code outside it: %d and %d", len(st.Rows), len(st.Others))
+	}
+	if among != alone {
+		t.Fatalf("a session outside the batch is read in the block the list named: %d listings with six blocks outside, %d with none", among, alone)
+	}
+}
+
 // A session outside the batch is answered by its block id, and the answer
 // is recorded under that id with the call it answered, as a refusal or a
 // close of it is.

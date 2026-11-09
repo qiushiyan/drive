@@ -331,10 +331,9 @@ func (d *Driver) rows(b *batch.Batch, evs []batch.Event, members []*batch.Member
 			continue
 		}
 		wg.Go(func() {
-			if st, err := d.Term.Status(bl.ID); err != nil || st == nil {
-				return
-			}
-			r := d.row(nil, nil, bl.ID, false)
+			// The block is in hand, so its row reads it without listing
+			// Rex's blocks again; one with no Claude Code reads as an error.
+			r := d.rowAt(nil, nil, rex.Short(bl.ID), bl.ID, false)
 			if r.Error != "" {
 				return
 			}
@@ -518,8 +517,20 @@ func sentLabel(e *batch.Event) string {
 }
 
 func (d *Driver) row(b *batch.Batch, members []*batch.Member, label string, withProgress bool) Row {
+	return d.rowAt(b, members, label, "", withProgress)
+}
+
+// rowAt is row for a session whose block is known, "" when label is to be
+// resolved.
+func (d *Driver) rowAt(b *batch.Batch, members []*batch.Member, label, block string, withProgress bool) Row {
 	r := Row{Label: label}
-	o, err := d.observe(b, members, label)
+	var o *Observation
+	var err error
+	if block != "" {
+		o, err = d.observeBlock(b, members, label, block)
+	} else {
+		o, err = d.observe(b, members, label)
+	}
 	if err != nil {
 		r.State, r.Error = "gone", firstLine(err.Error())
 		if m := batch.Find(members, label); m != nil && gone(err) {

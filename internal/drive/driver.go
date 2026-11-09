@@ -379,11 +379,17 @@ func (d *Driver) ownedHere(b *batch.Batch, label, block string) error {
 // observe reads one session in batch b, whose sessions are members. ref is
 // a label in the batch or a block id.
 func (d *Driver) observe(b *batch.Batch, members []*batch.Member, ref string) (*Observation, error) {
-	o := &Observation{in: b}
 	label, block, err := d.target(members, ref)
 	if err != nil {
 		return nil, err
 	}
+	return d.observeBlock(b, members, label, block)
+}
+
+// observeBlock reads the session in a block already resolved, under label: a
+// reader that holds Rex's block list asks it nothing again.
+func (d *Driver) observeBlock(b *batch.Batch, members []*batch.Member, label, block string) (*Observation, error) {
+	o := &Observation{in: b}
 	o.Label, o.Member = label, batch.Find(members, label)
 	s, err := session.Locate(d.Term, d.Host, block)
 	switch {

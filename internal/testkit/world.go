@@ -57,7 +57,10 @@ type World struct {
 	BlocksFail int
 	// Down counts the next calls to Rex that find its server not running, as
 	// while it restarts: each fails, and none starts it.
-	Down     int
+	Down int
+	// Listings counts the listings of Rex's blocks asked for: each is a rex
+	// command per Rex session and more.
+	Listings int
 	sessions map[string]int  // Rex sessions by label, how many have it: Rex lets two share one
 	cut      map[string]bool // sessions whose turn a restart cut short, by id
 	closed   []*Claude       // sessions whose blocks were closed: their transcripts remain
@@ -552,6 +555,7 @@ func (w *World) Status(block string) (*rex.Status, error) {
 func (w *World) Blocks(session string) ([]rex.Block, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.Listings++
 	if w.isDown() {
 		return nil, down("block")
 	}
