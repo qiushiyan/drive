@@ -94,6 +94,7 @@ type Claude struct {
 	Updated time.Time
 	Running bool
 	Rex     string // the Rex session its block is in
+	Model   string // the model its launch line named; "" is the owner's default
 	Front   string // the program in front of the block's shell, when Claude Code is not
 	// What Claude Code's own registry says: idle, busy or waiting. It moves
 	// the moment the session does; Rex moves only when a hook fires.
@@ -850,6 +851,9 @@ func (w *World) open(o rex.Open) string {
 		}
 	}
 	c := w.add(o.Label, o.Dir, account)
+	if cmd := strings.Join(o.Command, " "); strings.Contains(cmd, "--model ") {
+		c.Model = strings.Trim(strings.TrimSuffix(strings.Fields(strings.SplitN(cmd, "--model ", 2)[1])[0], ";"), "'")
+	}
 	if o.Session != "" {
 		c.Rex = o.Session
 	}

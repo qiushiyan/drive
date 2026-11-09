@@ -52,7 +52,7 @@ func (d *Driver) workedIn(m *batch.Member, f *turn.Frontier) string {
 // it carry over. With no account that can take it, it says so, and the open
 // waits until one can.
 func (d *Driver) reopen(b *batch.Batch, m *batch.Member, f *turn.Frontier) string {
-	opt := OpenOptions{Dir: d.workedIn(m, f), Resume: m.SID, Account: m.Account}
+	opt := OpenOptions{Dir: d.workedIn(m, f), Resume: m.SID, Account: m.Account, Model: m.Model}
 	until, out := d.unable(b)[m.Account]
 	stuck := false
 	if out {
@@ -174,11 +174,28 @@ func (d *Driver) relaunch(o *Observation, step Step) string {
 	return d.relaunchOn(o, step, others[0], "")
 }
 
+// modelOf is the model o's session was opened on, which a relaunch asks for
+// again: the log's, since an open's own first step reads no member.
+func modelOf(o *Observation) string {
+	if o.Member != nil {
+		return o.Member.Model
+	}
+	if o.in == nil {
+		return ""
+	}
+	evs, _ := o.in.Events()
+	if m := batch.Find(batch.Members(evs), o.Label); m != nil {
+		return m.Model
+	}
+	return ""
+}
+
 // relaunchOn is the relaunch on account, after first, a command the close
 // waits for, when there is one.
 func (d *Driver) relaunchOn(o *Observation, step Step, account, first string) string {
 	// Claude Code finds a session to resume under its working directory's project.
-	cmd := first + d.run("close", viewNow(o)) + " && " + d.openCommand(o.Label, OpenOptions{Dir: o.Session.Dir, Resume: o.Session.ID, Account: account}, step)
+	opt := OpenOptions{Dir: o.Session.Dir, Resume: o.Session.ID, Account: account, Model: modelOf(o)}
+	cmd := first + d.run("close", viewNow(o)) + " && " + d.openCommand(o.Label, opt, step)
 	what := "relaunch it on another account with the step it was to take"
 	if step.empty() {
 		what = "relaunch it on another account, then send it the step it was to take on the view the open prints"

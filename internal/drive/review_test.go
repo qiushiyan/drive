@@ -800,6 +800,9 @@ func relaunch(t *testing.T, r *rig, next string) *drive.Opened {
 				case "--account":
 					j++
 					opt.Account = w[j]
+				case "--model":
+					j++
+					opt.Model = w[j]
 				default:
 					step.Line = w[j]
 				}
@@ -920,4 +923,47 @@ func TestAGarbledQueuedLineInterruptsNothing(t *testing.T) {
 	if _, keys := c.Seen(); contains(keys, "ctrl+c") {
 		t.Fatalf("the running turn is left alone: %q", keys)
 	}
+}
+
+// A session opened on a model other than the owner's default stays on it
+// when drive brings it back: the relaunch after a rejected login and the
+// reopen of a gone session both name it, as Claude Code resumes on the
+// launcher's default otherwise.
+func TestASessionKeepsItsModelWhenBroughtBack(t *testing.T) {
+	t.Run("relaunch", func(t *testing.T) {
+		r := newRig(t, "none")
+		_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".claude-accounts", "other@example.com", "sessions"), 0o755)
+		opens := 0
+		r.w.OnOpen = func(c *testkit.Claude) {
+			if opens++; opens > 1 {
+				return // the relaunch takes its step
+			}
+			c.Reply = func(c *testkit.Claude, _ string) {
+				c.Fail("authentication_failed", "Login expired · Please run /login")
+				c.Set("blocked", "auth", "Login expired · Please run /login")
+			}
+		}
+		_, err := r.d.Open("sr-9531", drive.Step{Line: "/strategic-review 9531"}, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work"), Model: "fable"})
+		var f *drive.Failed
+		if !errors.As(err, &f) || !f.Login || !strings.Contains(f.Next, "--model fable") {
+			t.Fatalf("the relaunch names the session's model: %v", err)
+		}
+		r.w.Clock.Sleep(time.Minute)
+		o := relaunch(t, r, f.Next)
+		if m := r.w.Session(o.Block).Model; m != "fable" {
+			t.Fatalf("the relaunched session runs on fable, got %q", m)
+		}
+	})
+	t.Run("reopen", func(t *testing.T) {
+		r := newRig(t, "none")
+		o, err := r.d.Open("sr-9531", drive.Step{Line: "/strategic-review 9531"}, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work"), Model: "fable"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.w.Session(o.Block).Crash()
+		e, err := r.d.Wait("sr-9531", time.Minute, 10*time.Minute)
+		if err != nil || e == nil || e.State != "gone" || !strings.Contains(e.Next, "--model fable") {
+			t.Fatalf("the reopen names the session's model: %+v, %v", e, err)
+		}
+	})
 }

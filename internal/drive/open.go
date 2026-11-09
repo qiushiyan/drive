@@ -126,7 +126,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return nil, f
 	}
 	// On record at once: a driver that ends while Claude Code starts leaves the block known.
-	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindOpen, Session: label, Intent: intent, Block: block, Dir: opt.Dir, Ref: opt.Resume, Outcome: "starting"}); err != nil {
+	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindOpen, Session: label, Intent: intent, Block: block, Dir: opt.Dir, Model: opt.Model, Ref: opt.Resume, Outcome: "starting"}); err != nil {
 		return nil, d.unrecorded(label, block, err)
 	}
 	s, err := d.awaitSession(block, 90*time.Second)
@@ -139,7 +139,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return nil, f
 	}
 	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindOpen, Session: label, Block: block,
-		SID: s.ID, Account: s.Account, Dir: s.Dir, Ref: opt.Resume}); err != nil {
+		SID: s.ID, Account: s.Account, Dir: s.Dir, Model: opt.Model, Ref: opt.Resume}); err != nil {
 		return nil, d.unrecorded(label, block, err)
 	}
 	out = &Opened{Label: label, Block: block, Account: s.Account, Session: s.ID}
