@@ -16,7 +16,7 @@ from the batch's record while it finishes.
 
 It runs until stopped, and exits once the drive binary it runs is
 replaced, so a supervisor such as launchd restarts it on the new one. It
-answers anyone who reaches the address: on the mini, a loopback address
+answers anyone who reaches the address: on Mini 2, a loopback address
 that tailscale serve publishes on the tailnet.
 
 Flags:

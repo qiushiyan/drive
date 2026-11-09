@@ -474,7 +474,7 @@ func (c *ParkCmd) HelpSections() []clikit.Section {
 	return []clikit.Section{{Title: "Examples", Body: `
 drive record ask S5 --question 'Start the build without #10137?' --if-unanswered 'S5 stays parked'
 drive park S5@… 'waits for your call on #10137'      # the open ask ends it
-drive park S6@… --until 2026-11-06 'waits for the 6 Nov fleet read'
+drive park S6@… --until 2026-11-06 'waits for the 6 Nov release'
 drive park S7@… 'waits for the release, held by S2'  # after a send refused on that hold`}}
 }
 
@@ -764,7 +764,7 @@ from the batch's record while it finishes.
 
 It runs until stopped, and exits once the drive binary it runs is
 replaced, so a supervisor such as launchd restarts it on the new one. It
-answers anyone who reaches the address: on the mini, a loopback address
+answers anyone who reaches the address: on Mini 2, a loopback address
 that tailscale serve publishes on the tailnet.`
 }
 
