@@ -131,7 +131,7 @@ func (d *Driver) wait(ref string, planFor func(o *Observation, t Turn, stable ti
 				Shells: t.Shells, Orphans: t.Orphans, Capped: t.Shells > 0, Pending: o.Frontier.Pending, View: o.View,
 				Account: o.Session.Account, Jobs: d.Host.Shells(o.Session.Status.PID)}
 			if a, local := o.Frontier.Answer(); a != nil {
-				e.Reply = tail(answerText(o.Frontier, a, local), 2500)
+				e.Reply = tail(answerText(o.Frontier, a, local), replyTail)
 			}
 			if state.blocked() {
 				if screen, err := d.Term.Capture(o.Session.Block, false); err == nil {

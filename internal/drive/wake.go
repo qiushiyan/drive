@@ -507,6 +507,20 @@ func safeName(s string) string {
 	return b.String()
 }
 
+// How much of an ending a wake carries. Of 176 wakes for an ended turn, 29
+// October to 2 November, the reply ran to 3,400 characters at the median and
+// 7,600 at the 90th percentile: the 2,500 a wake first kept cut 59 in 100,
+// each cut costing its run a read of the whole, and replyTail cuts 7.
+// wakeOutput leaves the rest of the wake its room. Nothing documents how much
+// the webhook takes, and every post until then was within provenOutput, so a
+// wake it refuses whole goes once more at that size (post).
+const (
+	replyTail    = 8000
+	wakeOutput   = 12000
+	provenReply  = 2500
+	provenOutput = 6000
+)
+
 // Wake posts an ending or a timer to the driver's webhook and records how
 // the post went: an empty log line is never taken to mean the wake arrived.
 func (d *Driver) Wake(label string, e *Ending, note string) error {
@@ -525,6 +539,7 @@ func (d *Driver) post(label string, e *Ending, note string, p posting) error {
 	}
 	host, _ := os.Hostname()
 	payload := map[string]any{"batch": b.Meta.Name, "host": host}
+	var output func(replyCap, outputCap int) string // an ending's wake, its reply and the whole cut to size
 	if e != nil {
 		view := ""
 		if e.View.Session != "" {
@@ -543,12 +558,20 @@ func (d *Driver) post(label string, e *Ending, note string, p posting) error {
 			e.Next = fmt.Sprintf("decide from its reply: %s; %s (when it waits on the owner, record its ask and leave out --until); or %s",
 				d.run("send", view, text("…")), d.run("park", view, "--until", "WHEN", text("…")), d.run("close", view))
 		}
-		if strings.HasPrefix(e.Reply, "…") && e.Next != "" {
-			// What it asks may stand in what the wake cut.
-			e.Next = fmt.Sprintf("its reply is cut above: read all of it first (%s); then %s", d.run("read", e.Label), e.Next)
-		}
 		first := d.briefLine() + again
-		payload["output"] = first + tail(e.Text(), 6000-len(first))
+		reply, next := e.Reply, e.Next
+		output = func(replyCap, outputCap int) string {
+			e.Reply, e.Next = reply, next
+			if body := []rune(strings.TrimPrefix(reply, "…")); len(body) > replyCap {
+				e.Reply = "…" + string(body[len(body)-replyCap:])
+			}
+			if strings.HasPrefix(e.Reply, "…") && e.Next != "" {
+				// What it asks may stand in what the wake cut.
+				e.Next = fmt.Sprintf("its reply is cut above: read all of it first (%s); then %s", d.run("read", e.Label), e.Next)
+			}
+			return first + tail(e.Text(), outputCap-len(first))
+		}
+		payload["output"] = output(replyTail, wakeOutput)
 		if !e.claimed {
 			_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindPosting, Session: label, Block: e.Block, View: view, Why: p.why, Due: p.due, HeldBy: p.heldBy})
 		}
@@ -572,6 +595,22 @@ func (d *Driver) post(label string, e *Ending, note string, p posting) error {
 	poster := webhook.Poster{URL: hook.URL, Auth: hook.Auth, Sleep: d.Sleep}
 	var last webhook.Attempt
 	err = poster.Post(body, func(a webhook.Attempt) { last = a })
+	if whole, _ := payload["output"].(string); err != nil && last.HTTP != 0 && output != nil && len(whole) > provenOutput {
+		// The webhook answered and would not take it. If its size is why, the
+		// size every wake had until now still goes.
+		payload["output"] = output(provenReply, provenOutput)
+		body, _ = json.Marshal(payload)
+		refused, once := last, poster
+		once.Tries = 1
+		if once.Post(body, func(a webhook.Attempt) { last = a }) == nil {
+			err, last.Try = nil, refused.Try+1
+			_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindNote, Session: label, Note: fmt.Sprintf(
+				"the webhook refused %s's wake at %d characters (http %d %s) and took it at %d, its reply cut to the last %d: replyTail and wakeOutput in drive's wake.go are past what this webhook takes",
+				label, len([]rune(whole)), refused.HTTP, clip(refused.Err, 120), len([]rune(payload["output"].(string))), provenReply)})
+		} else {
+			last = refused
+		}
+	}
 	ev := batch.Event{At: d.now(), Kind: batch.KindWake, Session: label, HTTP: last.HTTP, Try: last.Try, Note: clip(note, 300), Why: p.why}
 	if e != nil {
 		ev.Block, ev.Outcome, ev.View, ev.Jobs = e.Block, string(e.State), e.View.String(), len(e.Jobs)

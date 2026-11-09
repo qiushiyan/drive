@@ -390,7 +390,7 @@ func TestAQuestionTheWakeCutIsReadFirst(t *testing.T) {
 	c := adopted(t, r, "T1")
 	c.Busy("run the gate")
 	c.Job("gate-replay")
-	c.Done("Should run 5 count as a pass?\n\n" + strings.Repeat("What the round found and how it was settled. ", 100) + "\n\nWaiting on CI.")
+	c.Done("Should run 5 count as a pass?\n\n" + strings.Repeat("What the round found and how it was settled. ", 200) + "\n\nWaiting on CI.")
 	r.w.Clock.At(r.w.Clock.Now().Add(time.Hour), func() { c.JobDone("Done.") })
 	watch(t, r, c, "T1")
 	out := l.output(0)
@@ -399,6 +399,66 @@ func TestAQuestionTheWakeCutIsReadFirst(t *testing.T) {
 	}
 	if !strings.Contains(out, "its reply is cut above: read all of it first (drive --batch b1 read T1)") || strings.Contains(out, "run only") {
 		t.Fatalf("it is told to read what it cannot see, not to answer the wait:\n%s", out[len(out)-600:])
+	}
+}
+
+// Of 176 wakes for an ended turn, 104 cut the reply at 2,500 characters and
+// told their run to read it whole first; the median reply was 3,400.
+func TestAWakeCarriesAReplyOfOrdinaryLengthWhole(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r).answeredBy(r)
+	c := adopted(t, r, "T1")
+	c.Busy("run the gate")
+	c.Done("Should run 5 count as a pass?\n\n" + strings.Repeat("What the round found and how it was settled. ", 150))
+	watch(t, r, c, "T1")
+	if out := l.output(0); !strings.Contains(out, "Should run 5") || strings.Contains(out, "its reply is cut above") {
+		t.Fatalf("a reply of 6,800 characters arrives whole, with no read to run first:\n%s", out[:300])
+	}
+}
+
+// Nothing documents how much the webhook takes, and until 9 November no wake
+// went past 6,000 characters: one it refuses whole goes again at that size,
+// and the log says so.
+func TestAWakeTheWebhookRefusesWholeGoesAtTheSizeItTook(t *testing.T) {
+	r := newRig(t, "webhook")
+	var mu sync.Mutex
+	var outputs []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var p struct{ Output string }
+		_ = json.NewDecoder(req.Body).Decode(&p)
+		mu.Lock()
+		outputs = append(outputs, p.Output)
+		mu.Unlock()
+		if len(p.Output) > 6000 {
+			http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	r.d.Cfg.Webhook = config.Webhook{URL: srv.URL}
+	c := adopted(t, r, "T1")
+	c.Busy("run the gate")
+	c.Done("Should run 5 count as a pass?\n\n" + strings.Repeat("What the round found and how it was settled. ", 150))
+	watch(t, r, c, "T1")
+	mu.Lock()
+	defer mu.Unlock()
+	last := outputs[len(outputs)-1]
+	if len(outputs) != 7 || len(last) > 6000 || strings.Contains(last, "Should run 5") ||
+		!strings.Contains(last, "its reply is cut above: read all of it first (drive --batch b1 read T1)") {
+		t.Fatalf("after its tries whole, one post at the size the webhook has taken, which says its reply is cut: %d posts, the last of %d characters:\n%s",
+			len(outputs), len(last), last[max(0, len(last)-400):])
+	}
+	wakes := r.events(batch.KindWake)
+	if len(wakes) != 1 || wakes[0].HTTP != http.StatusNoContent || wakes[0].Try != 7 {
+		t.Fatalf("the wake reached its driver, on the seventh post: %+v", wakes)
+	}
+	notes := r.events(batch.KindNote)
+	if len(notes) != 1 || !strings.Contains(notes[0].Note, "http 413 payload too large") || !strings.Contains(notes[0].Note, "took it at") {
+		t.Fatalf("the log says what the webhook refused and what it took: %+v", notes)
+	}
+	if st, err := r.d.Status(false); err != nil || st.Rows[0].Unhandled != true {
+		t.Fatalf("its session reads as woken: %+v %v", st, err)
 	}
 }
 
