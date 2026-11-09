@@ -69,6 +69,22 @@ type Frontier struct {
 	Dir string
 }
 
+// Clone is f sharing nothing with f, so a reader may change what it holds.
+func (f Frontier) Clone() Frontier {
+	f.Prompts, f.Branches = slices.Clone(f.Prompts), slices.Clone(f.Branches)
+	f.Queued, f.Reply, f.Last = copyOf(f.Queued), copyOf(f.Reply), copyOf(f.Last)
+	f.Error, f.Pending = copyOf(f.Error), copyOf(f.Pending)
+	return f
+}
+
+func copyOf[T any](p *T) *T {
+	if p == nil {
+		return nil
+	}
+	c := *p
+	return &c
+}
+
 // Newest is the newest prompt the session received, queued or taken.
 func (f Frontier) Newest() *Prompt {
 	if f.Queued != nil {

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qiushiyan/drive/internal/filecache"
 	"github.com/qiushiyan/drive/internal/rex"
 	"github.com/qiushiyan/drive/internal/turn"
 )
@@ -163,14 +164,18 @@ func (s *Session) Transcript() string {
 	return found[0]
 }
 
-// Frontier reads where the session's conversation stands.
+// Frontier reads where the session's conversation stands: from its
+// transcript, or as that file read when last looked at, while it stands
+// unwritten since.
 func (s *Session) Frontier() (turn.Frontier, error) {
 	p := s.Transcript()
 	if p == "" {
 		return turn.Frontier{}, nil
 	}
-	return turn.ReadFile(p)
+	return frontiers.Read(p, func() (turn.Frontier, error) { return turn.ReadFile(p) })
 }
+
+var frontiers = filecache.Cache[turn.Frontier]{Clone: turn.Frontier.Clone}
 
 // Machine is the Host of this machine.
 type Machine struct {

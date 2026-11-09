@@ -15,9 +15,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"syscall"
 	"time"
+
+	"github.com/qiushiyan/drive/internal/filecache"
 )
 
 // Meta is a batch's settings, fixed when it starts.
@@ -141,8 +144,16 @@ func (b *Batch) Zone() *time.Location {
 
 func (b *Batch) logPath() string { return filepath.Join(b.Dir, "events.jsonl") }
 
-// Events reads the whole log.
+// Events reads the whole log. The log is the only state: what a process
+// keeps is the reading of that file, good only while the file stands as it
+// was read, and each caller's events are its own.
 func (b *Batch) Events() ([]Event, error) {
+	return logs.Read(b.logPath(), b.readLog)
+}
+
+var logs = filecache.Cache[[]Event]{Clone: slices.Clone[[]Event]}
+
+func (b *Batch) readLog() ([]Event, error) {
 	data, err := os.ReadFile(b.logPath())
 	if os.IsNotExist(err) {
 		return nil, nil

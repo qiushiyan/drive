@@ -1,6 +1,7 @@
 package turn
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -363,5 +364,34 @@ func TestDirIsWhereTheTranscriptLastRecordsTheSession(t *testing.T) {
 	}
 	if f, _ := Read(strings.NewReader(`{"type":"relocated","relocatedCwd":"/w/repo/feat"}` + "\n")); f.Dir != "/w/repo/feat" {
 		t.Fatalf("a relocation alone is the directory: %q", f.Dir)
+	}
+}
+
+// A transcript's reading is kept while its file stands (session.Frontier),
+// so what one reader changes must not reach the next.
+func TestACloneSharesNothing(t *testing.T) {
+	f := Frontier{
+		Prompts: []Prompt{{ID: "p1", Text: "go"}}, Queued: &Prompt{ID: "q"}, Reply: &Entry{Text: "done"}, Last: &Entry{Text: "done"},
+		Error: &APIError{Kind: "rate_limit"}, Pending: &ToolCall{Name: "Bash"}, Branches: []string{"feat/x", "main"}, Dir: "/work",
+	}
+	c := f.Clone()
+	c.Prompts[0].Text, c.Queued.ID, c.Reply.Text, c.Last.Text = "changed", "changed", "changed", "changed"
+	c.Error.Kind, c.Pending.Name, c.Branches[0] = "changed", "changed", "changed"
+	if f.Prompts[0].Text != "go" || f.Queued.ID != "q" || f.Reply.Text != "done" || f.Last.Text != "done" ||
+		f.Error.Kind != "rate_limit" || f.Pending.Name != "Bash" || f.Branches[0] != "feat/x" {
+		t.Fatalf("a change to the clone reached what it was cloned from: %+v", f)
+	}
+	// A field added to Frontier that points at something joins this case and Clone.
+	fv, cv := reflect.ValueOf(f), reflect.ValueOf(f.Clone())
+	for i := range fv.NumField() {
+		switch fv.Field(i).Kind() {
+		case reflect.Pointer, reflect.Slice, reflect.Map:
+			if fv.Field(i).IsNil() || fv.Field(i).Pointer() == cv.Field(i).Pointer() {
+				t.Fatalf("%s is unset in this case, or shared by the clone", fv.Type().Field(i).Name)
+			}
+		}
+	}
+	if e := (Frontier{}).Clone(); e.Queued != nil || e.Reply != nil || e.Prompts != nil {
+		t.Fatalf("nothing clones to nothing: %+v", e)
 	}
 }
