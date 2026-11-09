@@ -256,11 +256,11 @@ The first step a session gets in a batch carries the owner's notice: at the head
 of its file, or attached after its line.`}}
 
 type SendCmd struct {
-	View  string `arg:"" help:"The view the step was decided on, as read, wait, status or a wake printed it (T1@3fa91c07)."`
+	View  string `arg:"" help:"The view the step was decided on, as read, wait, status or a wake printed it (search@3fa91c07)."`
 	Step  `embed:""`
 	Queue bool   `help:"Send to a working session, which takes the step mid-turn: the view then needs only that no prompt came since. A session on a prompt takes nothing until it is answered."`
 	Hold  string `placeholder:"NAME" help:"Name what this step uses that only one session may use at a time, such as a release or commits into a shared checkout. A second send or open naming it is refused, saying why, while this session works, later steps included, waits on a prompt, or runs a background job it started."`
-	As    string `placeholder:"LABEL" help:"The label a session outside the batch joins it under, on its first send."`
+	As    string `placeholder:"LABEL" help:"The label a session outside the batch joins it under, on its first send: a name for its work, such as search."`
 }
 
 func (c *SendCmd) Help() string {
@@ -289,7 +289,7 @@ func (c *SendCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type OpenCmd struct {
-	Label   string `arg:"" help:"The label the new session gets in the batch."`
+	Label   string `arg:"" help:"The label the new session gets in the batch and on its Rex block: a name for its work, such as search-repairs."`
 	Step    `embed:""`
 	Dir     string  `type:"existingdir" default:"." help:"The directory the session starts in."`
 	Resume  string  `placeholder:"ID" help:"Resume this Claude Code session id instead of starting fresh, such as a session relaunched on another account."`
@@ -757,7 +757,7 @@ All, which lists the sessions waiting on a driver. Each session opens to
 its stages and its history in the batch's record, the driver's notes
 among it, closed sessions and answered questions included. --batch or
 --driver shows one batch instead. It changes nothing. A session's anchor is
-the batch's name and its label, such as #2026-10-27/T1, so a link opens
+the batch's name and its label, such as #2026-10-27/search, so a link opens
 that batch's tab and the session; #2026-10-27 opens the tab. A read is
 reused for 30 seconds; one that takes longer than 20 seconds is answered
 from the batch's record while it finishes.

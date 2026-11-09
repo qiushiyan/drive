@@ -10,7 +10,8 @@ Resuming LABEL's own session, as the next: for a gone one does, carries it
 on: its park stands until its next step, and so does what was sent to it.
 
 Arguments:
-  <label>               The label the new session gets in the batch.
+  <label>               The label the new session gets in the batch and on its Rex block: a name for
+                        its work, such as search-repairs.
   <line> ...            The step as one line, typed as is, a slash command too; with --snippet, the
                         text the owner would type after the key (optional).
 

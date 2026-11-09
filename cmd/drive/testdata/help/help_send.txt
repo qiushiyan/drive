@@ -9,7 +9,7 @@ a batch that wakes a chat driver it arms the session's wake.
 
 Arguments:
   <view>               The view the step was decided on, as read, wait, status or a wake printed it
-                       (T1@3fa91c07).
+                       (search@3fa91c07).
   <line> ...           The step as one line, typed as is, a slash command too; with --snippet, the
                        text the owner would type after the key (optional).
 
@@ -24,7 +24,8 @@ Flags:
                        release or commits into a shared checkout. A second send or open naming it is
                        refused, saying why, while this session works, later steps included, waits on
                        a prompt, or runs a background job it started.
-      --as=LABEL       The label a session outside the batch joins it under, on its first send.
+      --as=LABEL       The label a session outside the batch joins it under, on its first send: a
+                       name for its work, such as search.
 
 Inherited flags:
   -h, --help           Show context-sensitive help.

@@ -53,23 +53,23 @@ The driver stands in for the sessions' owner, usually while they are away:
 a chat bot woken by webhook, or a Claude Code session. A batch is one
 drive's sessions and its record; ` + "`drive batch new NAME`" + ` starts one.
 
-Every action on a session is decided on a VIEW, such as T1@3fa91c07, which
-read, wait, status and every wake print. The action is refused once the
-session has moved past that view, so a step decided on an old turn never
-reaches a new one. A working session's view changes as it writes: decide on
-a turn that has ended, or send with --queue. One driver acts on a session at
-a time.
+Every action on a session is decided on a VIEW, such as search@3fa91c07,
+which read, wait, status and every wake print. The action is refused once
+the session has moved past that view, so a step decided on an old turn
+never reaches a new one. A working session's view changes as it writes:
+decide on a turn that has ended, or send with --queue. One driver acts on
+a session at a time.
 
-A SESSION is a label in the batch (T1), or a session's Rex block id, whose
-last six characters are enough, before it joins the batch; its view starts
-the same way (7c1e2a@3fa91c07). Copy a view as drive printed it.
+A SESSION is a label in the batch (search), or a session's Rex block id,
+whose last six characters are enough, before it joins the batch; its view
+starts the same way (7c1e2a@3fa91c07). Copy a view as drive printed it.
 
 A DRIVER drives a batch of its own. A chat bot is named by its webhook and
 names itself on every command, since nothing in its shell tells two bots
 apart:
 
   drive --driver itell status          # the batch driver itell drives now
-  drive --batch 2026-10-27 read T1     # one batch by name, as next: prints it
+  drive --batch 2026-10-27 read search # one batch by name, as next: prints it
 
 A command that names neither acts in the batch of the driver with no name,
 and is refused while any named driver drives one.
