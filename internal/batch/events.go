@@ -133,7 +133,8 @@ type Event struct {
 	SID     string    `json:"sid,omitempty"`
 	Account string    `json:"account,omitempty"`
 	Dir     string    `json:"dir,omitempty"`
-	Model   string    `json:"model,omitempty"` // on an open: the model it was asked to run on
+	Model   string    `json:"model,omitempty"`  // on an open: the model it was asked to run on
+	Effort  string    `json:"effort,omitempty"` // on an open: the effort level it was asked to run at
 
 	Intent  string `json:"intent,omitempty"`  // joins a send-intent or open-intent to its outcome
 	Mode    string `json:"mode,omitempty"`    // typed or file
@@ -182,9 +183,11 @@ type Member struct {
 	SID     string
 	Account string
 	Dir     string
-	// Model is the model its latest open asked for, which drive's relaunch
-	// and reopen ask for again; "" is the launcher's default.
+	// Model and Effort are the model and the effort level its latest open
+	// asked for, which drive's relaunch and reopen ask for again; "" leaves
+	// it to the owner's launcher and settings.
 	Model  string
+	Effort string
 	Joined time.Time
 	// Goal is what the session sets out to do, in plain terms for the owner:
 	// the latest recorded for its label, which outlives a reopen and a
@@ -281,7 +284,7 @@ func Members(evs []Event) []*Member {
 				goals[e.Session] = g
 				delete(opening, e.Intent)
 			}
-			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Model: e.Model, Joined: e.At, Resumed: read[e.Ref]}
+			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Model: e.Model, Effort: e.Effort, Joined: e.At, Resumed: read[e.Ref]}
 			if old, ok := by[e.Session]; ok {
 				if e.Ref != "" && e.Ref == old.SID {
 					// Its own conversation resumed in a new block, as after Rex

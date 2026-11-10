@@ -1,0 +1,6 @@
+$ drive open sr-9531 --dir $ROOT/work --effort xhigh --goal Review pull request 9531 before it merges. /strategic-review 9531
+exit 0
+--- stdout
+opened sr-9531 in block a00001 on account acct@example.com (session sid-1)
+arrived sr-9531: /strategic-review 9531, notice first
+--- stderr

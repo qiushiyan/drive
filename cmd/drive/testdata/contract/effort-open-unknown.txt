@@ -1,0 +1,7 @@
+$ drive open sr-9531 --dir $ROOT/work --effort highest /strategic-review 9531
+exit 2
+--- stdout
+--- stderr
+drive: error: --effort must be one of "low","medium","high","xhigh","max" but got "highest"
+Usage: drive open <label> [<line> ...] [flags]
+Run "drive open --help" for details.

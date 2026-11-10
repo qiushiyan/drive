@@ -787,36 +787,51 @@ func relaunch(t *testing.T, r *rig, next string) *drive.Opened {
 				t.Fatalf("%s: %v", cmd, err)
 			}
 		case "open":
-			var opt drive.OpenOptions
-			var step drive.Step
-			for j := 3; j < len(w); j++ {
-				switch w[j] {
-				case "--dir":
-					j++
-					opt.Dir = w[j]
-				case "--resume":
-					j++
-					opt.Resume = w[j]
-				case "--account":
-					j++
-					opt.Account = w[j]
-				case "--model":
-					j++
-					opt.Model = w[j]
-				default:
-					step.Line = w[j]
-				}
-			}
-			o, err := r.d.Open(w[2], step, opt)
-			if err != nil {
-				t.Fatalf("%s: %v", cmd, err)
-			}
-			opened = o
+			opened = runOpen(t, r, cmd)
 		default:
 			t.Fatalf("not a relaunch: %s", cmd)
 		}
 	}
 	return opened
+}
+
+// runOpen runs the drive open a message prints, from its "drive --batch b1
+// open" on, as a driver would.
+func runOpen(t *testing.T, r *rig, next string) *drive.Opened {
+	t.Helper()
+	i := strings.Index(next, "drive --batch b1 open ")
+	if i < 0 {
+		t.Fatalf("no open in %q", next)
+	}
+	w := shellWords(t, next[i:])
+	var opt drive.OpenOptions
+	var step drive.Step
+	for j := 5; j < len(w); j++ {
+		switch w[j] {
+		case "--dir":
+			j++
+			opt.Dir = w[j]
+		case "--resume":
+			j++
+			opt.Resume = w[j]
+		case "--account":
+			j++
+			opt.Account = w[j]
+		case "--model":
+			j++
+			opt.Model = w[j]
+		case "--effort":
+			j++
+			opt.Effort = w[j]
+		default:
+			step.Line = w[j]
+		}
+	}
+	o, err := r.d.Open(w[4], step, opt)
+	if err != nil {
+		t.Fatalf("%s: %v", next[i:], err)
+	}
+	return o
 }
 
 // The relaunch drive prints for a rejected login runs as printed: the close
@@ -925,11 +940,21 @@ func TestAGarbledQueuedLineInterruptsNothing(t *testing.T) {
 	}
 }
 
-// A session opened on a model other than the owner's default stays on it
-// when drive brings it back: the relaunch after a rejected login and the
-// reopen of a gone session both name it, as Claude Code resumes on the
-// launcher's default otherwise.
-func TestASessionKeepsItsModelWhenBroughtBack(t *testing.T) {
+// A session opened on a model or at an effort level other than the owner's
+// stays on both when drive brings it back: the relaunch after a rejected
+// login and the reopen of a gone session name them, as Claude Code resumes
+// on the owner's settings otherwise.
+func TestASessionKeepsItsModelAndEffortWhenBroughtBack(t *testing.T) {
+	step := drive.Step{Line: "/strategic-review 9531"}
+	as := func(r *rig) drive.OpenOptions {
+		return drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work"), Model: "fable", Effort: "xhigh"}
+	}
+	kept := func(t *testing.T, r *rig, o *drive.Opened) {
+		t.Helper()
+		if c := r.w.Session(o.Block); c.Model != "fable" || c.Effort != "xhigh" {
+			t.Fatalf("it runs on fable at xhigh again, got model %q, effort %q", c.Model, c.Effort)
+		}
+	}
 	t.Run("relaunch", func(t *testing.T) {
 		r := newRig(t, "none")
 		_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".claude-accounts", "other@example.com", "sessions"), 0o755)
@@ -943,27 +968,56 @@ func TestASessionKeepsItsModelWhenBroughtBack(t *testing.T) {
 				c.Set("blocked", "auth", "Login expired · Please run /login")
 			}
 		}
-		_, err := r.d.Open("sr-9531", drive.Step{Line: "/strategic-review 9531"}, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work"), Model: "fable"})
+		_, err := r.d.Open("sr-9531", step, as(r))
 		var f *drive.Failed
-		if !errors.As(err, &f) || !f.Login || !strings.Contains(f.Next, "--model fable") {
-			t.Fatalf("the relaunch names the session's model: %v", err)
+		if !errors.As(err, &f) || !f.Login || !strings.Contains(f.Next, "--model fable --effort xhigh") {
+			t.Fatalf("the relaunch names the session's model and effort: %v", err)
 		}
 		r.w.Clock.Sleep(time.Minute)
-		o := relaunch(t, r, f.Next)
-		if m := r.w.Session(o.Block).Model; m != "fable" {
-			t.Fatalf("the relaunched session runs on fable, got %q", m)
-		}
+		kept(t, r, relaunch(t, r, f.Next))
 	})
+	// Rex restarted: the block is gone, and the open starts a new one.
 	t.Run("reopen", func(t *testing.T) {
 		r := newRig(t, "none")
-		o, err := r.d.Open("sr-9531", drive.Step{Line: "/strategic-review 9531"}, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work"), Model: "fable"})
+		if _, err := r.d.Open("sr-9531", step, as(r)); err != nil {
+			t.Fatal(err)
+		}
+		r.w.Restart()
+		e, err := r.d.Wait("sr-9531", time.Minute, 10*time.Minute)
+		if err != nil || e == nil || e.State != "gone" || !strings.Contains(e.Next, "--model fable --effort xhigh") {
+			t.Fatalf("the reopen names the session's model and effort: %+v, %v", e, err)
+		}
+		kept(t, r, runOpen(t, r, e.Next))
+	})
+	// Rex restored the block as a shell: the open types the launch there.
+	t.Run("reopen in a restored block", func(t *testing.T) {
+		r := newRig(t, "none")
+		o, err := r.d.Open("sr-9531", step, as(r))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.w.Restore()
+		e, err := r.d.Wait("sr-9531", time.Minute, 10*time.Minute)
+		if err != nil || e == nil || e.State != "gone" {
+			t.Fatalf("no conversation in the block yet: %+v, %v", e, err)
+		}
+		back := runOpen(t, r, e.Next)
+		if back.Block != o.Block {
+			t.Fatalf("it comes back in its own block, %s: %s", o.Block, back.Block)
+		}
+		kept(t, r, back)
+	})
+	// An open that names neither leaves both to the owner's settings.
+	t.Run("neither", func(t *testing.T) {
+		r := newRig(t, "none")
+		o, err := r.d.Open("sr-9531", step, drive.OpenOptions{Dir: filepath.Join(r.w.Root, "work")})
 		if err != nil {
 			t.Fatal(err)
 		}
 		r.w.Session(o.Block).Crash()
 		e, err := r.d.Wait("sr-9531", time.Minute, 10*time.Minute)
-		if err != nil || e == nil || e.State != "gone" || !strings.Contains(e.Next, "--model fable") {
-			t.Fatalf("the reopen names the session's model: %+v, %v", e, err)
+		if err != nil || e == nil || e.State != "gone" || strings.Contains(e.Next, "--model") || strings.Contains(e.Next, "--effort") {
+			t.Fatalf("the reopen names no model or effort the open did not: %+v, %v", e, err)
 		}
 	})
 }

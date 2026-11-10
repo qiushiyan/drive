@@ -352,6 +352,32 @@ func TestContractRexRestart(t *testing.T) {
 	c.run("restart-status-after", as("status", "--quick")...)
 }
 
+// A session opened at an effort level of its own, as the owner now and then
+// asks of a review: a level Claude Code does not take is a usage error that
+// opens nothing, the session launches at the level given, and the open that
+// brings it back once it is gone names the level again.
+func TestContractOpenEffort(t *testing.T) {
+	c := newContract(t)
+	work := filepath.Join(c.w.Root, "work")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var opened []*testkit.Claude
+	c.w.OnOpen = func(cl *testkit.Claude) { opened = append(opened, cl) }
+	cli(c.app, "batch", "new", "b8", "--tz", "Europe/London")
+
+	c.run("effort-open-unknown", "open", "sr-9531", "--dir", work, "--effort", "highest", "/strategic-review 9531")
+	if len(opened) != 0 {
+		t.Fatalf("a level claude --effort does not take opens nothing: %d opened", len(opened))
+	}
+	c.run("effort-open", "open", "sr-9531", "--dir", work, "--effort", "xhigh", "--goal", "Review pull request 9531 before it merges.", "/strategic-review 9531")
+	if len(opened) != 1 || opened[0].Effort != "xhigh" {
+		t.Fatalf("the session launches at xhigh: %+v", opened)
+	}
+	c.w.Restart()
+	c.run("effort-read-gone", "read", "sr-9531")
+}
+
 // A close can take its cleanup along, in one command.
 func TestContractCloseCleanup(t *testing.T) {
 	c := newContract(t)

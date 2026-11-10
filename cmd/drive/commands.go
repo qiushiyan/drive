@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -295,6 +296,7 @@ type OpenCmd struct {
 	Resume  string  `placeholder:"ID" help:"Resume this Claude Code session id instead of starting fresh, such as a session relaunched on another account."`
 	Account string  `placeholder:"NAME" help:"Run it on this Claude account instead of the launcher's choice."`
 	Model   string  `placeholder:"MODEL" help:"Run it on this model, such as fable for a fresh judge."`
+	Effort  *string `enum:"low,medium,high,xhigh,max" placeholder:"LEVEL" help:"Run it at this effort level, for this session only; without it the owner's settings decide."`
 	Hold    string  `placeholder:"NAME" help:"Name what its first turn uses that only one session may use at a time, as send's --hold does."`
 	Goal    *string `placeholder:"TEXT" help:"What the session sets out to do, in plain terms for the owner: one short paragraph, at most 600 bytes."`
 }
@@ -309,12 +311,19 @@ Resuming LABEL's own session, as the next: for a gone one does, carries it
 on: its park stands until its next step, and so does what was sent to it.`
 }
 
-func (c *OpenCmd) HelpSections() []clikit.Section { return stepSections }
+func (c *OpenCmd) HelpSections() []clikit.Section {
+	return append(slices.Clone(stepSections), clikit.Section{Title: "Examples", Body: `
+drive open sr-9531 --effort xhigh --goal 'Review #9531 before it merges.' '/strategic-review 9531'`})
+}
 
 func (c *OpenCmd) Validate() error { return c.atMostOne() }
 
 func (c *OpenCmd) Run(ctx *kong.Context, d *drive.Driver) error {
-	o, err := d.Open(c.Label, c.step(), drive.OpenOptions{Dir: c.Dir, Resume: c.Resume, Account: c.Account, Model: c.Model, Hold: c.Hold, Goal: c.Goal})
+	opt := drive.OpenOptions{Dir: c.Dir, Resume: c.Resume, Account: c.Account, Model: c.Model, Hold: c.Hold, Goal: c.Goal}
+	if c.Effort != nil {
+		opt.Effort = *c.Effort
+	}
+	o, err := d.Open(c.Label, c.step(), opt)
 	if o != nil {
 		_, _ = io.WriteString(ctx.Stdout, o.Text())
 	}

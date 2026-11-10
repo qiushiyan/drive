@@ -89,7 +89,7 @@ func (d *Driver) sendCommand(view string, step Step, opt SendOptions) string {
 // openCommand is the drive open that opens label with opt and step.
 func (d *Driver) openCommand(label string, opt OpenOptions, step Step) string {
 	words := []any{"open", label}
-	for _, f := range [][2]string{{"--dir", opt.Dir}, {"--resume", opt.Resume}, {"--account", opt.Account}, {"--model", opt.Model}, {"--hold", opt.Hold}} {
+	for _, f := range [][2]string{{"--dir", opt.Dir}, {"--resume", opt.Resume}, {"--account", opt.Account}, {"--model", opt.Model}, {"--effort", opt.Effort}, {"--hold", opt.Hold}} {
 		if f[1] != "" {
 			words = append(words, f[0], f[1])
 		}

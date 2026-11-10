@@ -24,6 +24,8 @@ Flags:
                         session relaunched on another account.
       --account=NAME    Run it on this Claude account instead of the launcher's choice.
       --model=MODEL     Run it on this model, such as fable for a fresh judge.
+      --effort=LEVEL    Run it at this effort level, for this session only; without it the owner's
+                        settings decide (one of: low, medium, high, xhigh, max).
       --hold=NAME       Name what its first turn uses that only one session may use at a time, as
                         send's --hold does.
       --goal=TEXT       What the session sets out to do, in plain terms for the owner: one short
@@ -55,6 +57,9 @@ Steps:
   Text that starts with a dash goes after --, which ends the flags.
   The first step a session gets in a batch carries the owner's notice: at the head
   of its file, or attached after its line.
+
+Examples:
+  drive open sr-9531 --effort xhigh --goal 'Review #9531 before it merges.' '/strategic-review 9531'
 
 Exit codes:
   0    success

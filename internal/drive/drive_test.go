@@ -1187,14 +1187,15 @@ func TestLaunchCommand(t *testing.T) {
 	var got []string
 	term := &recordingTerm{World: r.w, run: func(cmd []string) { got = cmd }}
 	r.d.Term = term
-	if _, err := r.d.Open("judge", drive.Step{}, drive.OpenOptions{Dir: r.w.Root, Account: "other@example.com", Model: "fable", Resume: "sid-1"}); err != nil {
+	if _, err := r.d.Open("judge", drive.Step{}, drive.OpenOptions{Dir: r.w.Root, Account: "other@example.com", Model: "fable", Effort: "xhigh", Resume: "sid-1"}); err != nil {
 		t.Fatal(err)
 	}
-	want := "PLANLAB_AGENT_NUDGES=off x-other@example.com --model fable --resume sid-1; exec zsh -l"
+	want := "PLANLAB_AGENT_NUDGES=off x-other@example.com --model fable --effort xhigh --resume sid-1; exec zsh -l"
 	if len(got) != 3 || got[0] != "/bin/zsh" || got[1] != "-lic" || got[2] != want {
 		t.Fatalf("launch: %q", got)
 	}
-	// The primary account's launcher is named by the owner's shell, not "primary".
+	// The primary account's launcher is named by the owner's shell, not "primary";
+	// an open that names no model or effort adds neither.
 	r.d.Cfg.PrimaryName = "owner"
 	if _, err := r.d.Open("judge2", drive.Step{}, drive.OpenOptions{Dir: r.w.Root, Account: "primary"}); err != nil {
 		t.Fatal(err)

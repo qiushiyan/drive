@@ -97,6 +97,7 @@ type Claude struct {
 	Running bool
 	Rex     string // the Rex session its block is in
 	Model   string // the model its launch line named; "" is the owner's default
+	Effort  string // the effort level its launch line named; "" is the owner's settings
 	Front   string // the program in front of the block's shell, when Claude Code is not
 	// What Claude Code's own registry says: idle, busy or waiting. It moves
 	// the moment the session does; Rex moves only when a hook fires.
@@ -765,8 +766,10 @@ func (w *World) Key(block string, keys ...string) error {
 		// A shell: enter runs the line typed at it.
 		c.Keys = append(c.Keys, keys...)
 		if slices.Contains(keys, "enter") && c.Front == "" {
-			if _, after, ok := strings.Cut(c.Input, "--resume "); ok {
-				w.resumeIn(c, strings.Trim(strings.Fields(after)[0], "'"))
+			if sid := launchFlag(c.Input, "--resume"); sid != "" {
+				// The line is the whole launch: a model or effort it does not name is the owner's.
+				c.Model, c.Effort = launchFlag(c.Input, "--model"), launchFlag(c.Input, "--effort")
+				w.resumeIn(c, sid)
 			}
 			c.Input = ""
 		}
@@ -933,9 +936,8 @@ func (w *World) open(o rex.Open) string {
 		}
 	}
 	c := w.add(o.Label, o.Dir, account)
-	if cmd := strings.Join(o.Command, " "); strings.Contains(cmd, "--model ") {
-		c.Model = strings.Trim(strings.TrimSuffix(strings.Fields(strings.SplitN(cmd, "--model ", 2)[1])[0], ";"), "'")
-	}
+	line := strings.Join(o.Command, " ")
+	c.Model, c.Effort = launchFlag(line, "--model"), launchFlag(line, "--effort")
 	if o.Session != "" {
 		c.Rex = o.Session
 	}
@@ -951,6 +953,16 @@ func (w *World) open(o rex.Open) string {
 		}
 	}
 	return c.Block
+}
+
+// launchFlag is the value a launch line gives flag, or "" when it names none.
+func launchFlag(line, flag string) string {
+	_, after, _ := strings.Cut(line, flag+" ")
+	words := strings.Fields(after)
+	if len(words) == 0 {
+		return ""
+	}
+	return strings.Trim(strings.TrimSuffix(words[0], ";"), "'")
 }
 
 // RexSessions says how many Rex sessions run under label.
