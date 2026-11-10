@@ -330,7 +330,7 @@ func TestAWaiterIsDoneUnderTheLabelItJoinedAs(t *testing.T) {
 	} {
 		got := ""
 		for _, w := range Waiting(tc.evs) {
-			if w.Name != "release" || got != "" {
+			if w.Hold != "release" || got != "" {
 				t.Errorf("%s: %+v", tc.name, Waiting(tc.evs))
 			}
 			got = w.Session

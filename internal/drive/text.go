@@ -166,6 +166,9 @@ func StoppedText(stopped []Stopped) string {
 // LaterText is the line --due prints for a wake not due yet, or a session
 // that is gone.
 func (r Rearmed) LaterText() string {
+	if r.Free != "" {
+		return fmt.Sprintf("%s is free: %s\n", r.Free, r.Why)
+	}
 	if r.Gone != "" {
 		return fmt.Sprintf("%s is gone: %s\n", r.Label, r.Gone)
 	}

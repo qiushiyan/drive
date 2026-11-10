@@ -144,15 +144,21 @@ type Rearmed struct {
 	Again    time.Time // for a wake nobody acted on that is not due yet: when it is
 	Gone     string    // for a session that is gone: how to bring it back
 	Park     *parkNeed // for a park whose --until has come or that nothing ends
+	// Free is a hold that is free while sessions wait for it, Why then being
+	// what to run for each of them; Label is empty.
+	Free string
 }
 
 // Due arms the wake of every session in a webhook batch that has none and
 // needs one: never watched, acted on with no wake armed, a watch that ended
 // without a wake, was stopped or is stuck, a wake nothing was done about
-// (once per view), a parked session waiting for a hold that is free. It is a
-// chat driver's watchdog in one command. later are the wakes nobody acted on
-// that it posts again on a later run, with when, and the sessions that are
-// gone, with the open that brings each back and arms its wake.
+// (once per view). It is a chat driver's watchdog in one command. later is
+// what it arms nothing for: the wakes nobody acted on that it posts again on
+// a later run, with when; the sessions that are gone, with the open that
+// brings each back and arms its wake; the parks that need their driver; and
+// the holds that are free while sessions wait for them, parked or never
+// opened, with the send or open each waits to be given. A waiter gets no
+// watch of its own: its turn ended long before, and what is new is the hold.
 func (d *Driver) Due() (armed, later []Rearmed, err error) {
 	b, err := d.Batch()
 	if err != nil {
@@ -198,6 +204,9 @@ func (d *Driver) Due() (armed, later []Rearmed, err error) {
 			}
 		}
 		out = append(out, Rearmed{Label: r.Label, Why: r.Due, Failures: n})
+	}
+	for _, f := range st.free {
+		later = append(later, Rearmed{Free: f.Name, Why: f.Next})
 	}
 	return out, later, nil
 }
@@ -778,6 +787,28 @@ func (d *Driver) postDue(b *batch.Batch, armed, later []Rearmed) (posted, held s
 		}
 	}
 	lines = append(lines, d.parkLines(parks, b.Zone())...)
+	// A hold that came free is told once to the driver of whoever waits for
+	// it, and again only while no run has heard: each waiter keeps the telling
+	// until it is refused on the hold again or someone takes it.
+	waiting := batch.Waiting(evs)
+	for _, r := range later {
+		if r.Free == "" {
+			continue
+		}
+		due := false
+		var told []batch.Event
+		for _, w := range waiting {
+			if w.Hold != r.Free {
+				continue
+			}
+			due = due || w.Told.IsZero() || !w.Heard && now.Sub(w.Told) >= repostAfter
+			told = append(told, batch.Event{Kind: batch.KindTold, Session: w.Session, Hold: w.Hold, Outcome: batch.NoticeHoldFree})
+		}
+		if due {
+			lines = append(lines, strings.TrimSuffix(r.LaterText(), "\n"))
+			rows = append(rows, told...)
+		}
+	}
 	for _, r := range armed {
 		if m := batch.Find(members, r.Label); r.Failures >= 2 && m != nil && noticeDue(m, "watch-failing", now) {
 			lines = append(lines, fmt.Sprintf("%s's watch has ended without a wake %d times this batch; %s says why, so tell the owner once and record that you did: %s", r.Label, r.Failures,

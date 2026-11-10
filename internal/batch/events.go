@@ -308,7 +308,7 @@ func Members(evs []Event) []*Member {
 				m.Wake.stopped = e.At
 			}
 		case KindTold:
-			if m != nil {
+			if m != nil && e.Outcome != NoticeHoldFree { // that one is its waiter's (Waiting)
 				if m.Notices == nil {
 					m.Notices = map[string]Notice{}
 				}
@@ -472,19 +472,38 @@ func Unresolved(evs []Event, session string) []Event {
 	return out
 }
 
-// Hold is a resource a session holds from the moment its send is admitted
-// until the turn that send started has ended.
+// Hold is a taking of a resource: a session holds it from the moment its send
+// is admitted until the turn that send started has ended.
 type Hold struct {
 	Name    string
 	Session string
 	Since   time.Time // when the send that took it was admitted
 	Intent  string
-	Pending bool   // that send has no outcome yet
-	Step    string // for a session waiting for the hold: the step it was refused
-	Key     string // that step's snippet, when it was one
-	Path    string // that step's file, when it was one
-	Open    bool   // the refused action was an open: Step is the drive open to run
+	Pending bool // that send has no outcome yet
 }
+
+// Waiter is a session a send or an open was refused for because another held
+// what it needed: it waits for that hold from then until a step reaches it or
+// it closes.
+type Waiter struct {
+	Hold    string    // the hold it waits for
+	Session string    // its label; its block's short id until it joins the batch; the label an open was refused under
+	Since   time.Time // when it began to wait
+	Step    string    // the step it was refused
+	Key     string    // that step's snippet, when it was one
+	Path    string    // that step's file, when it was one
+	Open    bool      // the refused action was an open: Step is the drive open to run
+	// Told is when the watchdog last told the driver the hold is free for it,
+	// and Heard whether a driver left a trace since. The telling stands while
+	// the session waits on as it did: a refusal on the hold again, or anyone
+	// taking the hold, has it wait anew, and parking it again does not.
+	Told  time.Time
+	Heard bool
+}
+
+// NoticeHoldFree is the watchdog telling a driver that the hold a session
+// waits for is free: a told event with the waiter as Session and the hold.
+const NoticeHoldFree = "hold-free"
 
 // Holds lists the newest taking of each hold. A send that failed before it
 // reached its session took nothing, and a hold a driver freed is no one's
@@ -524,15 +543,34 @@ func Holds(evs []Event) []Hold {
 // until it closes. One refused by its block id, before it joined the batch,
 // is the same waiter under the label it joins as: the refusal names the
 // block, and every later event the label.
-func Waiting(evs []Event) []Hold {
-	var out []Hold
+func Waiting(evs []Event) []Waiter {
+	var out []Waiter
 	labels := map[string]bool{} // the batch's labels so far
 	blocks := map[string]bool{} // the waiters a refusal named by a block id
 	at := func(session string) int {
-		return slices.IndexFunc(out, func(w Hold) bool { return w.Session == session })
+		return slices.IndexFunc(out, func(w Waiter) bool { return w.Session == session })
 	}
 	for _, e := range evs {
+		if Heard(e) {
+			for i := range out {
+				out[i].Heard = !out[i].Told.IsZero()
+			}
+		}
 		switch e.Kind {
+		case KindTold:
+			if i := at(e.Session); e.Outcome == NoticeHoldFree && i >= 0 && out[i].Hold == e.Hold {
+				out[i].Told, out[i].Heard = e.At, false
+				if e.Reason != "" {
+					out[i].Told = time.Time{} // the post failed, so it told no one
+				}
+			}
+		case KindSendIntent:
+			// The hold is taken, so whoever still waits for it waits anew.
+			for i := range out {
+				if e.Hold != "" && out[i].Hold == e.Hold {
+					out[i].Told, out[i].Heard = time.Time{}, false
+				}
+			}
 		case KindOpen, KindAdopt:
 			labels[e.Session] = true
 			for i, w := range out {
@@ -551,13 +589,15 @@ func Waiting(evs []Event) []Hold {
 			if e.Hold == "" {
 				continue
 			}
-			w := Hold{Name: e.Hold, Session: e.Session, Since: e.At, Step: e.Text, Key: e.Key, Path: e.Path, Open: e.Mode == "open"}
+			w := Waiter{Hold: e.Hold, Session: e.Session, Since: e.At, Step: e.Text, Key: e.Key, Path: e.Path, Open: e.Mode == "open"}
 			switch i := at(e.Session); {
 			case i < 0:
 				out = append(out, w)
 				blocks[e.Session] = !w.Open && !labels[e.Session]
-			case out[i].Name != e.Hold:
+			case out[i].Hold != e.Hold:
 				out[i] = w
+			default:
+				out[i].Told, out[i].Heard = time.Time{}, false // refused on it again: it was not free after all
 			}
 		case KindSend, KindClose:
 			if i := at(e.Session); i >= 0 && (e.Kind == KindClose || e.Outcome != "") {

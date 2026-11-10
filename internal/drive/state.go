@@ -15,6 +15,19 @@ import (
 // Rex's own word through.
 type State string
 
+// The states turnState gives. A Claude Code that keeps no registry status can
+// read as a word of Rex's that is none of them.
+const (
+	Working           State = "working"
+	Done              State = "done"
+	Idle              State = "idle" // no prompt yet
+	Interrupted       State = "interrupted"
+	Errored           State = "error"
+	BlockedPermission State = "blocked:permission"
+	BlockedQuestion   State = "blocked:question"
+	BlockedAuth       State = "blocked:auth" // a rejected login
+)
+
 // blocked says the session is stopped on something only someone else
 // moves: a prompt, or a rejected login.
 func (s State) blocked() bool { return strings.HasPrefix(string(s), "blocked") }

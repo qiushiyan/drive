@@ -102,8 +102,8 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 			}
 		}
 		if opt.Hold != "" {
-			if h, held := d.holder(evs, batch.Members(evs), opt.Hold, label); held {
-				return &holdRefused{Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), h.why),
+			if h := d.holder(evs, batch.Members(evs), opt.Hold, label); h.held() {
+				return &holdRefused{Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), h.why()),
 					Next: d.holdNext(b, h, label, "", whole, true)}, opt.Hold, step, whole}
 			}
 		}

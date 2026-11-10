@@ -1284,8 +1284,8 @@ func TestHoldWaitersAreListedAndTheRefusalSaysHowBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	st, _ = r.d.Status(false)
-	if len(st.Holds) != 1 || !strings.HasPrefix(st.Holds[0], "release: free; waiting for it: T3s") {
-		t.Fatalf("once free, the waiter is still listed until it is sent: %q", st.Holds)
+	if len(st.Holds) != 1 || !strings.HasPrefix(st.Holds[0], "release: free; T3s waits for release; send its step now: drive --batch b1 send T3s@") {
+		t.Fatalf("once free, the hold's line is its waiter's send, until it is sent: %q", st.Holds)
 	}
 	if _, err := r.d.Send(r.view("T3s"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
 		t.Fatal(err)

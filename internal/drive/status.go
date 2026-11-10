@@ -253,6 +253,28 @@ type Status struct {
 	// Parks are the parked sessions whose park needs the driver: its --until
 	// has come, or nothing on record ends it. A line each, with what to run.
 	Parks []string
+
+	free []freeHold // the holds that are free with sessions waiting for them
+}
+
+// freeHold is a hold that is free while sessions wait for it, with the send
+// or open to run for each: what its waiters' driver has to hear once.
+type freeHold struct {
+	Name string
+	Next string
+}
+
+// freeHolds lists them. A waiter needs no member to be one: an open refused on
+// a hold waits under the label it was to open as.
+func (d *Driver) freeHolds(b *batch.Batch, evs []batch.Event, members []*batch.Member, holds []holdNow) []freeHold {
+	var out []freeHold
+	for _, h := range holds {
+		if b == nil || h.by.held() || len(h.waiting) == 0 {
+			continue
+		}
+		out = append(out, freeHold{Name: h.Name, Next: d.waitersNext(b, evs, members, h.Name)})
+	}
+	return out
 }
 
 // InFlight is an action admitted with no outcome yet.
@@ -284,8 +306,8 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 	case err != nil:
 		return nil, err
 	}
-	// A parked waiter whose hold is free is due a wake, so the holds are
-	// read before the rows.
+	// A parked waiter's row says when its hold is free, so the holds are read
+	// before the rows.
 	holds := d.holdsNow(evs, members)
 	hearing := batch.Hearings(evs, d.now())
 	out.Rows, out.Others, out.Closed = d.rows(b, evs, members, blocks, holds, hearing, out.Zone, withProgress)
@@ -317,6 +339,16 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 	}
 	out.Parks = d.parkLines(needs, out.Zone)
 	out.Holds = holdLines(holds, out.Zone)
+	// A free hold someone waits for says what to run for each waiter, in place
+	// of who waits: that send or open is the news.
+	out.free = d.freeHolds(b, evs, members, holds)
+	for _, f := range out.free {
+		for i, line := range out.Holds {
+			if strings.HasPrefix(line, f.Name+": free") {
+				out.Holds[i] = f.Name + ": free; " + f.Next
+			}
+		}
+	}
 	grants, asks, _ := batch.Records(evs)
 	out.Grants = grants
 	for _, a := range asks {
@@ -380,7 +412,7 @@ func (d *Driver) memberRows(b *batch.Batch, evs []batch.Event, members []*batch.
 	free := map[string]string{} // a session waiting for a hold that is free, to that hold
 	for _, h := range holds {
 		for _, w := range h.waiting {
-			if !h.held {
+			if !h.by.held() {
 				free[w.Session] = h.Name
 			}
 		}
@@ -418,8 +450,8 @@ func holdLines(holds []holdNow, zone *time.Location) []string {
 	var out []string
 	for _, h := range holds {
 		line := h.Name + ": free"
-		if h.held {
-			line = fmt.Sprintf("%s: held by %s since %s, %s", h.Name, h.by.Session, h.by.Since.In(zone).Format("15:04"), h.by.why)
+		if h.by.held() {
+			line = fmt.Sprintf("%s: held by %s since %s, %s", h.Name, h.by.Session, h.by.Since.In(zone).Format("15:04"), h.by.why())
 		}
 		var waiting []string
 		for _, w := range h.waiting {
@@ -428,7 +460,7 @@ func holdLines(holds []holdNow, zone *time.Location) []string {
 		switch {
 		case len(waiting) > 0:
 			line += "; waiting for it: " + strings.Join(waiting, ", ")
-		case !h.held:
+		case !h.by.held():
 			continue
 		}
 		out = append(out, line)
@@ -471,9 +503,9 @@ func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, hearing batch.He
 	}
 	switch {
 	case m.Parked != "" && free != "":
-		// A parked waiter whose hold is free wakes no one unless its watch is armed again.
-		return Wake{kind: wakeParked, Watch: parked + ": " + m.Parked + "; " + free + " is free now, and " + d.run("watch", "--due") + " wakes it",
-			Due: "waits for " + free + ", which is free", Park: &end}
+		// It stays parked and wakes no one of itself: the hold's own line says
+		// what to send it, and the watchdog tells its driver once (freeHolds).
+		return Wake{kind: wakeParked, Watch: parked + ": " + m.Parked + "; " + free + " is free now", Park: &end}
 	case m.Parked != "":
 		return Wake{kind: wakeParked, Watch: parked + ": " + m.Parked, Park: &end}
 	case alive:

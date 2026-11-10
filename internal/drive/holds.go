@@ -32,11 +32,15 @@ func (d *Driver) holdNext(b *batch.Batch, h heldBy, label, view, retry string, o
 	var next string
 	if b.Meta.Wake != "webhook" {
 		wait := fmt.Sprintf("wait for %s's turn to end (%s)", h.Session, d.run("wait", h.Session))
-		switch {
-		case h.prompt:
+		switch h.kind {
+		case holdPrompt:
 			wait = fmt.Sprintf("answer %s's prompt (%s), %s", h.Session, d.run("read", h.Session, "--pending"), wait)
-		case h.job != nil:
+		case holdJob:
 			wait = fmt.Sprintf("wait for %s, which usually goes on once its job ends (%s)", h.Session, d.run("wait", h.Session))
+		case holdSending:
+			wait = fmt.Sprintf("let the send to %s finish, then %s", h.Session, wait)
+		case holdUnread:
+			wait = fmt.Sprintf("see why %s cannot be read (%s); once it can, %s", h.Session, d.run("status"), wait)
 		}
 		again := "send this again: "
 		if open {
@@ -50,21 +54,23 @@ func (d *Driver) holdNext(b *batch.Batch, h heldBy, label, view, retry string, o
 		}
 		others := "nothing else wakes you"
 		switch {
-		case h.prompt:
+		case h.kind == holdPrompt:
 			next = fmt.Sprintf("%s waits on a prompt, so answer it first (%s); its wake comes when its turn then ends and %s", h.Session, d.run("read", h.Session, "--pending"), names)
-		case h.job != nil && open:
+		case h.kind == holdJob && open:
 			next = fmt.Sprintf("nothing to run now: %s usually goes on once its job ends, and the wake of that turn, which %s arms, %s", h.Session, d.run("watch", "--due"), names)
-		case h.job != nil:
+		case h.kind == holdJob:
 			next, others = h.Session+" usually goes on once its job ends", "nothing wakes you"
+		case h.kind == holdUnread:
+			next = fmt.Sprintf("%s cannot be read, so nothing says where its turn stands: see why (%s); its wake, once it can be read and its turn ends, %s", h.Session, d.run("status"), names)
 		default:
 			next = fmt.Sprintf("%s's wake comes when its turn ends and %s", h.Session, names)
 		}
 		if view != "" {
-			next += fmt.Sprintf("; %s for %s, so park it meanwhile: %s; %s wakes it once %s is free",
-				others, label, d.run("park", view, text("waits for "+h.Name+", held by "+h.Session)), d.run("watch", "--due"), h.Name)
+			next += fmt.Sprintf("; %s for %s, so park it meanwhile: %s; once %s is free, the watchdog tells you, and %s says so",
+				others, label, d.run("park", view, text("waits for "+h.Name+", held by "+h.Session)), h.Name, d.run("watch", "--due"))
 		}
 	}
-	if h.job != nil {
+	if h.kind == holdJob {
 		// A job can outlast what the hold was taken for by hours, as an eval
 		// started beside a release did: only the driver can tell the two apart.
 		next += fmt.Sprintf("; if that job is not what %s was taken for, free the hold, saying why: %s; if it should have ended, have %s stop it: %s",
@@ -87,7 +93,7 @@ func (d *Driver) waiterLines(b *batch.Batch, label string) string {
 			continue
 		}
 		for _, w := range batch.Waiting(evs) {
-			if w.Name != h.Name {
+			if w.Hold != h.Name {
 				continue
 			}
 			if w.Open {
@@ -106,84 +112,113 @@ func (d *Driver) waiterLines(b *batch.Batch, label string) string {
 	return out.String()
 }
 
-// heldBy is a hold as it stands: who holds it and why, whether the holder
-// waits on a prompt, and, where a job it started is what holds it, that job
-// and the holder's view.
+// holdKind is what keeps a hold, or that nothing does. It alone says whether
+// the hold stands and whether its driver may hand it back.
+type holdKind int
+
+const (
+	holdFree    holdKind = iota // nothing keeps it: its holder's turn ended, never took the step, or is gone or closed
+	holdSending                 // the send that took it is under way
+	holdWorking                 // its holder's turn still runs
+	holdLater                   // its holder works on a step sent after the one that took it
+	holdPrompt                  // its holder waits on a prompt
+	holdJob                     // its holder's turn ended, and a background job it started still runs
+	holdUnread                  // its holder cannot be read, so nothing says where its turn stands
+)
+
+// heldBy is a hold as it stands: the taking, what keeps it, and, where a job
+// its holder started is what keeps it, that job and the holder's view.
 type heldBy struct {
 	batch.Hold
-	why     string
-	prompt  bool
-	job     *session.Shell
-	view    string
-	sending bool // the send that took it is under way
-	unread  bool // its holder cannot be read, so nothing says where its turn stands
+	kind holdKind
+	job  *session.Shell
+	view string
 }
 
-// holder says whether a hold is taken by a session other than label. It
-// holds while the send that took it is under way, while its holder works,
+// held says the hold stands.
+func (h heldBy) held() bool { return h.kind != holdFree }
+
+// freeable says its driver may hand it back: only a job keeps it, and only
+// the driver can say the job is not the held work.
+func (h heldBy) freeable() bool { return h.kind == holdJob }
+
+// why says what keeps it, after "held by S2 since 14:45, ".
+func (h heldBy) why() string {
+	switch h.kind {
+	case holdSending:
+		return "whose send is still under way"
+	case holdLater:
+		return "who works on a later step"
+	case holdPrompt:
+		return "who waits on a prompt"
+	case holdJob:
+		return "whose turn ended, but a background job it started still runs: " + clip(h.job.Command, 120)
+	case holdUnread:
+		return "whose session cannot be read"
+	}
+	return "whose turn is still running"
+}
+
+// holder says how the hold name stands for a session other than label. It is
+// held while the send that took it is under way, while its holder works,
 // later steps included, since a follow-up to a closeout is still the
 // closeout, while it waits on a prompt, and while background jobs it started
 // since run. A holder that cannot be read holds; only one that is gone or
 // never received the send does not.
-func (d *Driver) holder(evs []batch.Event, members []*batch.Member, name, label string) (heldBy, bool) {
+func (d *Driver) holder(evs []batch.Event, members []*batch.Member, name, label string) heldBy {
 	for _, h := range batch.Holds(evs) {
 		if h.Name != name || h.Session == label {
 			continue
 		}
-		hb := heldBy{Hold: h, why: "whose turn is still running"}
+		hb := heldBy{Hold: h}
 		m := batch.Find(members, h.Session)
 		if m == nil || m.Closed {
-			return hb, false
+			return hb
 		}
 		if h.Pending && d.Store.Busy(m.Block) != nil {
-			hb.why, hb.sending = "whose send is still under way", true
-			return hb, true
+			hb.kind = holdSending
+			return hb
 		}
 		s, err := session.Locate(d.Term, d.Host, m.Block)
 		if errors.Is(err, session.ErrNoClaude) || err != nil && !d.blockExists(m.Block) {
-			return hb, false
+			return hb
+		}
+		var f turn.Frontier
+		if err == nil {
+			f, err = s.Frontier()
 		}
 		if err != nil {
-			hb.why, hb.unread = "whose session cannot be read", true
-			return hb, true
-		}
-		f, err := s.Frontier()
-		if err != nil {
-			hb.why, hb.unread = "whose session cannot be read", true
-			return hb, true
+			hb.kind = holdUnread
+			return hb
 		}
 		t := d.turnOf(s, f, h.Since)
 		switch {
 		case t.State.onPrompt():
-			hb.why, hb.prompt = "who waits on a prompt", true
-			return hb, true
-		case t.State == "working" && sentSince(evs, h):
-			hb.why = "who works on a later step"
-			return hb, true
-		case t.State == "working":
-			return hb, true
+			hb.kind = holdPrompt
+		case t.State == Working && sentSince(evs, h):
+			hb.kind = holdLater
+		case t.State == Working:
+			hb.kind = holdWorking
+		case f.Newest() == nil || f.Newest().At.Before(h.Since):
+			// The send never reached it.
+		case !t.Over:
+			hb.kind = holdWorking
+		case len(t.Jobs) > 0:
+			// A turn that ended while a job it started runs, such as a wait on
+			// checks before a merge, resumes when the job ends.
+			hb.kind, hb.job, hb.view = holdJob, &t.Jobs[0], turn.ViewOf(m.Label, s.ID, f).String()
 		}
-		if p := f.Newest(); p == nil || p.At.Before(h.Since) {
-			return hb, false // the send never reached it
-		}
-		// A turn that ended while a job it started runs, such as a wait on
-		// checks before a merge, resumes when the job ends.
-		if t.Over && len(t.Jobs) > 0 {
-			hb.job, hb.view = &t.Jobs[0], turn.ViewOf(m.Label, s.ID, f).String()
-			hb.why = "whose turn ended, but a background job it started still runs: " + clip(t.Jobs[0].Command, 120)
-		}
-		return hb, !t.Over || t.Shells > 0
+		return hb
 	}
-	return heldBy{}, false
+	return heldBy{}
 }
 
-// holdNow is a hold as status lists it: whether it is held, by whom and
-// why, and the sessions waiting for it with the step each was refused.
+// holdNow is a hold as status lists it: how it stands, and the sessions
+// waiting for it with the step each was refused.
 type holdNow struct {
 	Name    string
-	held    bool
 	by      heldBy
-	waiting []batch.Hold
+	waiting []batch.Waiter
 }
 
 // holdsNow reads every hold the batch has taken or refused a step for, in
@@ -195,14 +230,13 @@ func (d *Driver) holdsNow(evs []batch.Event, members []*batch.Member) []holdNow 
 	}
 	waiting := batch.Waiting(evs)
 	for _, w := range waiting {
-		names[w.Name] = true
+		names[w.Hold] = true
 	}
 	var out []holdNow
 	for _, name := range sortedKeys(names) {
-		h := holdNow{Name: name}
-		h.by, h.held = d.holder(evs, members, name, "")
+		h := holdNow{Name: name, by: d.holder(evs, members, name, "")}
 		for _, w := range waiting {
-			if w.Name == name {
+			if w.Hold == name {
 				h.waiting = append(h.waiting, w)
 			}
 		}
@@ -241,7 +275,7 @@ func (d *Driver) blockExists(block string) bool {
 }
 
 // refusedStep is the step a session waiting for a hold was refused.
-func refusedStep(w batch.Hold) Step {
+func refusedStep(w batch.Waiter) Step {
 	switch {
 	case w.Key != "":
 		return Step{Key: w.Key, Text: w.Step}
@@ -290,12 +324,12 @@ func (d *Driver) Free(name, reason string) (*Freed, error) {
 	holder := ""
 	err = b.Locked(func(evs []batch.Event) error {
 		members := batch.Members(evs)
-		h, held := d.holder(evs, members, name, "")
+		h := d.holder(evs, members, name, "")
 		switch {
-		case !held:
+		case !h.held():
 			out.Holds = holdNames(evs)
 			out.Unnamed = !slices.Contains(out.Holds, name)
-		case h.job == nil:
+		case !h.freeable():
 			holder = h.Session
 			return d.unfreed(b, members, h, again)
 		default:
@@ -317,17 +351,17 @@ func (d *Driver) Free(name, reason string) (*Freed, error) {
 // what keeps it and what to run from there. again is the free itself.
 func (d *Driver) unfreed(b *batch.Batch, members []*batch.Member, h heldBy, again string) *Refused {
 	r := &Refused{Reason: fmt.Sprintf("%s stays held by %s since %s, %s: a hold is freed only once its holder's turn has ended",
-		h.Name, h.Session, h.Since.In(b.Zone()).Format("15:04"), h.why)}
+		h.Name, h.Session, h.Since.In(b.Zone()).Format("15:04"), h.why())}
 	ends := fmt.Sprintf("%s's wake comes when its turn ends", h.Session)
 	if b.Meta.Wake != "webhook" {
 		ends = fmt.Sprintf("wait for %s's turn to end (%s)", h.Session, d.run("wait", h.Session))
 	}
-	switch {
-	case h.sending:
+	switch h.kind {
+	case holdSending:
 		r.Next = fmt.Sprintf("let that send finish; %s then shows where %s stands", d.run("read", h.Session), h.Session)
-	case h.unread:
+	case holdUnread:
 		r.Next = "nothing was done; try it again: " + again
-	case h.prompt:
+	case holdPrompt:
 		answer := d.run("read", h.Session, "--pending")
 		if o, err := d.observe(b, members, h.Session); err == nil {
 			answer = d.answerNext(h.Session, o.View.String(), o.State())
@@ -344,7 +378,7 @@ func (d *Driver) unfreed(b *batch.Batch, members []*batch.Member, h heldBy, agai
 func (d *Driver) waitersNext(b *batch.Batch, evs []batch.Event, members []*batch.Member, name string) string {
 	var who, runs []string
 	for _, w := range batch.Waiting(evs) {
-		if w.Name != name {
+		if w.Hold != name {
 			continue
 		}
 		run := "open it now: " + w.Step // a refused open, whole

@@ -357,13 +357,13 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 			}
 		}
 		if opt.Hold != "" {
-			if h, held := d.holder(evs, members, opt.Hold, o.Label); held {
+			if h := d.holder(evs, members, opt.Hold, o.Label); h.held() {
 				// The refused session is left untouched, so no wake of its own comes: one in the batch is parked.
 				park := ""
 				if batch.Find(members, o.Label) != nil {
 					park = o.View.String()
 				}
-				return &holdRefused{Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), h.why),
+				return &holdRefused{Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), h.why()),
 					Next: d.holdNext(b, h, o.Label, park, d.sendCommand(o.View.String(), p.step, opt), false)}, opt.Hold, p.step, ""}
 			}
 		}
