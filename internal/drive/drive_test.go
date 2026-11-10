@@ -1216,14 +1216,15 @@ func TestLaunchCommand(t *testing.T) {
 	var got []string
 	term := &recordingTerm{World: r.w, run: func(cmd []string) { got = cmd }}
 	r.d.Term = term
-	if _, err := r.d.Open("judge", drive.Step{}, drive.OpenOptions{Dir: r.w.Root, Account: "other@example.com", Model: "fable", Resume: "sid-1"}); err != nil {
+	if _, err := r.d.Open("judge", drive.Step{}, drive.OpenOptions{Dir: r.w.Root, Account: "other@example.com", Model: "fable", Effort: "xhigh", Resume: "sid-1"}); err != nil {
 		t.Fatal(err)
 	}
-	want := "PLANLAB_AGENT_NUDGES=off x-other@example.com --model fable --resume sid-1; exec zsh -l"
+	want := "PLANLAB_AGENT_NUDGES=off x-other@example.com --model fable --effort xhigh --resume sid-1; exec zsh -l"
 	if len(got) != 3 || got[0] != "/bin/zsh" || got[1] != "-lic" || got[2] != want {
 		t.Fatalf("launch: %q", got)
 	}
-	// The primary account's launcher is named by the owner's shell, not "primary".
+	// The primary account's launcher is named by the owner's shell, not "primary";
+	// an open that names no model or effort adds neither.
 	r.d.Cfg.PrimaryName = "owner"
 	if _, err := r.d.Open("judge2", drive.Step{}, drive.OpenOptions{Dir: r.w.Root, Account: "primary"}); err != nil {
 		t.Fatal(err)
@@ -1445,8 +1446,8 @@ func TestAnOpenWhoseClaudeCodeNeverStartsIsOpenedAgainWhole(t *testing.T) {
 	l := hook(t, r)
 	r.w.NoStart = map[string]bool{"J1": true}
 	dir := filepath.Join(r.w.Root, "work")
-	step, opt := drive.Step{Line: "judge the release"}, drive.OpenOptions{Dir: dir, Model: "fable", Hold: "release"}
-	again := "drive --batch b1 open J1 --dir " + dir + " --model fable --hold release 'judge the release'"
+	step, opt := drive.Step{Line: "judge the release"}, drive.OpenOptions{Dir: dir, Model: "fable", Effort: "xhigh", Hold: "release"}
+	again := "drive --batch b1 open J1 --dir " + dir + " --model fable --effort xhigh --hold release 'judge the release'"
 	_, err := r.d.Open("J1", step, opt)
 	var failed *drive.Failed
 	if !errors.As(err, &failed) || !strings.Contains(failed.What, "did not start") || !strings.HasSuffix(failed.Next, "then open it again: "+again) {

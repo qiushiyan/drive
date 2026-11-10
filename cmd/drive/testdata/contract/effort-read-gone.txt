@@ -1,0 +1,9 @@
+$ drive read sr-9531
+exit 0
+--- stdout
+ok
+
+sr-9531 is gone on account acct@example.com (session sid-1)
+goal: Review pull request 9531 before it merges.
+next: bring it back under its label, its conversation resumed where it stopped: drive --batch b8 open sr-9531 --dir $ROOT/work --resume sid-1 --account acct@example.com --effort xhigh
+--- stderr

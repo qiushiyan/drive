@@ -156,7 +156,8 @@ type Event struct {
 	SID     string    `json:"sid,omitempty"`
 	Account string    `json:"account,omitempty"`
 	Dir     string    `json:"dir,omitempty"`
-	Model   string    `json:"model,omitempty"` // on an open: the model it was asked to run on
+	Model   string    `json:"model,omitempty"`  // on an open: the model it was asked to run on
+	Effort  string    `json:"effort,omitempty"` // on an open: the effort level it was asked to run at
 
 	Intent  string `json:"intent,omitempty"`  // joins a send-intent or open-intent to its outcome
 	Mode    string `json:"mode,omitempty"`    // typed or file
@@ -205,9 +206,11 @@ type Member struct {
 	SID     string
 	Account string
 	Dir     string
-	// Model is the model its latest open asked for, which drive's relaunch
-	// and reopen ask for again; "" is the launcher's default.
+	// Model and Effort are the model and the effort level its latest open
+	// asked for, which drive's relaunch and reopen ask for again; "" leaves
+	// it to the owner's launcher and settings.
 	Model  string
+	Effort string
 	Joined time.Time
 	// Starting says its block is on record and no open has yet said Claude
 	// Code started in it: the launch is under way, or its driver ended, or it
@@ -302,11 +305,12 @@ func Members(evs []Event) []*Member {
 				// Claude Code started in the block its open recorded: the same
 				// member, now open. Said twice, as by the driver that opened it
 				// and one that found it running, it is said once.
-				old.SID, old.Account, old.Dir, old.Model = cmp.Or(e.SID, old.SID), cmp.Or(e.Account, old.Account), cmp.Or(e.Dir, old.Dir), cmp.Or(e.Model, old.Model)
+				old.SID, old.Account, old.Dir = cmp.Or(e.SID, old.SID), cmp.Or(e.Account, old.Account), cmp.Or(e.Dir, old.Dir)
+				old.Model, old.Effort = cmp.Or(e.Model, old.Model), cmp.Or(e.Effort, old.Effort)
 				old.Starting, old.Opening = false, nil
 				continue
 			}
-			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Model: e.Model, Joined: e.At, Resumed: read[e.Ref], born: i + 1,
+			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Model: e.Model, Effort: e.Effort, Joined: e.At, Resumed: read[e.Ref], born: i + 1,
 				Starting: !started, Ref: e.Ref}
 			if m.Starting && e.Intent != "" {
 				m.Opening = asked[e.Intent]

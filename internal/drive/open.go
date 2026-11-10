@@ -21,6 +21,7 @@ type OpenOptions struct {
 	Resume  string // a session id to resume instead of starting fresh
 	Account string // run on this account (x-<account>); "" lets the launcher choose
 	Model   string // such as "fable", for a fresh judge
+	Effort  string // such as "xhigh", for this session only; "" leaves it to the owner's settings
 	Hold    string
 	Goal    *string // what the session sets out to do, for the owner; nil leaves the label's goal as it was
 }
@@ -125,7 +126,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return nil, f
 	}
 	// On record at once: a driver that ends while Claude Code starts leaves the block known.
-	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindOpen, Session: label, Intent: intent, Block: block, Dir: opt.Dir, Model: opt.Model, Ref: opt.Resume, Outcome: "starting"}); err != nil {
+	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindOpen, Session: label, Intent: intent, Block: block, Dir: opt.Dir, Model: opt.Model, Effort: opt.Effort, Ref: opt.Resume, Outcome: "starting"}); err != nil {
 		return nil, d.unrecorded(label, block, err)
 	}
 	s, err := d.awaitSession(block, 90*time.Second)
@@ -138,7 +139,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return nil, f
 	}
 	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindOpen, Session: label, Block: block,
-		SID: s.ID, Account: s.Account, Dir: s.Dir, Model: opt.Model, Ref: opt.Resume}); err != nil {
+		SID: s.ID, Account: s.Account, Dir: s.Dir, Model: opt.Model, Effort: opt.Effort, Ref: opt.Resume}); err != nil {
 		return nil, d.unrecorded(label, block, err)
 	}
 	out = &Opened{Label: label, Block: block, Account: s.Account, Session: s.ID}
@@ -174,14 +175,14 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 }
 
 // openIntent is the record of an open as it was asked for, written before
-// anything opens: its directory, account, model, the conversation it resumes,
+// anything opens: its directory, account, model, effort, the conversation it resumes,
 // its hold and its first step, each as given, so an open whose Claude Code
 // never starts can be asked for again whole. Mode says how the step was
 // given, which an older drive's intent, holding only a clipped summary, does
 // not.
 func openIntent(at time.Time, label, intent string, step Step, opt OpenOptions, goal string) batch.Event {
 	e := batch.Event{At: at, Kind: batch.KindOpenIntent, Session: label, Intent: intent, Dir: opt.Dir, Account: opt.Account,
-		Model: opt.Model, Ref: opt.Resume, Hold: opt.Hold, Goal: goal, Mode: "none"}
+		Model: opt.Model, Effort: opt.Effort, Ref: opt.Resume, Hold: opt.Hold, Goal: goal, Mode: "none"}
 	switch {
 	case step.Key != "":
 		e.Mode, e.Key, e.Text = "snippet", step.Key, step.Text
@@ -328,6 +329,9 @@ func (d *Driver) launchLine(opt OpenOptions) string {
 	cmd := strings.TrimSpace(strings.Join(env, " ") + " " + launcher)
 	if opt.Model != "" {
 		cmd += " --model " + shell.Quote(opt.Model)
+	}
+	if opt.Effort != "" {
+		cmd += " --effort " + shell.Quote(opt.Effort)
 	}
 	if opt.Resume != "" {
 		cmd += " --resume " + shell.Quote(opt.Resume)

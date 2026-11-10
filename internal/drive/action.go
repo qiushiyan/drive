@@ -108,7 +108,7 @@ func (a *action) started(o *Observation) error {
 		return nil
 	}
 	if err := a.b.Append(batch.Event{At: a.d.now(), Kind: batch.KindOpen, Session: m.Label, Block: m.Block, SID: o.Session.ID,
-		Account: o.Session.Account, Dir: o.Session.Dir, Model: m.Model, Ref: m.Ref, Outcome: "settled", Note: "its driver ended before Claude Code started"}); err != nil {
+		Account: o.Session.Account, Dir: o.Session.Dir, Model: m.Model, Effort: m.Effort, Ref: m.Ref, Outcome: "settled", Note: "its driver ended before Claude Code started"}); err != nil {
 		return err
 	}
 	evs, err := a.b.Events()
