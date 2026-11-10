@@ -1,6 +1,8 @@
 package drive
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 )
 
 // Watches runs a wait in the background so it outlives the command that
@@ -66,7 +69,27 @@ func identify(pid int) (proc, bool) {
 	return p, p.command != ""
 }
 
-func (w Detached) pidfile(name string) string { return filepath.Join(w.Dir, name+".pid") }
+// nameMax is the longest name a pidfile keeps as it is: a file name runs to
+// 255 bytes on APFS and ext4, and writePidfile adds ".pid.tmp".
+const nameMax = 255 - len(".pid.tmp")
+
+// pidfile is where a watch's pid is kept. A timer's watch is named by its
+// whole note, so a name too long for a file keeps its start and ends in a
+// hash of the whole, and two notes alike for a page still name two watches.
+// A name that fits is kept as it is, so a watch an older drive started is
+// still found by its name.
+func (w Detached) pidfile(name string) string {
+	if len(name) > nameMax {
+		sum := sha256.Sum256([]byte(name))
+		tag := "-" + hex.EncodeToString(sum[:6])
+		cut := nameMax - len(tag)
+		for cut > 0 && !utf8.RuneStart(name[cut]) {
+			cut--
+		}
+		name = name[:cut] + tag
+	}
+	return filepath.Join(w.Dir, name+".pid")
+}
 
 func (w Detached) read(name string) (p proc, ok bool) { return readPidfile(w.pidfile(name)) }
 
@@ -117,7 +140,13 @@ func (w Detached) Start(name string, argv []string, log string) error {
 	if err != nil {
 		return fmt.Errorf("starting watch %s: %w", name, err)
 	}
-	return writePidfile(w.pidfile(name), p)
+	if err := writePidfile(w.pidfile(name), p); err != nil {
+		// Off the books, nothing would stop it, and it would wake the
+		// driver for a watch that failed.
+		_ = syscall.Kill(-p.pid, syscall.SIGKILL)
+		return fmt.Errorf("starting watch %s: its pidfile: %w; its process was stopped", name, err)
+	}
+	return nil
 }
 
 // detach runs argv in dir ("" for this process's) as a process in a session

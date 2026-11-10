@@ -129,6 +129,65 @@ func TestADetachedWatchRunsAndStops(t *testing.T) {
 	_ = w.Stop("drive-test")
 }
 
+// A timer's watch is named by its whole note, which can run past the 255
+// bytes a file name may (10 November: a 230-byte note failed with "file name
+// too long"). A long name runs as a watch like any other, and two names that
+// differ only past where a file name would end are two watches.
+func TestAWatchByALongNameRuns(t *testing.T) {
+	w := drive.Detached{Dir: t.TempDir()}
+	log := filepath.Join(t.TempDir(), "watches.log")
+	long := "drive-2026-11-10-timer-" + strings.Repeat("S2-is-due--read-it-", 15)
+	a, b := long+"a", long+"b"
+	for _, name := range []string{a, b} {
+		if err := w.Start(name, []string{"/bin/sleep", "30"}, log); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = w.Stop(name) })
+	}
+	if !w.Alive(a) || !w.Alive(b) {
+		t.Fatal("both watches run")
+	}
+	if err := w.Stop(a); err != nil {
+		t.Fatal(err)
+	}
+	if w.Alive(a) || !w.Alive(b) {
+		t.Fatal("stopping one watch leaves the other running")
+	}
+}
+
+// A watch whose pidfile cannot be written is off the books, where nothing
+// would stop it, so a Start that fails leaves no process running: a failed
+// timer that rang anyway would wake its driver unasked.
+func TestAFailedStartLeavesNoWatchRunning(t *testing.T) {
+	dir := t.TempDir()
+	w := drive.Detached{Dir: filepath.Join(dir, "watches")}
+	if err := os.Mkdir(w.Dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	ran := filepath.Join(dir, "ran")
+	argv := []string{"/bin/sh", "-c", `echo $$ > "$0"; exec sleep 30`, ran}
+	if err := w.Start("drive-test", argv, filepath.Join(dir, "watches.log")); err == nil {
+		t.Fatal("a pidfile in a directory nobody may write to fails")
+	}
+	// The process may have been stopped before it wrote its pid.
+	for range 50 {
+		b, err := os.ReadFile(ran)
+		pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+		if err != nil || pid == 0 {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+		for j := 0; j < 100 && !exited(pid); j++ {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if !exited(pid) {
+			t.Fatalf("process %d still runs, its watch off the books", pid)
+		}
+		return
+	}
+}
+
 // exited says process pid has ended: gone, or a zombie its parent, this
 // test, has not reaped.
 func exited(pid int) bool {
