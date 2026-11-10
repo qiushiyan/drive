@@ -51,6 +51,29 @@ const (
 	KindLimit = "limit"
 )
 
+// How a send ended, as its event's Outcome says.
+const (
+	SendArrived   = "arrived"   // the session took the step as written
+	SendQueued    = "queued"    // it waits behind the turn the session runs
+	SendRecovered = "recovered" // it arrived whole once retyped, its start lost the first time
+	SendGarbled   = "garbled"   // it arrived without its start
+	SendOther     = "other"     // the session received something else
+	SendUnknown   = "unknown"   // nothing new reached the transcript in time
+)
+
+// Delivered says a send ended with its step in the session as it was
+// written.
+func Delivered(outcome string) bool {
+	return outcome == SendArrived || outcome == SendQueued || outcome == SendRecovered
+}
+
+// Reached says a send is known to have put something in the session: its
+// step, the step without its start, or something else. One left unknown is
+// not known to, and no outcome is none of them.
+func Reached(outcome string) bool {
+	return Delivered(outcome) || outcome == SendGarbled || outcome == SendOther
+}
+
 // Unable is the accounts the batch found taking no step as of now, each to
 // when it can again: a rejected login, recorded with no Due, for as long as
 // the batch lasts, since nothing says when its owner logs in again; a usage
@@ -306,7 +329,7 @@ func Members(evs []Event) []*Member {
 			if m != nil && e.Outcome != "" {
 				m.LastAction, m.LastSend, m.Parked, m.ParkedUntil = e.At, e, "", time.Time{}
 				delete(m.Notices, NoticePark)
-				if e.Notice && (e.Outcome == "arrived" || e.Outcome == "queued" || e.Outcome == "recovered") {
+				if e.Notice && Delivered(e.Outcome) {
 					m.Noticed, read[m.SID] = true, true
 				}
 			}

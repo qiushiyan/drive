@@ -42,7 +42,15 @@ func (s State) blocked() bool { return strings.HasPrefix(string(s), "blocked") }
 
 // onPrompt says the turn stopped on a prompt someone answers. A rejected
 // login reads blocked too, but only a relaunch moves it.
-func (s State) onPrompt() bool { return s.blocked() && s != "blocked:auth" }
+func (s State) onPrompt() bool { return s.blocked() && s != BlockedAuth }
+
+// stopped says the turn ended on what nothing moves until someone acts: a
+// rejected login, an API error or an interrupt.
+func (s State) stopped() bool { return s == BlockedAuth || s == Errored || s == Interrupted }
+
+// failed says it ended on what its driver did not choose: an API error or a
+// rejected login. An interrupt is usually the driver's own.
+func (s State) failed() bool { return s == BlockedAuth || s == Errored }
 
 // promptKind is what a prompt asks: permission or question.
 func (s State) promptKind() string { return strings.TrimPrefix(string(s), "blocked:") }
@@ -60,39 +68,39 @@ func turnState(s *session.Session, f turn.Frontier) State {
 	st := s.Status
 	switch s.Activity {
 	case "busy":
-		return "working"
+		return Working
 	case "waiting":
 		if st.State == "blocked" && st.Kind != "" && st.Kind != "auth" {
 			return State("blocked:" + st.Kind)
 		}
 		if strings.Contains(s.WaitingFor, "permission") {
-			return "blocked:permission"
+			return BlockedPermission
 		}
-		return "blocked:question"
+		return BlockedQuestion
 	case "idle", "shell": // shell: idle at its prompt with a background job running
 		e := liveError(s, f)
 		switch {
 		case e != nil && e.Kind == "authentication_failed", st.State == "blocked" && st.Kind == "auth":
-			return "blocked:auth"
+			return BlockedAuth
 		case e != nil:
-			return "error"
+			return Errored
 		case f.Interrupted:
-			return "interrupted"
+			return Interrupted
 		case f.Newest() == nil:
-			return "idle"
+			return Idle
 		}
-		return "done"
+		return Done
 	}
 	// No registry status: fold what no hook reports into Rex's record.
 	open := st.State == "working" || st.State == "blocked" && st.Kind != "auth"
 	e := liveError(s, f)
 	switch {
 	case e != nil && e.Kind == "authentication_failed":
-		return "blocked:auth"
+		return BlockedAuth
 	case e != nil && open:
-		return "error"
+		return Errored
 	case f.Interrupted && open:
-		return "interrupted"
+		return Interrupted
 	case st.State == "blocked" && st.Kind != "":
 		return State("blocked:" + st.Kind)
 	}
@@ -114,8 +122,8 @@ type Turn struct {
 func (d *Driver) turnOf(s *session.Session, f turn.Frontier, since time.Time) Turn {
 	t := Turn{State: turnState(s, f)}
 	switch t.State {
-	case "working", "idle":
-	case "done":
+	case Working, Idle:
+	case Done:
 		t.Over = f.Answered()
 	default:
 		t.Over = true

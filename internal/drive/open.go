@@ -335,7 +335,10 @@ func (d *Driver) launchLine(opt OpenOptions) string {
 	return cmd
 }
 
-// awaitSession waits for Claude Code to start in a block and register its session.
+// awaitSession waits for Claude Code to start in a block and register its
+// session. It reads Rex's own record, not turnState: the question is whether
+// Rex has heard the session's first hook, which is what every later read of
+// the block's status rests on.
 func (d *Driver) awaitSession(block string, limit time.Duration) (*session.Session, error) {
 	for end := d.now().Add(limit); d.now().Before(end); d.sleep(d.poll()) {
 		s, err := session.Locate(d.Term, d.Host, block)

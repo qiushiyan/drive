@@ -580,7 +580,7 @@ func stripOf(ov *Overview, c Card, group string, now time.Time) stripView {
 	read := r != nil && r.Error == ""
 	s := stripView{Anchor: Anchor(ov.Batch.Name, m.Label), Label: m.Label, Kind: groupKind(group), Goal: m.Goal}
 	s.Href = href(s.Anchor)
-	if read && (r.State == "error" || r.State == "blocked:auth") {
+	if read && r.State.failed() {
 		s.Kind = "alert"
 	}
 	switch {
@@ -725,21 +725,21 @@ func sinceThePark(ov *Overview, c Card, now time.Time) []string {
 // sinceWords is a turn's state, from when it began.
 func sinceWords(s State, t string) string {
 	switch s {
-	case "working":
+	case Working:
 		return "it has been working since " + t
-	case "done":
+	case Done:
 		return "its turn ended at " + t
-	case "idle":
+	case Idle:
 		return "it has been idle since " + t
-	case "interrupted":
+	case Interrupted:
 		return "it was interrupted at " + t
-	case "error":
+	case Errored:
 		return "it stopped on an API error at " + t
-	case "blocked:permission":
+	case BlockedPermission:
 		return "it has waited on a permission prompt since " + t
-	case "blocked:question":
+	case BlockedQuestion:
 		return "it has waited on a question it asked since " + t
-	case "blocked:auth":
+	case BlockedAuth:
 		return "its login was rejected at " + t
 	}
 	return "it has read as " + string(s) + " since " + t
@@ -775,8 +775,8 @@ func entryOf(e batch.Event, asks map[string]*batch.Event, now time.Time, zone *t
 		v.Kind, v.Head, v.Text = "done", "Joined the batch", "when the driver first sent to it."
 	case batch.KindSend:
 		v.Head, v.Text = "Sent", sentWords(e)+delivered(e.Outcome)
-		if e.Outcome != "arrived" && e.Outcome != "queued" {
-			v.Kind = "alert"
+		if !batch.Delivered(e.Outcome) {
+			v.Kind = "alert" // it arrived broken, as something else, or perhaps not at all
 		}
 	case batch.KindRespond:
 		v.Head, v.Text = "Answered its prompt:", respondWords(e.Action)
@@ -839,17 +839,17 @@ func sentWords(e batch.Event) string {
 // delivered is how a step reached its session, when that is worth saying.
 func delivered(outcome string) string {
 	switch outcome {
-	case "arrived", "":
+	case batch.SendArrived, "":
 		return ""
-	case "queued":
+	case batch.SendQueued:
 		return ", queued behind its turn"
-	case "recovered":
+	case batch.SendRecovered:
 		return ", retyped after its start was lost"
-	case "garbled":
+	case batch.SendGarbled:
 		return ", which arrived without its start"
-	case "other":
+	case batch.SendOther:
 		return ", though the session received something else"
-	case "unknown":
+	case batch.SendUnknown:
 		return ", which may not have arrived"
 	}
 	return ", " + outcome
@@ -909,21 +909,21 @@ func prKind(p PRView) string {
 // stateWords is a turn's state as the owner reads it.
 func stateWords(s State) string {
 	switch s {
-	case "working":
+	case Working:
 		return "Working"
-	case "done":
+	case Done:
 		return "Turn ended"
-	case "idle":
+	case Idle:
 		return "Idle, with no prompt yet"
-	case "interrupted":
+	case Interrupted:
 		return "Interrupted"
-	case "error":
+	case Errored:
 		return "Stopped on an API error"
-	case "blocked:permission":
+	case BlockedPermission:
 		return "Waiting on a permission prompt"
-	case "blocked:question":
+	case BlockedQuestion:
 		return "Waiting on a question it asked"
-	case "blocked:auth":
+	case BlockedAuth:
 		return "Its login was rejected"
 	}
 	return string(s)

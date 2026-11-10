@@ -142,9 +142,11 @@ func (f wakeFacts) plan() wakePlan {
 	if m != nil {
 		told, wasTold = m.Wake.ToldOf(f.view)
 	}
-	if t.State != "done" || t.Shells+t.Orphans == 0 {
+	if t.State != Done || t.Shells+t.Orphans == 0 {
 		why := map[bool]string{true: whyPrompt, false: whyEnded}[t.State.onPrompt()]
-		if t.State != "done" && !t.State.onPrompt() {
+		if t.State != Done && !t.State.onPrompt() {
+			// Whatever else it ended on: the stopped states, and any word of
+			// Rex's that turnState passed through, which errs towards waking.
 			why = whyStopped
 		}
 		if wasTold {
@@ -159,7 +161,7 @@ func (f wakeFacts) plan() wakePlan {
 				why = whyRepost
 			}
 		}
-		if t.State == "done" || t.State.onPrompt() {
+		if t.State == Done || t.State.onPrompt() {
 			return wakePlan{at: f.stable.Add(f.quiet), why: why}
 		}
 		return wakePlan{at: f.stable, why: why}

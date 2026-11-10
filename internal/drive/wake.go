@@ -347,7 +347,7 @@ func (d *Driver) Notify(watch, ref string, quiet time.Duration) (*Ending, error)
 			}
 			return d.claim(b, e, &p)
 		})
-		stays := err == nil && e.State == "done" && len(e.Jobs) > 0 && !e.Covered
+		stays := err == nil && e.State == Done && len(e.Jobs) > 0 && !e.Covered
 		if watch != "" && d.Watches != nil && !stays {
 			d.Watches.Retire(watch)
 		}
@@ -568,7 +568,7 @@ func (d *Driver) post(label string, e *Ending, note string, p posting) error {
 			}
 		}
 		e.Waiting = d.waiterLines(b, e.Label) // ahead of next:, which the wake ends on
-		if e.Next == "" && e.State == "done" {
+		if e.Next == "" && e.State == Done {
 			e.Next = fmt.Sprintf("decide from its reply: %s; %s (when it waits on a decision that only the owner can make, record its ask and leave out --until); or %s",
 				d.run("send", view, text("…")), d.run("park", view, "--until", "WHEN", text("…")), d.run("close", view))
 		}

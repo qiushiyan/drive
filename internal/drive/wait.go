@@ -63,7 +63,7 @@ type Carried struct {
 func (d *Driver) Wait(ref string, quiet, bgCap time.Duration) (*Ending, error) {
 	return d.wait(ref, func(_ *Observation, t Turn, stable time.Time) wakePlan {
 		switch {
-		case t.State == "blocked:auth" || t.State == "error" || t.State == "interrupted":
+		case t.State.stopped():
 			return wakePlan{at: stable} // nothing will happen until someone acts
 		case t.State.onPrompt() || t.Shells == 0:
 			return wakePlan{at: stable.Add(quiet)}
@@ -154,31 +154,31 @@ func (d *Driver) wait(ref string, planFor func(o *Observation, t Turn, stable ti
 // jobs are the background jobs the session runs.
 func (d *Driver) nextFor(o *Observation, state State, jobs []session.Shell) string {
 	switch {
-	case state == "blocked:auth":
+	case state == BlockedAuth:
 		return d.relaunchHint(o)
 	case o.Frontier.Error != nil && o.Frontier.Error.Limit:
 		return d.limitNext(o, lastStep(o.in, o.Label))
 	case state.onPrompt():
 		return d.answerNext(o.Label, o.View.String(), state)
-	case state == "error" && o.Frontier.Error != nil && o.Frontier.Error.Kind == "rate_limit":
+	case state == Errored && o.Frontier.Error != nil && o.Frontier.Error.Kind == "rate_limit":
 		back := "read it again after the reset to see it under way"
 		if webhook, _ := d.wakes(o); webhook {
 			back = d.run("watch", "--due") + " arms its wake once it is under way again"
 		}
 		return fmt.Sprintf("if its screen says it continues automatically once the limit resets (%s), leave it: the turn resumes by itself, and %s; otherwise %s",
 			d.run("read", o.Label, "--screen"), back, d.retryHint(o, "rate_limit"))
-	case state == "error":
+	case state == Errored:
 		kind := ""
 		if o.Frontier.Error != nil {
 			kind = o.Frontier.Error.Kind
 		}
 		return d.retryHint(o, kind)
-	case state == "interrupted":
+	case state == Interrupted:
 		return fmt.Sprintf("its turn was interrupted; read where it stopped (%s) before its next step", d.run("read", o.Label))
-	case state == "done" && len(jobs) > 0 && replyReads(o) == turn.ReadsAsking:
+	case state == Done && len(jobs) > 0 && replyReads(o) == turn.ReadsAsking:
 		return fmt.Sprintf("its reply asks something, whatever its job does: answer with its next step (%s); if the job should have ended, have the session stop it: %s",
 			d.run("send", o.View.String(), text("…")), d.stopJob(o.View.String(), jobs[0]))
-	case state == "done" && len(jobs) > 0:
+	case state == Done && len(jobs) > 0:
 		again := "run only " + d.run("watch", o.Label) + ", which tells drive this run heard the wake: it stays armed and comes again when that turn ends"
 		if webhook, _ := d.wakes(o); !webhook {
 			again = "wait for it again (" + d.run("wait", o.Label) + ")"
@@ -201,10 +201,10 @@ func lastLines(s string, n int) string {
 func (e *Ending) Text() string {
 	var b strings.Builder
 	what := map[State]string{
-		"done": "its turn ended", "blocked:permission": "it waits on a permission prompt",
-		"blocked:question": "it waits on a question", "blocked:auth": "its login was rejected",
-		"error": "an API error ended its turn", "gone": "its session is gone",
-		"interrupted": "its turn was interrupted",
+		Done: "its turn ended", BlockedPermission: "it waits on a permission prompt",
+		BlockedQuestion: "it waits on a question", BlockedAuth: "its login was rejected",
+		Errored: "an API error ended its turn", Gone: "its session is gone",
+		Interrupted: "its turn was interrupted",
 	}[e.State]
 	if what == "" {
 		what = string(e.State)
@@ -222,7 +222,7 @@ func (e *Ending) Text() string {
 	if e.Msg != "" && e.State.blocked() {
 		fmt.Fprintf(&b, "prompt: %s\n", e.Msg)
 	}
-	if e.Msg != "" && e.State == "gone" {
+	if e.Msg != "" && e.State == Gone {
 		fmt.Fprintf(&b, "why: %s\n", e.Msg)
 	}
 	if e.Reply != "" {

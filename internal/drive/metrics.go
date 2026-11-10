@@ -151,16 +151,16 @@ func (m *Metrics) actions(evs []batch.Event, wakes bool) {
 				m.OwnWords++
 			}
 			switch e.Outcome {
-			case "recovered":
+			case batch.SendRecovered:
 				m.Recovered++
-			case "garbled":
+			case batch.SendGarbled:
 				m.Garbled++
-			case "other":
+			case batch.SendOther:
 				m.Other++
-			case "unknown":
+			case batch.SendUnknown:
 				m.Unknown++
 			}
-			if e.Outcome != "unknown" {
+			if batch.Reached(e.Outcome) {
 				unwatched[e.Session]++
 			}
 		case batch.KindRespond:

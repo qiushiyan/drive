@@ -173,3 +173,16 @@ func TestAnOpenIsOneMember(t *testing.T) {
 		t.Fatalf("saying it started a second time takes nothing from its record: %d", s)
 	}
 }
+
+// A send's outcome answers two questions, each asked in one place: whether
+// the step is in the session as written, and whether anything is known to be.
+func TestWhatASendsOutcomeSays(t *testing.T) {
+	for outcome, want := range map[string][2]bool{
+		SendArrived: {true, true}, SendQueued: {true, true}, SendRecovered: {true, true},
+		SendGarbled: {false, true}, SendOther: {false, true}, SendUnknown: {false, false}, "": {false, false},
+	} {
+		if got := [2]bool{Delivered(outcome), Reached(outcome)}; got != want {
+			t.Errorf("%q: delivered, reached = %v, want %v", outcome, got, want)
+		}
+	}
+}
