@@ -68,11 +68,13 @@ func identify(pid int) (proc, bool) {
 
 func (w Detached) pidfile(name string) string { return filepath.Join(w.Dir, name+".pid") }
 
-// read takes a pidfile as Start wrote it. One written before pidfiles named
-// the start time holds only a pid and a binary, which tell no process
-// apart, so it reads as stale.
-func (w Detached) read(name string) (p proc, ok bool) {
-	b, err := os.ReadFile(w.pidfile(name))
+func (w Detached) read(name string) (p proc, ok bool) { return readPidfile(w.pidfile(name)) }
+
+// readPidfile takes a pidfile as writePidfile wrote it. One written before
+// pidfiles named the start time holds only a pid and a binary, which tell
+// no process apart, so it reads as stale.
+func readPidfile(path string) (p proc, ok bool) {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return p, false
 	}
@@ -82,6 +84,16 @@ func (w Detached) read(name string) (p proc, ok bool) {
 		p.start, p.command = lines[1], lines[2]
 	}
 	return p, err == nil && p.pid > 0
+}
+
+// writePidfile names p in path whole, so a reader never takes half a pidfile
+// for a stale one.
+func writePidfile(path string, p proc) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(fmt.Sprintf("%d\n%s\n%s\n", p.pid, p.start, p.command)), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // running says whether the process a pidfile names still runs: its pid is
@@ -101,33 +113,40 @@ func (w Detached) Start(name string, argv []string, log string) error {
 	if err := os.MkdirAll(w.Dir, 0o755); err != nil {
 		return err
 	}
+	p, err := detach(argv, append(os.Environ(), "DRIVE_WATCH="+name), "", log)
+	if err != nil {
+		return fmt.Errorf("starting watch %s: %w", name, err)
+	}
+	return writePidfile(w.pidfile(name), p)
+}
+
+// detach runs argv in dir ("" for this process's) as a process in a session
+// of its own, everything it prints going to log, and reads it as a pidfile
+// names it.
+func detach(argv, env []string, dir, log string) (proc, error) {
 	out, err := os.OpenFile(log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return err
+		return proc{}, err
 	}
 	defer out.Close()
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Env = append(os.Environ(), "DRIVE_WATCH="+name)
+	cmd.Env, cmd.Dir = env, dir
 	cmd.Stdout, cmd.Stderr = out, out
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting watch %s: %w", name, err)
+		return proc{}, err
 	}
 	// Start returns once the child runs argv, and until it is reaped its pid
-	// is its own, so what ps reads now is the watch.
+	// is its own, so what ps reads now is the process argv started.
 	pid := cmd.Process.Pid
 	p, ok := identify(pid)
 	if !ok {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		return fmt.Errorf("starting watch %s: ps does not show its process %d", name, pid)
+		return proc{}, fmt.Errorf("ps does not show its process %d", pid)
 	}
 	_ = cmd.Process.Release()
-	tmp := w.pidfile(name) + ".tmp"
-	if err := os.WriteFile(tmp, []byte(fmt.Sprintf("%d\n%s\n%s\n", p.pid, p.start, p.command)), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, w.pidfile(name))
+	return p, nil
 }
 
 // Alive checks the process as well as the pidfile, so a watch that died

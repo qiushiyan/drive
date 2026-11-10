@@ -30,7 +30,8 @@ type Driver struct {
 	Cfg      config.Config
 	Progress progress.Source
 	Watches  Watches
-	Self     string // this executable, which a watch runs
+	Sampler  Sampler // the machine's, which KeepSampler runs while a batch is live
+	Self     string  // this executable, which a watch runs
 	Now      func() time.Time
 	Sleep    func(time.Duration)
 	Poll     time.Duration // how often a wait looks; 2 s when zero

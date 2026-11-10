@@ -6,8 +6,10 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"syscall"
 	"time"
@@ -191,6 +193,14 @@ func (s Store) Live() ([]*Batch, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Meta.Started.Before(out[j].Meta.Started) })
 	return out, nil
+}
+
+// WithLive runs fn with the names of the live batches under the store's
+// lock, so no batch starts or ends until it returns.
+func (s Store) WithLive(fn func(live []string) error) error {
+	return s.changing(func(d Drivers) ([]Change, error) {
+		return nil, fn(slices.Sorted(maps.Values(d.Current)))
+	})
 }
 
 // Use makes a batch its driver's current one at a time, and returns the

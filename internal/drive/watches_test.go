@@ -136,3 +136,51 @@ func exited(pid int) bool {
 	stat := strings.TrimSpace(string(out))
 	return stat == "" || strings.HasPrefix(stat, "Z")
 }
+
+// The detached sampler is a real process outside any terminal, run in its
+// directory without a watch's name, whatever command starts it. Stop returns
+// only once it has exited, killing one that ignores SIGTERM after its grace,
+// and the log says when drive started and stopped each.
+func TestADetachedSamplerRunsAndStops(t *testing.T) {
+	dir := t.TempDir()
+	s := drive.DetachedSampler{Pidfile: filepath.Join(dir, "state", "sampler.pid"), Log: filepath.Join(dir, "sampler.log"), Dir: dir, Grace: 300 * time.Millisecond}
+	t.Setenv("DRIVE_WATCH", "drive-b1-7c1e2a") // a watch's own command keeps the sampler too
+	for what, script := range map[string]string{
+		"stops on SIGTERM": `echo "watch [$DRIVE_WATCH] in $(pwd -P)"; while :; do sleep 1; done`,
+		"ignores SIGTERM":  `trap "" TERM; while :; do sleep 1; done`,
+	} {
+		if err := s.Start([]string{"/bin/sh", "-c", script}); err != nil {
+			t.Fatalf("%s: %v", what, err)
+		}
+		own, _ := os.ReadFile(s.Pidfile)
+		pid, _ := strconv.Atoi(strings.SplitN(string(own), "\n", 2)[0])
+		t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+		if !s.Running() {
+			t.Fatalf("%s: it runs", what)
+		}
+		time.Sleep(100 * time.Millisecond) // what it prints first
+		if err := s.Stop(); err != nil {
+			t.Fatalf("%s: %v", what, err)
+		}
+		if s.Running() || !exited(pid) {
+			t.Fatalf("%s: Stop returned with process %d still running", what, pid)
+		}
+		if _, err := os.Stat(s.Pidfile); !os.IsNotExist(err) {
+			t.Fatalf("%s: the pidfile is gone with it: %v", what, err)
+		}
+		if err := s.Stop(); err != nil {
+			t.Fatalf("%s: stopping none is no error: %v", what, err)
+		}
+	}
+	err := s.Start([]string{filepath.Join(dir, "no-such-sampler")})
+	log, _ := os.ReadFile(s.Log)
+	where, _ := filepath.EvalSymlinks(dir)
+	for _, want := range []string{"watch [] in " + where + "\n", " drive: started pid ", " drive: stopped pid ", "no-such-sampler did not start: "} {
+		if !strings.Contains(string(log), want) {
+			t.Errorf("the log says %q:\n%s", want, log)
+		}
+	}
+	if err == nil {
+		t.Error("a sampler that cannot start fails its start")
+	}
+}

@@ -1039,6 +1039,51 @@ func (w *Watches) Retire(name string) bool {
 	return ok
 }
 
+// Sampler is the machine's sampler as drive runs it: a process that runs
+// on after the command that started it, until it is stopped or killed by
+// hand. Like the real one, a second while one runs is refused.
+type Sampler struct {
+	mu     sync.Mutex
+	argv   []string // what runs; nil while nothing does
+	Starts int      // how many drive started
+}
+
+func (s *Sampler) Running() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.argv != nil
+}
+
+// Runs is the command line of the sampler running, nil while none does.
+func (s *Sampler) Runs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.argv
+}
+
+func (s *Sampler) Start(argv []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Starts++
+	if s.argv != nil {
+		return fmt.Errorf("already sampling; not starting another")
+	}
+	s.argv = argv
+	return nil
+}
+
+func (s *Sampler) Stop() error {
+	s.Kill()
+	return nil
+}
+
+// Kill ends the sampler as a hand would, leaving drive to find it gone.
+func (s *Sampler) Kill() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.argv = nil
+}
+
 // JobDone ends the session's background jobs and resumes it, as Claude Code
 // does: a task notification starts a turn no one typed, whose reply ends it.
 func (c *Claude) JobDone(reply string) {

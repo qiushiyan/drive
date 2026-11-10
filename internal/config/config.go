@@ -50,6 +50,14 @@ type Config struct {
 	// AfterWake runs after each wake is posted, such as archiving the chat
 	// the wake went to. Its failure is logged and does not fail the wake.
 	AfterWake []string `toml:"after_wake"`
+	// Sampler is the command that records what this machine spends its CPU
+	// and memory on, which drive runs while any batch is live and stops once
+	// none is; unset, drive runs none. Its words are a program and its
+	// arguments, each "~/" resolved, run in the home directory with no
+	// shell between, so the program is named by its path: drive's commands
+	// run outside a login shell. drive knows the process by its command
+	// line, so it is the sampler itself, never a wrapper that execs it.
+	Sampler []string `toml:"sampler"`
 
 	Webhook Webhook `toml:"-"`
 }
@@ -82,6 +90,9 @@ func Load() (Config, error) {
 	}
 	c.Notice = Expand(home, c.Notice)
 	c.Brief = Expand(home, c.Brief)
+	for i, w := range c.Sampler {
+		c.Sampler[i] = Expand(home, w)
+	}
 	if c.RexSession == "" {
 		c.RexSession = os.Getenv("REX_SESSION") // the Rex session drive runs in
 	}

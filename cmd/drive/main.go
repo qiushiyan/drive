@@ -45,6 +45,19 @@ type CLI struct {
 
 	Notify NotifyCmd `cmd:"" hidden:"" help:"A watch's own run: wait for the turn to end, then post the wake."`
 	Ring   RingCmd   `cmd:"" hidden:"" help:"A timer's own run: sleep, then post the wake."`
+
+	driver *drive.Driver // the one the command ran with, for AfterRun
+}
+
+// AfterRun keeps the machine's sampler running while any batch is live,
+// after every command, whatever came of it. A sampler that cannot start or
+// stop says why in its log and fails no command, since no driver can mend
+// it.
+func (c *CLI) AfterRun() error {
+	if c.driver != nil {
+		_ = c.driver.KeepSampler()
+	}
+	return nil
 }
 
 func (CLI) Help() string {
@@ -88,6 +101,7 @@ func machine(cfg config.Config) *drive.Driver {
 	return &drive.Driver{
 		Term: rex.CLI{}, Host: session.Machine{Home: cfg.Home}, Store: batch.Store{Dir: cfg.StateDir},
 		Cfg: cfg, Progress: progress.Tools{}, Watches: drive.Detached{Dir: filepath.Join(cfg.StateDir, "watches")}, Self: self,
+		Sampler: drive.DetachedSampler{Pidfile: filepath.Join(cfg.StateDir, "sampler.pid"), Log: filepath.Join(cfg.StateDir, "sampler.log"), Dir: cfg.Home},
 	}
 }
 
@@ -106,6 +120,7 @@ var app = clikit.App{
 			}
 			d := wire(cfg)
 			d.BatchName, d.DriverName, d.Line = cli.Batch, cli.Driver, unselected(ctx.Args)
+			cli.driver = d
 			return d, nil
 		}),
 	},
