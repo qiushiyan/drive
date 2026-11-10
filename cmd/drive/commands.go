@@ -466,15 +466,20 @@ type ParkCmd struct {
 func (c *ParkCmd) Help() string {
 	return `
 A park is refused unless something on record ends it, since nothing else
-brings the session back to you: an open ask about it, a hold it was refused
-a step for, or --until.`
+brings the session back to you: --until, an open ask about it, or a hold it
+was refused a step for.
+
+A wait on a date, or on something outside the batch such as a teammate's
+pull request, takes --until: check what it waits for yourself when that
+time comes. An ask is for a decision that only the owner can make.`
 }
 
 func (c *ParkCmd) HelpSections() []clikit.Section {
 	return []clikit.Section{{Title: "Examples", Body: `
+drive park S4@… --until 4h 'waits for #10137, which a teammate is landing'  # check it yourself then
+drive park S6@… --until 2026-11-06 'waits for the 6 Nov release'
 drive record ask S5 --question 'Start the build without #10137?' --if-unanswered 'S5 stays parked'
 drive park S5@… 'waits for your call on #10137'      # the open ask ends it
-drive park S6@… --until 2026-11-06 'waits for the 6 Nov release'
 drive park S7@… 'waits for the release, held by S2'  # after a send refused on that hold`}}
 }
 

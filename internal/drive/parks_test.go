@@ -51,6 +51,71 @@ func TestAParkNothingEndsIsRefused(t *testing.T) {
 	}
 }
 
+// On 11-09 two sessions waited on a teammate's pull request. The refusal's
+// first way was to ask the owner, so the driver recorded "is it on develop
+// yet?" five seconds later, and again for the second session, though the
+// pull request had merged seven minutes before and the driver could read
+// that itself. The first way is the wait a time ends, with what the driver
+// checks then; the ask is for a decision only the owner can make; close
+// stays last. Status's line for a park nothing ends says the same.
+func TestAParkRefusalLeadsWithTheWaitTheDriverChecksItself(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r)
+	adopted(t, r, "S3")
+	// The wake that offers the park says whose question an ask is, too.
+	e, err := r.d.Wait("S3", time.Minute, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.d.Wake("S3", e, ""); err != nil {
+		t.Fatal(err)
+	}
+	if out := l.output(0); strings.Contains(out, "waits on the owner") || !strings.Contains(out, "a decision that only the owner can make") {
+		t.Fatalf("the wake's park is for any wait, its ask for the owner's decision:\n%s", out)
+	}
+	err = r.d.Park(r.view("S3"), "waits for #412, which a teammate is landing", time.Time{})
+	if !isRefused(err) {
+		t.Fatalf("refused: %v", err)
+	}
+	ways := func(next string) {
+		t.Helper()
+		until, ask, closeIt := strings.Index(next, "--until WHEN"), strings.Index(next, "record ask S3"), strings.Index(next, "close S3@")
+		if until < 0 || ask < until || closeIt < ask {
+			t.Fatalf("the ways run: until a time, an ask, close: %s", next)
+		}
+		if wait := next[:ask]; !strings.Contains(wait, "such as a teammate's pull request") || !strings.Contains(wait, "yourself when that time comes") {
+			t.Fatalf("the wait names what the driver checks itself: %s", wait)
+		}
+		if asks := next[strings.LastIndex(next[:ask], ";"):closeIt]; !strings.Contains(asks, "a decision that only the owner can make") {
+			t.Fatalf("the ask is for the owner's decision: %s", asks)
+		}
+		if strings.Contains(next, "if it waits on the owner") {
+			t.Fatalf("a wait on anything reads as a wait on the owner: %s", next)
+		}
+	}
+	ways(nextOf(err))
+	if reason := err.Error(); strings.Index(reason, "no --until") > strings.Index(reason, "no ask") {
+		t.Fatalf("what is missing is named in the same order: %s", reason)
+	}
+	// The same ways under status's table, for a park an answered ask left.
+	id, err := r.d.Ask("S3", "Fold the fix into this branch?", "no", "S3 stays parked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.d.Park(r.view("S3"), "waits for your call on the fix", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.Answer(id, "moot: the teammate's fix merged", "moot", false); err != nil {
+		t.Fatal(err)
+	}
+	ways(r.d.LeftParked(id))
+	_, parks := statusOf(t, r, "S3")
+	if len(parks) != 1 {
+		t.Fatalf("%q", parks)
+	}
+	ways(parks[0])
+}
+
 // An open ask about the session ends its park; so does a time, which must
 // be to come.
 func TestAParkEndsOnAnAskOrATime(t *testing.T) {

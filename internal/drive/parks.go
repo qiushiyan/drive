@@ -67,22 +67,25 @@ func endOf(evs []batch.Event, m *batch.Member, until time.Time) parkEnd {
 // ways a park can end, and close for a session with nothing left to do.
 func (d *Driver) unended(label, view, reason string) *Refused {
 	return &Refused{
-		Reason: fmt.Sprintf("nothing on record ends %s's park, so no wake would bring it back: no ask about it is open, it waits for no hold, and no --until was given", label),
+		Reason: fmt.Sprintf("nothing on record ends %s's park, so no wake would bring it back: no --until was given, no ask about it is open, and it waits for no hold", label),
 		Next:   d.parkWays(label, view, reason),
 	}
 }
 
 // parkWays says how to park a session so that something on record ends the
-// park, or to close it.
+// park, or to close it. The wait a time ends comes first, with what the
+// driver checks then: led by the ask, a wait on a teammate's pull request
+// became a question to the owner that the driver could have answered itself
+// (2026-11-09, twice).
 func (d *Driver) parkWays(label, view, reason string) string {
 	if reason == "" {
 		reason = "…"
 	}
-	return fmt.Sprintf("if it waits on the owner, ask (%s) and park it again; "+
-		"if it waits for a date or for something outside the batch, park it until you should look again (%s; WHEN is a date, such as 2026-11-06 09:00, or a duration, such as 4h); "+
+	return fmt.Sprintf("if it waits for a date or for something outside the batch, such as a teammate's pull request, park it until you should look again (%s; WHEN is a date, such as 2026-11-06 09:00, or a duration, such as 4h), and check what it waits for yourself when that time comes; "+
+		"if it waits on a decision that only the owner can make, ask (%s) and park it again; "+
 		"if nothing is left for it to do, close it (%s)",
-		d.run("record", "ask", label, "--question", "…", "--recommendation", "…", "--if-unanswered", "…"),
 		d.run("park", view, "--until", "WHEN", text(reason)),
+		d.run("record", "ask", label, "--question", "…", "--recommendation", "…", "--if-unanswered", "…"),
 		d.run("close", view))
 }
 
