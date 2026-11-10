@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/qiushiyan/drive/internal/gitenv"
 )
 
 // Steps is what claude-steps reads from a session's transcript.
@@ -129,7 +131,7 @@ func (Tools) Landed(dir string, branches []string, commits []Commit) (Landing, e
 	branches = append([]string{}, branches...)
 	for _, c := range commits {
 		git := exec.Command("git", "branch", "--show-current")
-		git.Dir = c.Dir
+		git.Dir, git.Env = c.Dir, gitenv.Env()
 		if out, err := git.Output(); err == nil {
 			if b := strings.TrimSpace(string(out)); b != "" {
 				branches = append(slices.DeleteFunc(branches, func(x string) bool { return x == b }), b)
@@ -178,7 +180,7 @@ func (Tools) Landed(dir string, branches []string, commits []Commit) (Landing, e
 		}
 	}
 	git := exec.Command("git", "rev-parse", "--path-format=absolute", "--git-common-dir")
-	git.Dir = dir
+	git.Dir, git.Env = dir, gitenv.Env()
 	if common, err := git.Output(); err == nil {
 		l.Repo = strings.TrimSuffix(strings.TrimSpace(string(common)), "/.git")
 	}
@@ -214,7 +216,7 @@ func commitID(dir string, commits []Commit) string {
 	}
 	newest := commits[len(commits)-1]
 	git := exec.Command("git", "log", "--all", "--format=%H%x1f%ct%x1f%s", fmt.Sprintf("--since=%d", newest.At.Add(-time.Hour).Unix()))
-	git.Dir = dir
+	git.Dir, git.Env = dir, gitenv.Env()
 	out, err := git.Output()
 	if err != nil {
 		return ""

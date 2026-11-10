@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qiushiyan/drive/internal/gitenv"
 )
 
 // claude-steps lists every pull request a session linked, each once, at the
@@ -128,7 +130,7 @@ func TestLandedJudgesTheNewestCommitByItsId(t *testing.T) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repo
 		date := at.Format(time.RFC3339)
-		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",
+		cmd.Env = append(gitenv.Env(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",
 			"GIT_AUTHOR_DATE="+date, "GIT_COMMITTER_DATE="+date)
 		out, err := cmd.Output()
 		if err != nil {
