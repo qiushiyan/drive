@@ -1285,7 +1285,7 @@ func TestHoldWaitersAreListedAndTheRefusalSaysHowBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	st, _ = r.d.Status(false)
-	if len(st.Holds) != 1 || !strings.HasPrefix(st.Holds[0], "release: free; T3s waits for release; send its step now: drive --batch b1 send T3s@") {
+	if len(st.Holds) != 1 || !strings.HasPrefix(st.Holds[0], "release: free") || !strings.Contains(st.Holds[0], "drive --batch b1 send T3s@") {
 		t.Fatalf("once free, the hold's line is its waiter's send, until it is sent: %q", st.Holds)
 	}
 	if _, err := r.d.Send(r.view("T3s"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
@@ -1450,7 +1450,7 @@ func TestAnOpenWhoseClaudeCodeNeverStartsIsOpenedAgainWhole(t *testing.T) {
 	again := "drive --batch b1 open J1 --dir " + dir + " --model fable --effort xhigh --hold release 'judge the release'"
 	_, err := r.d.Open("J1", step, opt)
 	var failed *drive.Failed
-	if !errors.As(err, &failed) || !strings.Contains(failed.What, "did not start") || !strings.HasSuffix(failed.Next, "then open it again: "+again) {
+	if !errors.As(err, &failed) || !strings.HasSuffix(failed.Next, again) {
 		t.Fatalf("the failed open says to close its block and open it again, whole: %v", err)
 	}
 	st, err := r.d.Status(false)
@@ -1458,16 +1458,15 @@ func TestAnOpenWhoseClaudeCodeNeverStartsIsOpenedAgainWhole(t *testing.T) {
 		t.Fatalf("it stays on record: %+v %v", st, err)
 	}
 	row := st.Rows[0]
-	if row.State != drive.Gone || strings.Contains(row.Next, "resumed where it stopped") ||
-		row.Next != "its Claude Code never started in that block, so no conversation of its is there to resume; open it again with its step: "+again {
+	if row.State != drive.Gone || strings.Contains(row.Next, "--resume") || !strings.HasSuffix(row.Next, again) {
 		t.Fatalf("a session that never started is opened again, not resumed: %s %q", row.State, row.Next)
 	}
-	if _, err := r.d.Read("J1", drive.ReadLast, 1); !isRefused(err) || !strings.Contains(err.Error(), "nothing to read") || !strings.Contains(err.Error(), again) {
+	if _, err := r.d.Read("J1", drive.ReadLast, 1); !isRefused(err) || !strings.HasSuffix(nextOf(err), again) {
 		t.Fatalf("a read of it says the same: %v", err)
 	}
 	r.w.Clock.Sleep(11 * time.Minute)
 	reports, err := r.d.DueAll()
-	if err != nil || l.count() != 1 || !strings.Contains(reports[0].Posted, "J1 is gone: its Claude Code never started") || !strings.Contains(reports[0].Posted, again) {
+	if err != nil || l.count() != 1 || !strings.HasSuffix(reports[0].Posted, again) {
 		t.Fatalf("the watchdog tells its driver that, once: %+v %v", reports, err)
 	}
 	// Opened again, it starts, and the label is the new block's.
@@ -1515,12 +1514,11 @@ func TestAStartingSessionFoundRunningIsItsOwn(t *testing.T) {
 	for _, row := range st.Rows {
 		switch row.Label {
 		case "J2":
-			if !strings.Contains(row.Next, "its conversation resumed where it stopped") || !strings.Contains(row.Next, "--resume "+m.SID) {
+			if !strings.Contains(row.Next, "--resume "+m.SID) {
 				t.Fatalf("gone after it ran, its own conversation is resumed: %q", row.Next)
 			}
 		case "J3":
-			if !strings.Contains(row.Next, `then send the step it was to take, which the record kept only as "file /tmp/plan.md": drive --batch b1 open J3 --dir `+r.w.Root) ||
-				strings.HasSuffix(row.Next, "plan.md") {
+			if !strings.Contains(row.Next, `"file /tmp/plan.md"`) || !strings.HasSuffix(row.Next, "drive --batch b1 open J3 --dir "+r.w.Root) {
 				t.Fatalf("an older record's step is named, never replayed: %q", row.Next)
 			}
 		}

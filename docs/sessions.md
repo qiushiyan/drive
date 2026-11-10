@@ -4,7 +4,7 @@
 
 ## Where a turn stands
 
-Every reader asks one function, `turnState` in `internal/drive/state.go`, and gets one `State`, the word drive prints: working, done, idle, interrupted, error, blocked:permission, blocked:question, blocked:auth. A session that was not read live reads `gone` (its block or its Claude Code has ended), `closed`, or `unread` (the read failed, which says neither). A second, local answer to that question is how drive goes wrong, so a new reader of session state calls it, `turnOf` for whether the turn is over, `State.onPrompt` for whether it waits on a prompt someone answers (a rejected login reads blocked, but only a relaunch moves it), `State.stopped` for whether it ended on what nothing moves until someone acts, and `nextFor` for what to run about it.
+Every reader asks one function, `turnState` in `internal/drive/state.go`, and gets one `State`, the word drive prints: working, done, idle, interrupted, error, blocked:permission, blocked:question, blocked:auth. A session that was not read live reads `gone` (its block or its Claude Code has ended), `closed`, `starting` (its open is under way), or `unread` (the read failed, which says neither). A second, local answer to that question is how drive goes wrong, so a new reader of session state calls it, `turnOf` for whether the turn is over, `State.onPrompt` for whether it waits on a prompt someone answers (a rejected login reads blocked, but only a relaunch moves it), `State.stopped` for whether it ended on what nothing moves until someone acts, and `nextFor` for what to run about it.
 
 Its sources each answer what only they know:
 

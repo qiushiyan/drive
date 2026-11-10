@@ -55,7 +55,8 @@ func (d *Driver) workedIn(m *batch.Member, f *turn.Frontier) string {
 // one can.
 func (d *Driver) reopen(b *batch.Batch, m *batch.Member, f *turn.Frontier) string {
 	if m.Starting {
-		return d.openAgain(b, m)
+		why, next := d.openAgain(b, m)
+		return why + "; " + next
 	}
 	opt := OpenOptions{Dir: d.workedIn(m, f), Resume: m.SID, Account: m.Account, Model: m.Model, Effort: m.Effort}
 	until, out := d.unable(b)[m.Account]
@@ -82,12 +83,12 @@ func (d *Driver) reopen(b *batch.Batch, m *batch.Member, f *turn.Frontier) strin
 	return "bring it back under its label, its conversation resumed where it stopped: " + open
 }
 
-// openAgain says how to bring back a member whose Claude Code never started
-// in the block its open recorded, as far as the record says: no step reached
-// it, so nothing of its is there to resume, and the open goes again as it was
-// asked for, with its step, its hold and the conversation it was to resume.
-// An older drive's record kept the step only in part, and says so.
-func (d *Driver) openAgain(b *batch.Batch, m *batch.Member) string {
+// openAgain says why a member whose Claude Code never started in the block
+// its open recorded has nothing to bring back, and what to run instead: no
+// step reached it, so the open goes again as it was asked for, with its step,
+// its hold and the conversation it was to resume. An older drive's record
+// kept the step only in part, and says so.
+func (d *Driver) openAgain(b *batch.Batch, m *batch.Member) (why, next string) {
 	opt := OpenOptions{Dir: m.Dir, Resume: m.Ref, Model: m.Model, Effort: m.Effort}
 	var step Step
 	whole, kept := true, ""
@@ -101,18 +102,18 @@ func (d *Driver) openAgain(b *batch.Batch, m *batch.Member) string {
 	if _, out := d.unable(b)[opt.Account]; out || opt.Account == "primary" && d.Cfg.PrimaryName == "" {
 		opt.Account = "" // the launcher's choice
 	}
-	what := "its Claude Code never started in that block"
+	why = "it never started Claude Code"
 	if opt.Resume == "" {
-		what += ", so no conversation of its is there to resume"
+		why += ", so there is nothing of its to resume"
 	}
 	open := d.openCommand(m.Label, opt, step)
 	switch {
 	case !whole && kept != "":
-		return fmt.Sprintf("%s; open it again, then send the step it was to take, which the record kept only as %q: %s", what, kept, open)
+		return why, fmt.Sprintf("open it again, then send it its step, of which the record kept only %q: %s", kept, open)
 	case step.empty():
-		return what + "; open it again: " + open
+		return why, "open it again: " + open
 	}
-	return what + "; open it again with its step: " + open
+	return why, "open it again with its step: " + open
 }
 
 // unable is the accounts batch b found taking no step as of now, each to

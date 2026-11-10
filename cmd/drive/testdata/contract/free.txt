@@ -2,5 +2,5 @@ $ drive --driver session-driver free release S2 released; the job it left is its
 exit 0
 --- stdout
 freed release: S2 held it since 02:00 through a background job its turn left running (uv run eval --suite search); the next send or open with --hold release takes it
-next: S1 waits for release; send its step now: drive --batch 2026-11-09 send S1@00a70a24 --hold release 'merge when ready'
+next: S1 waits for release; send its step, if it still stands: drive --batch 2026-11-09 send S1@00a70a24 --hold release 'merge when ready'
 --- stderr

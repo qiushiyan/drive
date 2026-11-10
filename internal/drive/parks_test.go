@@ -296,3 +296,18 @@ func TestParksWithTheSameNeedShareALine(t *testing.T) {
 		t.Fatalf("%d posts: %v", l.count(), err)
 	}
 }
+
+// watch --due names a park whose time has come with what to run about it: it
+// printed "P is : a run that acts on it first makes that moot".
+func TestDueSaysWhatToRunAboutAParkWhoseTimeHasCome(t *testing.T) {
+	r := newRig(t, "webhook")
+	adopted(t, r, "P")
+	if err := r.d.Park(r.view("P"), "waits on a release", r.w.Clock.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	r.w.Clock.Sleep(2 * time.Hour)
+	_, later, err := r.d.Due()
+	if err != nil || len(later) != 1 || later[0].Park == nil || !strings.Contains(later[0].LaterText(), "drive --batch b1 read P") {
+		t.Fatalf("its line gives the read to decide from: %+v %v", later, err)
+	}
+}

@@ -25,7 +25,8 @@ Columns:
   STATE  working | done | idle (no prompt yet) | interrupted (an interrupt or a deny)
          | error | blocked:permission | blocked:question | blocked:auth (a rejected login)
          | gone (its block or its Claude Code no longer runs; a line under the table gives
-         the open that brings it back) | unread (the read failed; run status again).
+         the open that brings it back) | starting (its open is under way)
+         | unread (the read failed; run status again).
          A background job a session still runs is listed under the table.
   INPUT  empty | suggestion (Claude Code's dimmed guess; typing replaces it)
          | typed (a line left unsent) | prompt (a prompt's options) | unknown (no box on screen)

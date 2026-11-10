@@ -52,22 +52,23 @@ func (d *Driver) holdNext(b *batch.Batch, h heldBy, label, view, retry string, o
 		if open {
 			names = "prints this open: " + retry
 		}
-		others := "nothing else wakes you"
 		switch {
 		case h.kind == holdPrompt:
 			next = fmt.Sprintf("%s waits on a prompt, so answer it first (%s); its wake comes when its turn then ends and %s", h.Session, d.run("read", h.Session, "--pending"), names)
 		case h.kind == holdJob && open:
-			next = fmt.Sprintf("nothing to run now: %s usually goes on once its job ends, and the wake of that turn, which %s arms, %s", h.Session, d.run("watch", "--due"), names)
+			next = fmt.Sprintf("nothing to run now: %s usually goes on once its job ends, and once %s is free the watchdog's wake and %s give this open: %s", h.Session, h.Name, d.run("watch", "--due"), retry)
 		case h.kind == holdJob:
-			next, others = h.Session+" usually goes on once its job ends", "nothing wakes you"
+			next = h.Session + " usually goes on once its job ends"
 		case h.kind == holdUnread:
 			next = fmt.Sprintf("%s cannot be read, so nothing says where its turn stands: see why (%s); its wake, once it can be read and its turn ends, %s", h.Session, d.run("status"), names)
 		default:
 			next = fmt.Sprintf("%s's wake comes when its turn ends and %s", h.Session, names)
 		}
 		if view != "" {
-			next += fmt.Sprintf("; %s for %s, so park it meanwhile: %s; once %s is free, the watchdog tells you, and %s says so",
-				others, label, d.run("park", view, text("waits for "+h.Name+", held by "+h.Session)), h.Name, d.run("watch", "--due"))
+			// The waiter's own turn is over, so no wake of its comes: what brings
+			// its driver back is the hold.
+			next += fmt.Sprintf("; no wake of %s's own comes, so park it meanwhile: %s; once %s is free, the watchdog's wake and %s give its send",
+				label, d.run("park", view, text("waits for "+h.Name+", held by "+h.Session)), h.Name, d.run("watch", "--due"))
 		}
 	}
 	if h.kind == holdJob {
@@ -381,11 +382,13 @@ func (d *Driver) waitersNext(b *batch.Batch, evs []batch.Event, members []*batch
 		if w.Hold != name {
 			continue
 		}
-		run := "open it now: " + w.Step // a refused open, whole
+		// The step was refused a while ago, and its session may wait for
+		// something else by now: the driver decides whether it still goes.
+		run := "open it, if that still stands: " + w.Step // a refused open, whole
 		if !w.Open {
-			run = fmt.Sprintf("read it, then send its step with --hold %s: %s", name, d.run("read", w.Session))
+			run = fmt.Sprintf("read it, then send its step with --hold %s, if that step still stands: %s", name, d.run("read", w.Session))
 			if o, err := d.observe(b, members, w.Session); err == nil {
-				run = "send its step now: " + d.sendCommand(o.View.String(), refusedStep(w), SendOptions{Hold: name})
+				run = "send its step, if it still stands: " + d.sendCommand(o.View.String(), refusedStep(w), SendOptions{Hold: name})
 			}
 		}
 		who, runs = append(who, w.Session), append(runs, run)

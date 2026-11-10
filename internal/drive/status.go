@@ -96,7 +96,8 @@ func (d *Driver) readEnded(b *batch.Batch, m *batch.Member, state State, mode Re
 		path = d.Host.Transcript(m.SID)
 	}
 	if path == "" && state == Gone && m.Starting {
-		return nil, &Refused{Reason: fmt.Sprintf("%s has nothing to read: its Claude Code never started in its block", m.Label), Next: d.openAgain(b, m)}
+		why, next := d.openAgain(b, m)
+		return nil, &Refused{Reason: fmt.Sprintf("%s has nothing to read: %s", m.Label, why), Next: next}
 	}
 	if path == "" {
 		return nil, &Refused{Reason: fmt.Sprintf("%s is %s, and no transcript of its session (%s) is found", m.Label, state, m.SID),
@@ -598,7 +599,7 @@ func (d *Driver) rowAt(b *batch.Batch, members []*batch.Member, label, block str
 		}
 		if m := batch.Find(members, label); m != nil && gone(err) {
 			if busy := d.Store.Busy("open:" + m.Label); m.Starting && busy != nil {
-				r.Error = fmt.Sprintf("its open is still under way (pid %d): Claude Code has not started in its block yet", busy.PID)
+				r.State, r.Error = Starting, fmt.Sprintf("its open is under way (pid %d), and Claude Code has not started in its block yet", busy.PID)
 			} else {
 				r.Next = d.reopen(b, m, nil)
 			}

@@ -7,6 +7,6 @@ S2       1    a00001  done   <1m  empty             release, then start the eval
 S1       2    a00002  done   <1m  empty             fold the review's findings 02:00    parked behind release: waits for release, held by S2; release is free now  S1@00a70a24
 no goal recorded for S2, S1; the owner's page shows each session's goal: drive --batch 2026-11-09 record goal S2 '…'
 S2 runs a background job since 02:00: uv run eval --suite search
-hold release: free; S1 waits for release; send its step now: drive --batch 2026-11-09 send S1@00a70a24 --hold release 'merge when ready'
+hold release: free; S1 waits for release; send its step, if it still stands: drive --batch 2026-11-09 send S1@00a70a24 --hold release 'merge when ready'
 what each watch printed: $HOME/state/batches/2026-11-09/watches.log
 --- stderr

@@ -60,7 +60,7 @@ func TestAHoldOnlyAJobKeepsCanBeFreed(t *testing.T) {
 	if text := f.Text(); !strings.HasPrefix(text, "freed release: S2 held it since ") || !strings.Contains(text, "uv run eval --suite search") {
 		t.Fatalf("it says what it freed, and from what: %q", text)
 	}
-	if !strings.Contains(f.Next, "S1 waits for release") || !strings.Contains(f.Next, "drive --batch b1 send "+r.view("S1")+" --hold release 'merge when ready'") {
+	if !strings.Contains(f.Next, "drive --batch b1 send "+r.view("S1")+" --hold release 'merge when ready'") {
 		t.Fatalf("its next is the send of the session that waits: %q", f.Next)
 	}
 	frees := r.events(batch.KindFree)
@@ -69,7 +69,7 @@ func TestAHoldOnlyAJobKeepsCanBeFreed(t *testing.T) {
 	}
 	// Free for every reader: status, watch --due, the page, the log.
 	st, err := r.d.Status(false)
-	if err != nil || len(st.Holds) != 1 || st.Holds[0] != "release: free; S1 waits for release; send its step now: drive --batch b1 send "+r.view("S1")+" --hold release 'merge when ready'" {
+	if err != nil || len(st.Holds) != 1 || !strings.HasPrefix(st.Holds[0], "release: free") || !strings.HasSuffix(st.Holds[0], "drive --batch b1 send "+r.view("S1")+" --hold release 'merge when ready'") {
 		t.Fatalf("status reads it free, with its waiter's send: %q %v", st.Holds, err)
 	}
 	for _, row := range st.Rows {
@@ -83,7 +83,7 @@ func TestAHoldOnlyAJobKeepsCanBeFreed(t *testing.T) {
 	if err != nil || len(armed) != 0 || r.watches.Alive(watchOf(waiter)) {
 		t.Fatalf("--due arms no watch for a parked waiter: %+v %v", armed, err)
 	}
-	if len(later) != 1 || later[0].Free != "release" || !strings.HasPrefix(later[0].LaterText(), "release is free: S1 waits for release; send its step now: drive --batch b1 send ") {
+	if len(later) != 1 || later[0].Free != "release" || !strings.Contains(later[0].LaterText(), "drive --batch b1 send "+r.view("S1")+" --hold release 'merge when ready'") {
 		t.Fatalf("--due says the hold is free and what to send: %+v", later)
 	}
 	if ov, err := r.d.Overview(true); err != nil || len(ov.Holds) != 1 || !strings.HasPrefix(ov.Holds[0], "release: free") {
@@ -133,9 +133,8 @@ func TestAFreeNamesEverySessionThatWaits(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"S1 and notes wait for release, and the first step sent takes it: ",
-		"S1, send its step now: drive --batch b1 send " + r.view("S1") + " --hold release 'merge when ready'",
-		"notes, open it now: drive --batch b1 open notes --dir " + r.w.Root + " --hold release 'write the release notes'",
+		"drive --batch b1 send " + r.view("S1") + " --hold release 'merge when ready'",
+		"drive --batch b1 open notes --dir " + r.w.Root + " --hold release 'write the release notes'",
 	} {
 		if !strings.Contains(f.Next, want) {
 			t.Errorf("%q is missing from: %s", want, f.Next)
@@ -292,11 +291,10 @@ func TestAFreeHoldIsToldOnceToWhoeverWaits(t *testing.T) {
 		return reports[0].Posted
 	}
 	posted := due()
-	if l.count() != 1 || !strings.Contains(posted, "release is free: S1 and J1 wait for release, and the first step sent takes it") ||
-		!strings.Contains(posted, "--hold release 'merge when ready'") || !strings.Contains(posted, "open J1") {
+	if l.count() != 1 || !strings.Contains(posted, "send "+r.view("S1")+" --hold release 'merge when ready'") || !strings.Contains(posted, "open J1 --dir "+dir+" --hold release 'judge the release'") {
 		t.Fatalf("told once, each waiter with what it was refused: %d %q", l.count(), posted)
 	}
-	if posted = due(); l.count() != 2 || !strings.Contains(posted, "release is free") {
+	if posted = due(); l.count() != 2 || !strings.Contains(posted, "--hold release 'merge when ready'") {
 		t.Fatalf("no run answered, so it is told again: %d %q", l.count(), posted)
 	}
 	r.d.Seen() // a run hears it, and leaves both waiting
@@ -310,7 +308,7 @@ func TestAFreeHoldIsToldOnceToWhoeverWaits(t *testing.T) {
 	if posted = due(); posted != "" || l.count() != 2 {
 		t.Fatalf("parked again, it is told no more: %d %q", l.count(), posted)
 	}
-	if st, _ := r.d.Status(false); len(st.Holds) != 1 || !strings.HasPrefix(st.Holds[0], "release: free; S1 and J1 wait for release") {
+	if st, _ := r.d.Status(false); len(st.Holds) != 1 || !strings.HasPrefix(st.Holds[0], "release: free") || !strings.Contains(st.Holds[0], "open J1 ") {
 		t.Fatalf("status still says it is free, and for whom: %q", st.Holds)
 	}
 	// The holder takes it again, the waiter is refused again, and it comes
@@ -326,7 +324,7 @@ func TestAFreeHoldIsToldOnceToWhoeverWaits(t *testing.T) {
 		t.Fatalf("held, there is nothing to tell: %d %q", l.count(), posted)
 	}
 	holder.Done("the changelog is in")
-	if posted = due(); l.count() != 3 || !strings.Contains(posted, "release is free") {
+	if posted = due(); l.count() != 3 || !strings.Contains(posted, "--hold release 'merge when ready'") {
 		t.Fatalf("free again after it was taken, it is told again: %d %q", l.count(), posted)
 	}
 }

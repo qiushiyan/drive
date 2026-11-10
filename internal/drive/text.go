@@ -169,6 +169,9 @@ func (r Rearmed) LaterText() string {
 	if r.Free != "" {
 		return fmt.Sprintf("%s is free: %s\n", r.Free, r.Why)
 	}
+	if r.Park != nil {
+		return r.Why + "\n"
+	}
 	if r.Gone != "" {
 		return fmt.Sprintf("%s is gone: %s\n", r.Label, r.Gone)
 	}

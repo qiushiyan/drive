@@ -143,7 +143,7 @@ type Rearmed struct {
 	Failures int       // times its watch ended without a wake in this batch
 	Again    time.Time // for a wake nobody acted on that is not due yet: when it is
 	Gone     string    // for a session that is gone: how to bring it back
-	Park     *parkNeed // for a park whose --until has come or that nothing ends
+	Park     *parkNeed // for a park whose --until has come or that nothing ends, Why then being its line
 	// Free is a hold that is free while sessions wait for it, Why then being
 	// what to run for each of them; Label is empty.
 	Free string
@@ -184,7 +184,7 @@ func (d *Driver) Due() (armed, later []Rearmed, err error) {
 			later = append(later, Rearmed{Label: r.Label, Gone: r.Next})
 		}
 		if n := d.parkNeedOf(r); n != nil {
-			later = append(later, Rearmed{Label: r.Label, Park: n})
+			later = append(later, Rearmed{Label: r.Label, Park: n, Why: strings.Join(d.parkLines([]parkNeed{*n}, st.Zone), "\n")})
 		}
 		if r.Due == "" || r.Error != "" {
 			continue

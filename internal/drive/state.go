@@ -31,9 +31,10 @@ const (
 // What a session that could not be read live reads as. These are no turn's
 // state: turnState never gives them.
 const (
-	Gone   State = "gone"   // its block or its Claude Code no longer runs
-	Closed State = "closed" // its driver closed it
-	Unread State = "unread" // it runs, as far as anything says, and the read failed
+	Gone     State = "gone"     // its block or its Claude Code no longer runs
+	Closed   State = "closed"   // its driver closed it
+	Unread   State = "unread"   // it runs, as far as anything says, and the read failed
+	Starting State = "starting" // its open is under way, and Claude Code has not started yet
 )
 
 // blocked says the session is stopped on something only someone else
