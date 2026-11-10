@@ -526,6 +526,41 @@ func (c *CloseCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	return cleanup(ctx, d, label)
 }
 
+type FreeCmd struct {
+	Hold   string   `arg:"" help:"The hold to free, as --hold named it, such as release."`
+	Reason []string `arg:"" help:"What shows its holder no longer needs the hold; the log keeps it."`
+}
+
+func (c *FreeCmd) Help() string {
+	return `
+A hold frees itself once its holder's turn has ended and no background job
+it started runs. Free hands it back sooner: the turn has ended, and the job
+still running is not what the hold was taken for, such as an eval a release
+step also started. The refusal on the hold prints the job's command; read
+the holder's reply when the command does not say what the job is.
+
+It is refused while the holder works, waits on a prompt, or its send is
+under way; a hold nothing holds is reported free. A freed hold is free
+until a send or open takes it again, so a step that uses it still names it
+with --hold. It prints the step to run for each session that waits for the
+hold.`
+}
+
+func (c *FreeCmd) HelpSections() []clikit.Section {
+	return []clikit.Section{{Title: "Examples", Body: `
+drive free release 'S2 released at 15:37; the job it left is its eval, which releases nothing'`}}
+}
+
+func (c *FreeCmd) Run(ctx *kong.Context, d *drive.Driver) error {
+	f, err := d.Free(c.Hold, strings.Join(c.Reason, " "))
+	if err != nil {
+		return err
+	}
+	d.Seen() // a hold nothing held leaves no other trace of the run
+	_, err = io.WriteString(ctx.Stdout, f.Text())
+	return err
+}
+
 // cleanup runs a cleanup and prints what became of it. A refusal did nothing,
 // so it prints only the refusal.
 func cleanup(ctx *kong.Context, d *drive.Driver, session string) error {

@@ -383,10 +383,49 @@ func TestContractSnippetOfATypedOnlyCommand(t *testing.T) {
 	c.run("send-snippet-typed-only", "send", view(t, out), "--snippet", "closeout", "--hold", "planlab-main", "The merged record has no marker for its owed read: add one in a docs pull request.")
 }
 
+// A hold only a background job keeps, as on 2026-11-09, when a release step
+// also started an eval: the send it refuses names the free, the free hands
+// the hold back and prints the waiter's step, status reads it free, and a
+// free of a hold nothing holds, or one its holder's turn needs, says so.
+func TestContractFree(t *testing.T) {
+	c := newContract(t)
+	write(t, filepath.Join(c.home, "config", "webhooks", "session-driver"), "URL=http://127.0.0.1:9/unused\nAUTH=Bearer x\n")
+	s2 := c.w.Add("S2")
+	s2.Busy("onboard")
+	s2.Done("analysis")
+	s2.Reply = func(cl *testkit.Claude, _ string) {
+		cl.Job("uv run eval --suite search")
+		cl.Done("Released. The eval runs on in the background.")
+	}
+	s1 := c.w.Add("S1")
+	s1.Busy("onboard")
+	s1.Done("analysis")
+	as := func(args ...string) []string { return append([]string{"--driver", "session-driver"}, args...) }
+	read := func(ref string) string {
+		t.Helper()
+		_, out, _ := cli(c.app, as("read", ref)...)
+		return view(t, out)
+	}
+
+	cli(c.app, "batch", "new", "2026-11-09", "--webhook", "session-driver", "--tz", "Europe/London")
+	cli(c.app, as("send", read(s2.Block[len(s2.Block)-6:]), "--as", "S2", "--hold", "release", "release, then start the eval")...)
+	cli(c.app, as("send", read(s1.Block[len(s1.Block)-6:]), "--as", "S1", "fold the review's findings")...)
+	c.run("free-send-refused", as("send", read("S1"), "--hold", "release", "merge when ready")...)
+	cli(c.app, as("park", read("S1"), "waits for release, held by S2")...)
+	c.run("free", as("free", "release", "S2 released; the job it left is its eval, which releases nothing")...)
+	c.run("free-status", as("status", "--quick")...)
+	c.run("free-again", as("free", "release", "checking it is free")...)
+	c.run("free-unnamed", as("free", "relase", "checking it is free")...)
+	s1.Reply = func(*testkit.Claude, string) {} // the merge runs on
+	cli(c.app, as("send", read("S1"), "--hold", "release", "merge when ready")...)
+	c.run("free-refused", as("free", "release", "S1 should be done by now")...)
+	c.run("free-log", as("log")...)
+}
+
 // A driver's reads tell drive its run heard the wake, since a run with nothing to
 // do leaves no other trace, and the machine's watchdog is no driver's.
 func TestAReadIsHeardAndTheWatchdogIsNot(t *testing.T) {
-	for _, args := range [][]string{{"status", "--quick"}, {"read", "ON"}, {"log"}, {"metrics"}, {"batch"}, {"watch", "ON"}, {"watch", "--due"}} {
+	for _, args := range [][]string{{"status", "--quick"}, {"read", "ON"}, {"log"}, {"metrics"}, {"batch"}, {"watch", "ON"}, {"watch", "--due"}, {"free", "release", "checking it is free"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			c := newContract(t)
 			write(t, filepath.Join(c.home, "config", "webhooks", "session-driver"), "URL=http://127.0.0.1:9/unused\nAUTH=Bearer x\n")

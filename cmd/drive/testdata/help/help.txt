@@ -55,6 +55,8 @@ Commands:
   park <view> <reason> ...            Stop a session's wakes until a step is sent to it, keeping
                                       why.
   close <view>                        Close a session's block after its last step.
+  free <hold> <reason> ...            Hand back a hold that only a background job of its holder
+                                      still keeps.
   cleanup [<session>]                 Remove what closed sessions left once it is merged, and say
                                       plainly what stays.
   record grant --source=SOURCE --scope=SCOPE

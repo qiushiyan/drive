@@ -392,6 +392,8 @@ func refusalKind(reason string) string {
 		return "own run still acting"
 	case strings.Contains(reason, "is held by"):
 		return "held resource"
+	case strings.Contains(reason, "stays held by"):
+		return "free of a hold in use"
 	case strings.Contains(reason, "login was rejected"):
 		return "login rejected"
 	case strings.Contains(reason, " waits on a ") && strings.Contains(reason, " prompt"):

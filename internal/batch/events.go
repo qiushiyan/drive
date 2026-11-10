@@ -23,6 +23,7 @@ const (
 	KindWake       = "wake"         // a wake was posted (HTTP set) or failed (Reason set)
 	KindPark       = "park"
 	KindClose      = "close"
+	KindFree       = "free"    // a driver handed back a hold only a job of its holder kept: Hold, Session its holder, Reason the driver's
 	KindRefused    = "refused" // an action drive would not take, and why
 	KindFailure    = "failure" // an action that went wrong in the session
 	KindGrant      = "grant"   // authority the owner handed over
@@ -78,15 +79,16 @@ func Unable(evs []Event, now time.Time) map[string]time.Time {
 }
 
 // ByDriver says a driver's command wrote e: a step or its intent, a prompt
-// answered, an open or its intent, a park, a close, a wake or timer armed,
-// or a refusal. A watch writes its posts, its wakes, a watch that ended
-// without one and the notes of commands run after a wake, so none of those
-// is a driver's.
+// answered, an open or its intent, a park, a close, a hold freed, a wake or
+// timer armed, or a refusal. A watch writes its posts, its wakes, a watch
+// that ended without one and the notes of commands run after a wake, so
+// none of those is a driver's.
 func ByDriver(e Event) bool { return byDriver[e.Kind] }
 
 var byDriver = map[string]bool{
 	KindSendIntent: true, KindSend: true, KindRespond: true, KindPark: true,
 	KindClose: true, KindWatch: true, KindRefused: true, KindOpenIntent: true, KindOpen: true,
+	KindFree: true,
 }
 
 // Acted says a driver's command changed a session, or set a timer: a step
@@ -114,7 +116,7 @@ func Acted(e Event) bool {
 func Heard(e Event) bool {
 	switch e.Kind {
 	case KindSeen, KindSendIntent, KindSend, KindRespond, KindPark, KindClose, KindOpenIntent, KindOpen, KindAdopt,
-		KindRefused, KindAsk, KindAnswer, KindGrant, KindGoal, KindCleanup:
+		KindRefused, KindAsk, KindAnswer, KindGrant, KindGoal, KindCleanup, KindFree:
 		return true
 	case KindNote:
 		return e.ID != "" // drive's own notes have no id
@@ -514,18 +516,22 @@ type Hold struct {
 }
 
 // Holds lists the newest taking of each hold. A send that failed before it
-// reached its session took nothing. Whether a taking still holds depends on
-// the holder's turn, which only the session can say.
+// reached its session took nothing, and a hold a driver freed is no one's
+// until a later send takes it. Whether a taking still holds depends on the
+// holder's turn, which only the session can say.
 func Holds(evs []Event) []Hold {
 	done, sent := resolved(evs)
 	takings := map[string][]Hold{}
 	var names []string
 	for _, e := range evs {
-		if e.Kind == KindSendIntent && e.Hold != "" {
-			if _, ok := takings[e.Hold]; !ok {
+		switch {
+		case e.Kind == KindSendIntent && e.Hold != "":
+			if _, ok := takings[e.Hold]; !ok && !slices.Contains(names, e.Hold) {
 				names = append(names, e.Hold)
 			}
 			takings[e.Hold] = append(takings[e.Hold], Hold{Name: e.Hold, Session: e.Session, Since: e.At, Intent: e.Intent, Pending: !done[e.Intent]})
+		case e.Kind == KindFree:
+			delete(takings, e.Hold)
 		}
 	}
 	var out []Hold

@@ -162,6 +162,22 @@ func TestDerivedViews(t *testing.T) {
 	if NextID(evs, KindAsk, "A") != "A2" {
 		t.Fatal("next id")
 	}
+	// A hold a driver freed is no one's until a later send takes it, and the
+	// free is a driver's trace.
+	free := Event{At: at(11), Kind: KindFree, Session: "T1", Hold: "release", Intent: "i1", Reason: "the job it left is its eval"}
+	freed := append(evs, free)
+	if h := Holds(freed); len(h) != 0 {
+		t.Fatalf("freed, release is no one's: %+v", h)
+	}
+	if !Heard(free) || !ByDriver(free) || Acted(free) {
+		t.Fatal("a free shows a driver ran, and changes no session")
+	}
+	again := append(freed,
+		Event{At: at(12), Kind: KindOpen, Session: "T2", Block: "block:aaaa-222222"},
+		Event{At: at(13), Kind: KindSendIntent, Session: "T2", Intent: "i3", Hold: "release"})
+	if h := Holds(again); len(h) != 1 || h[0].Session != "T2" || h[0].Intent != "i3" || !h[0].Pending {
+		t.Fatalf("a later send takes it again: %+v", h)
+	}
 }
 
 func TestOwnRefusesASecondDriver(t *testing.T) {
