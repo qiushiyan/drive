@@ -55,25 +55,14 @@ func TestAParkNothingEndsIsRefused(t *testing.T) {
 // first way was to ask the owner, so the driver recorded "is it on develop
 // yet?" five seconds later, and again for the second session, though the
 // pull request had merged seven minutes before and the driver could read
-// that itself. The first way is the wait a time ends, with what the driver
-// checks then; the ask is for a decision only the owner can make; close
-// stays last. Status's line for a park nothing ends says the same.
+// that itself. The ways come in this order: the wait a time ends, the ask,
+// close. Status's line for a park nothing ends gives them in the same order.
+// What each way says is the message's own, pinned whole by the contract
+// goldens (park-unended.txt), never phrase by phrase here.
 func TestAParkRefusalLeadsWithTheWaitTheDriverChecksItself(t *testing.T) {
 	r := newRig(t, "webhook")
-	l := hook(t, r)
 	adopted(t, r, "S3")
-	// The wake that offers the park says whose question an ask is, too.
-	e, err := r.d.Wait("S3", time.Minute, 10*time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := r.d.Wake("S3", e, ""); err != nil {
-		t.Fatal(err)
-	}
-	if out := l.output(0); strings.Contains(out, "waits on the owner") || !strings.Contains(out, "a decision that only the owner can make") {
-		t.Fatalf("the wake's park is for any wait, its ask for the owner's decision:\n%s", out)
-	}
-	err = r.d.Park(r.view("S3"), "waits for #412, which a teammate is landing", time.Time{})
+	err := r.d.Park(r.view("S3"), "waits for #412, which a teammate is landing", time.Time{})
 	if !isRefused(err) {
 		t.Fatalf("refused: %v", err)
 	}
@@ -82,15 +71,6 @@ func TestAParkRefusalLeadsWithTheWaitTheDriverChecksItself(t *testing.T) {
 		until, ask, closeIt := strings.Index(next, "--until WHEN"), strings.Index(next, "record ask S3"), strings.Index(next, "close S3@")
 		if until < 0 || ask < until || closeIt < ask {
 			t.Fatalf("the ways run: until a time, an ask, close: %s", next)
-		}
-		if wait := next[:ask]; !strings.Contains(wait, "such as a teammate's pull request") || !strings.Contains(wait, "yourself when that time comes") {
-			t.Fatalf("the wait names what the driver checks itself: %s", wait)
-		}
-		if asks := next[strings.LastIndex(next[:ask], ";"):closeIt]; !strings.Contains(asks, "a decision that only the owner can make") {
-			t.Fatalf("the ask is for the owner's decision: %s", asks)
-		}
-		if strings.Contains(next, "if it waits on the owner") {
-			t.Fatalf("a wait on anything reads as a wait on the owner: %s", next)
 		}
 	}
 	ways(nextOf(err))

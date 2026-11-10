@@ -40,10 +40,10 @@ func TestAHoldOnlyAJobKeepsCanBeFreed(t *testing.T) {
 	r, holder, waiter := holding(t, "webhook", evalRunsOn)
 	merge := drive.Step{Line: "merge when ready"}
 	_, err := r.d.Send(r.view("S1"), merge, drive.SendOptions{Hold: "release"})
-	if !isRefused(err) || !strings.Contains(err.Error(), "a background job it started still runs: uv run eval --suite search") {
+	if !isRefused(err) || !strings.Contains(err.Error(), "uv run eval --suite search") {
 		t.Fatalf("the job keeps the hold: %v", err)
 	}
-	if next := nextOf(err); !strings.Contains(next, "if that job is not what release was taken for, free the hold, saying why: drive --batch b1 free release") {
+	if next := nextOf(err); !strings.Contains(next, "drive --batch b1 free release") {
 		t.Fatalf("the refusal names the free: %s", next)
 	}
 	if err := r.d.Park(r.view("S1"), "waits for release, held by S2", time.Time{}); err != nil {
@@ -57,8 +57,8 @@ func TestAHoldOnlyAJobKeepsCanBeFreed(t *testing.T) {
 	if err != nil || f.By != "S2" {
 		t.Fatalf("freed: %+v %v", f, err)
 	}
-	if text := f.Text(); !strings.HasPrefix(text, "freed release: S2 held it since ") || !strings.Contains(text, "uv run eval --suite search") {
-		t.Fatalf("it says what it freed, and from what: %q", text)
+	if f.Name != "release" || f.Job != "uv run eval --suite search" || !strings.Contains(f.Text(), f.Job) {
+		t.Fatalf("it says what it freed, and from what: %+v %q", f, f.Text())
 	}
 	if !strings.Contains(f.Next, "drive --batch b1 send "+r.view("S1")+" --hold release 'merge when ready'") {
 		t.Fatalf("its next is the send of the session that waits: %q", f.Next)
