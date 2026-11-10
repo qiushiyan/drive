@@ -1480,6 +1480,30 @@ func TestAnOpenWhoseClaudeCodeNeverStartsIsOpenedAgainWhole(t *testing.T) {
 	}
 }
 
+// While its open is under way, as when a chat driver's shell timed out
+// mid-open, a session whose Claude Code has not started yet is starting:
+// status and read leave it to that open, and neither gives an open of its
+// own, which the open's lock would refuse.
+func TestASessionWhoseOpenIsUnderWayIsLeftToIt(t *testing.T) {
+	r := newRig(t, "none")
+	r.w.NoStart = map[string]bool{"J1": true}
+	if _, err := r.d.Open("J1", drive.Step{Line: "judge the release"}, drive.OpenOptions{Dir: r.w.Root}); err == nil {
+		t.Fatal("Claude Code never started, so the open fails")
+	}
+	release, err := r.d.Store.Own("open:J1", "b1", "opening J1") // another run's open of J1
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	st, err := r.d.Status(false)
+	if err != nil || len(st.Rows) != 1 || st.Rows[0].State != drive.Starting || st.Rows[0].Next != "" {
+		t.Fatalf("status leaves it to its open: %+v %v", st.Rows, err)
+	}
+	if _, err := r.d.Read("J1", drive.ReadLast, 1); !isRefused(err) || strings.Contains(nextOf(err), " open J1 ") {
+		t.Fatalf("read leaves it to its open: %v", err)
+	}
+}
+
 // A driver that ends while Claude Code starts leaves the block on record and
 // nothing saying a session runs in it. The next driver to act on it puts
 // that on record, so the session's own conversation is what a later reopen

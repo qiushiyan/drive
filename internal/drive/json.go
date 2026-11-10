@@ -129,7 +129,7 @@ func (st *Status) JSON() any {
 		doc.Grants = append(doc.Grants, grantDoc{ID: g.ID, At: g.At, Scope: g.Scope, Source: g.Source})
 	}
 	for _, p := range st.InFlight {
-		f := inFlightDoc{Kind: p.Kind, Session: p.Session, At: p.At, Text: p.Text}
+		f := inFlightDoc{Kind: p.Kind, Session: p.Session, At: p.At, Text: intentWords(p.Event)}
 		if p.Driver != nil {
 			f.DriverPID = p.Driver.PID
 		}

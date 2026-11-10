@@ -102,9 +102,9 @@ func (d *Driver) openAgain(b *batch.Batch, m *batch.Member) (why, next string) {
 	if _, out := d.unable(b)[opt.Account]; out || opt.Account == "primary" && d.Cfg.PrimaryName == "" {
 		opt.Account = "" // the launcher's choice
 	}
-	why = "it never started Claude Code"
+	why = "Claude Code never started in its block"
 	if opt.Resume == "" {
-		why += ", so there is nothing of its to resume"
+		why += ", so there is no conversation to resume"
 	}
 	open := d.openCommand(m.Label, opt, step)
 	switch {
@@ -114,6 +114,21 @@ func (d *Driver) openAgain(b *batch.Batch, m *batch.Member) (why, next string) {
 		return why, "open it again: " + open
 	}
 	return why, "open it again with its step: " + open
+}
+
+// opening is the run whose open of m is still under way, Claude Code not yet
+// started in its block; nil when none is. Such a member is starting, not
+// gone, and is left to that open.
+func (d *Driver) opening(m *batch.Member) *batch.Owner {
+	if !m.Starting {
+		return nil
+	}
+	return d.Store.Busy("open:" + m.Label)
+}
+
+// openingWords says so, for a status row or a read.
+func openingWords(o *batch.Owner) string {
+	return fmt.Sprintf("its open is under way (pid %d), and Claude Code has not started in its block yet", o.PID)
 }
 
 // unable is the accounts batch b found taking no step as of now, each to

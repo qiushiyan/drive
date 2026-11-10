@@ -96,6 +96,10 @@ func (d *Driver) readEnded(b *batch.Batch, m *batch.Member, state State, mode Re
 		path = d.Host.Transcript(m.SID)
 	}
 	if path == "" && state == Gone && m.Starting {
+		if busy := d.opening(m); busy != nil {
+			return nil, &Refused{Reason: fmt.Sprintf("%s has nothing to read: %s", m.Label, openingWords(busy)),
+				Next: fmt.Sprintf("let it finish; once it is done, %s shows where it stands", d.run("read", m.Label))}
+		}
 		why, next := d.openAgain(b, m)
 		return nil, &Refused{Reason: fmt.Sprintf("%s has nothing to read: %s", m.Label, why), Next: next}
 	}
@@ -459,7 +463,11 @@ func holdLines(holds []holdNow, zone *time.Location) []string {
 		}
 		var waiting []string
 		for _, w := range h.waiting {
-			waiting = append(waiting, fmt.Sprintf("%s (refused %s at %s)", w.Session, clip(join(stepWords(refusedStep(w))...), 60), w.Since.In(zone).Format("15:04")))
+			step := clip(join(stepWords(refusedStep(w))...), 60)
+			if w.Open {
+				step = "its open" // the whole command, which the free hold's line gives
+			}
+			waiting = append(waiting, fmt.Sprintf("%s (refused %s at %s)", w.Session, step, w.Since.In(zone).Format("15:04")))
 		}
 		switch {
 		case len(waiting) > 0:
@@ -598,8 +606,8 @@ func (d *Driver) rowAt(b *batch.Batch, members []*batch.Member, label, block str
 			r.State = Gone
 		}
 		if m := batch.Find(members, label); m != nil && gone(err) {
-			if busy := d.Store.Busy("open:" + m.Label); m.Starting && busy != nil {
-				r.State, r.Error = Starting, fmt.Sprintf("its open is under way (pid %d), and Claude Code has not started in its block yet", busy.PID)
+			if busy := d.opening(m); busy != nil {
+				r.State, r.Error = Starting, openingWords(busy)
 			} else {
 				r.Next = d.reopen(b, m, nil)
 			}

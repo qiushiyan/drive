@@ -20,8 +20,9 @@ next further off, up to two hours, until a drive command shows it runs.
 
 --due-all runs from the machine's scheduler, every few minutes, and costs no
 model run unless something needs a driver: a session that is gone, a watch
-that keeps failing, a park whose time has come, a hold that came free while a
-session waits for it, or open asks after six hours with no wake.
+that keeps failing, a park whose time has come or that nothing ends, a hold
+that came free while a session waits for it, or open asks after six hours
+with no wake.
 
 A restart of Rex's server ends every session in it. Stop the wakes first
 with --stop-all, so none wakes its driver mid-restart; it prints the

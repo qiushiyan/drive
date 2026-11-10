@@ -163,8 +163,9 @@ func StoppedText(stopped []Stopped) string {
 	return b.String()
 }
 
-// LaterText is the line --due prints for a wake not due yet, or a session
-// that is gone.
+// LaterText is the line --due prints for what it arms nothing for: a wake not
+// due yet, a session that is gone, a park that needs its driver, or a hold
+// that is free while sessions wait for it.
 func (r Rearmed) LaterText() string {
 	if r.Free != "" {
 		return fmt.Sprintf("%s is free: %s\n", r.Free, r.Why)
