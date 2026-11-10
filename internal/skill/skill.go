@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/qiushiyan/drive/internal/gitenv"
 )
 
 var slash = regexp.MustCompile(`^\s*/([A-Za-z0-9][A-Za-z0-9_.:-]*)`)
@@ -54,7 +56,9 @@ func searchPath(home, config, dir string) []string {
 	var out []string
 	if dir != "" {
 		out = append(out, filepath.Join(dir, ".claude/skills"))
-		if top, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output(); err == nil {
+		git := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel")
+		git.Env = gitenv.Env()
+		if top, err := git.Output(); err == nil {
 			out = append(out, filepath.Join(strings.TrimSpace(string(top)), ".claude/skills"))
 		}
 	}

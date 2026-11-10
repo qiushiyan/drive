@@ -106,7 +106,7 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 	if err := d.ready(o, opt, step); err != nil {
 		return nil, err
 	}
-	p, err := d.plan(o.Session.Dir, o.Session.Config, d.run("send", o.View.String()), step, o.Member == nil || !o.Member.Noticed && !o.Member.Resumed)
+	p, err := d.plan(o.Session.Dir, o.Session.Config, step, o.Member == nil || !o.Member.Noticed && !o.Member.Resumed)
 	if err != nil {
 		return nil, err
 	}
@@ -218,8 +218,8 @@ type plan struct {
 	ride   bool   // or as an @-mention after the typed step, when it fits
 	text   []byte // the notice, when it goes alone
 	typed  string // what is typed for the step; a file step's pointer once saved
-	// command is a typed-only skill's line from the head of a file step,
-	// typed with the rest of the file attached, as the skill starts only
+	// command is a typed-only skill's line from the head of a file step or
+	// of a snippet, typed with the rest attached, as the skill starts only
 	// when typed.
 	command string
 	asFile  string // why a line goes as a file
@@ -238,10 +238,8 @@ func (p *plan) mode() string {
 }
 
 // plan turns a step into what will be typed, for a session working in dir
-// on the account whose configuration is config. resend is the command that
-// delivers a step, such as "drive send T1@3fa91c07", which a refusal prints
-// with the step it can take instead.
-func (d *Driver) plan(dir, config, resend string, step Step, notice bool) (*plan, error) {
+// on the account whose configuration is config.
+func (d *Driver) plan(dir, config string, step Step, notice bool) (*plan, error) {
 	p := &plan{step: step, notice: notice}
 	switch {
 	case step.Line != "":
@@ -279,14 +277,11 @@ func (d *Driver) plan(dir, config, resend string, step Step, notice bool) (*plan
 	if p.body != "" {
 		first := firstLine(p.body)
 		if name := skill.Command(first); name != "" && skill.TypedOnly(d.Cfg.Home, config, dir, name) {
-			if step.Key != "" {
-				// claude-steps knows a snippet by the line its file is typed as.
-				return nil, &Refused{
-					Reason: fmt.Sprintf("/%s starts only when typed: a session told to run it from a file refuses", name),
-					Next: fmt.Sprintf("type the command, with the rest in a file it attaches: %s %s",
-						resend, join(text(first+" @<file>")))}
-			}
-			// The skill's line is typed, and the rest of the file attached to it.
+			// The skill's line is typed, and the rest attached to it: a
+			// session told to run the skill from a file refuses. A snippet
+			// goes the same way under its key, as planlab's closeout does
+			// with words after it; claude-steps knows it by the skill, and by
+			// the snippet's opening where the line typed holds it.
 			p.command, p.body = typedHead(first, p.body)
 		}
 	}

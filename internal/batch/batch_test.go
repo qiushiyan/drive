@@ -162,6 +162,22 @@ func TestDerivedViews(t *testing.T) {
 	if NextID(evs, KindAsk, "A") != "A2" {
 		t.Fatal("next id")
 	}
+	// A hold a driver freed is no one's until a later send takes it, and the
+	// free is a driver's trace.
+	free := Event{At: at(11), Kind: KindFree, Session: "T1", Hold: "release", Intent: "i1", Reason: "the job it left is its eval"}
+	freed := append(evs, free)
+	if h := Holds(freed); len(h) != 0 {
+		t.Fatalf("freed, release is no one's: %+v", h)
+	}
+	if !Heard(free) || !ByDriver(free) || Acted(free) {
+		t.Fatal("a free shows a driver ran, and changes no session")
+	}
+	again := append(freed,
+		Event{At: at(12), Kind: KindOpen, Session: "T2", Block: "block:aaaa-222222"},
+		Event{At: at(13), Kind: KindSendIntent, Session: "T2", Intent: "i3", Hold: "release"})
+	if h := Holds(again); len(h) != 1 || h[0].Session != "T2" || h[0].Intent != "i3" || !h[0].Pending {
+		t.Fatalf("a later send takes it again: %+v", h)
+	}
 }
 
 func TestOwnRefusesASecondDriver(t *testing.T) {
@@ -266,5 +282,65 @@ func TestAGoalOutlivesReopensAndFailedOpens(t *testing.T) {
 	}
 	if got := goal(evs, "P0"); got != "" {
 		t.Fatalf("an adopted session has no goal until one is recorded: %q", got)
+	}
+}
+
+// A session refused on a hold waits for it until it is sent a step or
+// closes, whichever name the log knows it by. On 2026-11-09 a block was
+// refused before it joined the batch, joined as S1 a minute later, was
+// parked and sent on, and closed that night; status listed the block as
+// waiting for the hold all the while, since the refusal named it by its
+// block id and nothing after it did.
+func TestAWaiterIsDoneUnderTheLabelItJoinedAs(t *testing.T) {
+	t0 := time.Date(2026, 11, 9, 14, 46, 0, 0, time.UTC)
+	at := func(m int) time.Time { return t0.Add(time.Duration(m) * time.Minute) }
+	const block = "block:00000000-0000-0000-0000-000000a00002"
+	refused := Event{At: at(0), Kind: KindRefused, Session: "a00002", Hold: "release", Path: "/tmp/merge.md"}
+	joined := []Event{refused,
+		{At: at(1), Kind: KindAdopt, Session: "S1", Block: block, SID: "s1"},
+		{At: at(1), Kind: KindSendIntent, Session: "S1", Intent: "i1"}}
+	sent := Event{At: at(2), Kind: KindSend, Session: "S1", Intent: "i1", Outcome: "arrived"}
+	with := func(evs []Event, more ...Event) []Event { return append(append([]Event{}, evs...), more...) }
+	for _, tc := range []struct {
+		name string
+		evs  []Event
+		want string // the session waiting for release, "" when none does
+	}{
+		{"refused, and nothing since", []Event{refused}, "a00002"},
+		{"joined, and sent its first step", with(joined, sent), ""},
+		{"joined, its first step lost on the way", with(joined, Event{At: at(2), Kind: KindFailure, Session: "S1", Intent: "i1"}), "S1"},
+		{"joined, sent on, parked and sent again, then closed", with(joined, sent,
+			Event{At: at(30), Kind: KindPark, Session: "S1", Reason: "waits for release, held by S2"},
+			Event{At: at(300), Kind: KindSend, Session: "S1", Outcome: "arrived"},
+			Event{At: at(560), Kind: KindClose, Session: "S1"}), ""},
+		{"closed by its block, never having joined", []Event{refused, {At: at(1), Kind: KindClose, Session: "a00002"}}, ""},
+		{"a session of the batch, parked behind the hold", []Event{
+			{At: at(0), Kind: KindAdopt, Session: "S4", Block: "block:00000000-0000-0000-0000-000000a00004"},
+			{At: at(1), Kind: KindRefused, Session: "S4", Hold: "release", Text: "merge it"},
+			{At: at(2), Kind: KindPark, Session: "S4", Reason: "waits for release, held by S2"}}, "S4"},
+		{"a session of the batch, closed", []Event{
+			{At: at(0), Kind: KindAdopt, Session: "S4", Block: "block:00000000-0000-0000-0000-000000a00004"},
+			{At: at(1), Kind: KindRefused, Session: "S4", Hold: "release", Text: "merge it"},
+			{At: at(2), Kind: KindClose, Session: "S4"}}, ""},
+		{"a session of the batch, while another block joins", []Event{
+			{At: at(0), Kind: KindAdopt, Session: "S4", Block: "block:00000000-0000-0000-0000-000000a00004"},
+			{At: at(1), Kind: KindRefused, Session: "S4", Hold: "release", Text: "merge it"},
+			{At: at(2), Kind: KindAdopt, Session: "S5", Block: "block:00000000-0000-0000-0000-000000a00005"},
+			{At: at(3), Kind: KindSend, Session: "S5", Outcome: "arrived"}}, "S4"},
+	} {
+		got := ""
+		for _, w := range Waiting(tc.evs) {
+			if w.Name != "release" || got != "" {
+				t.Errorf("%s: %+v", tc.name, Waiting(tc.evs))
+			}
+			got = w.Session
+		}
+		if got != tc.want {
+			t.Errorf("%s: %q waits for release, want %q", tc.name, got, tc.want)
+		}
+	}
+	// What it was refused goes with it under its label.
+	if w := Waiting(with(joined, Event{At: at(2), Kind: KindFailure, Session: "S1", Intent: "i1"})); len(w) != 1 || w[0].Path != "/tmp/merge.md" || !w[0].Since.Equal(at(0)) {
+		t.Errorf("the waiter keeps the step it was refused: %+v", w)
 	}
 }

@@ -23,6 +23,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/qiushiyan/drive/internal/gitenv"
 )
 
 // Snippet is one expanded snippet and the file its key came from: a project
@@ -35,7 +37,9 @@ type Snippet struct {
 }
 
 func git(dir string, args ...string) string {
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = gitenv.Env()
+	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}

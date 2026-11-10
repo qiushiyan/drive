@@ -1,0 +1,20 @@
+$ drive --driver session-driver log
+exit 0
+--- stdout
+02:00  batch                 started
+02:00  adopt        S2       block a00001, account acct@example.com, $ROOT/work
+02:00  send-intent  S2       release, then start the eval
+02:00  send         S2       arrived: release, then start the eval (the notice attached) (holds release)
+02:00  watch        S2       
+02:00  adopt        S1       block a00002, account acct@example.com, $ROOT/work
+02:00  send-intent  S1       fold the review's findings
+02:00  send         S1       arrived: fold the review's findings (the notice attached)
+02:00  watch        S1       
+02:00  refused      S1       release is held by S2 since 02:00, whose turn ended, but a background job it started still runs: uv run eval --suite search
+02:00  park         S1       waits for release, held by S2
+02:00  free         S2       release: S2 released; the job it left is its eval, which releases nothing
+02:00  send-intent  S1       merge when ready
+02:00  send         S1       arrived: merge when ready (holds release)
+02:00  watch        S1       
+02:00  refused      S1       release stays held by S1 since 02:00, whose turn is still running: a hold is freed only once its holder's turn has ended
+--- stderr

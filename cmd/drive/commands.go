@@ -246,11 +246,11 @@ A step is one of:
                           typing would garble (over 500 bytes, a newline or control
                           character, a leading ! or #) goes as a file instead
   --file PATH             typed as @<copy>, which attaches it, drive keeping the copy;
-                          queued mid-turn, a line asks the session to read the copy. A
-                          file whose first line starts a skill that runs only when typed
-                          is typed as that line with the rest attached, never queued
+                          queued mid-turn, a line asks the session to read the copy
   --snippet KEY 'TEXT'    the owner's snippet for the session's directory, with the
                           step's words, TEXT, where the owner would type after it
+A file or a snippet whose first line starts a skill that runs only when typed is
+typed as that line with the rest attached, never queued.
 Text that starts with a dash goes after --, which ends the flags.
 The first step a session gets in a batch carries the owner's notice: at the head
 of its file, or attached after its line.`}}
@@ -466,15 +466,20 @@ type ParkCmd struct {
 func (c *ParkCmd) Help() string {
 	return `
 A park is refused unless something on record ends it, since nothing else
-brings the session back to you: an open ask about it, a hold it was refused
-a step for, or --until.`
+brings the session back to you: --until, an open ask about it, or a hold it
+was refused a step for.
+
+A wait on a date, or on something outside the batch such as a teammate's
+pull request, takes --until: check what it waits for yourself when that
+time comes. An ask is for a decision that only the owner can make.`
 }
 
 func (c *ParkCmd) HelpSections() []clikit.Section {
 	return []clikit.Section{{Title: "Examples", Body: `
+drive park S4@… --until 4h 'waits for #10137, which a teammate is landing'  # check it yourself then
+drive park S6@… --until 2026-11-06 'waits for the 6 Nov release'
 drive record ask S5 --question 'Start the build without #10137?' --if-unanswered 'S5 stays parked'
 drive park S5@… 'waits for your call on #10137'      # the open ask ends it
-drive park S6@… --until 2026-11-06 'waits for the 6 Nov release'
 drive park S7@… 'waits for the release, held by S2'  # after a send refused on that hold`}}
 }
 
@@ -519,6 +524,41 @@ func (c *CloseCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 		return nil
 	}
 	return cleanup(ctx, d, label)
+}
+
+type FreeCmd struct {
+	Hold   string   `arg:"" help:"The hold to free, as --hold named it, such as release."`
+	Reason []string `arg:"" help:"What shows its holder no longer needs the hold; the log keeps it."`
+}
+
+func (c *FreeCmd) Help() string {
+	return `
+A hold frees itself once its holder's turn has ended and no background job
+it started runs. Free hands it back sooner: the turn has ended, and the job
+still running is not what the hold was taken for, such as an eval a release
+step also started. The refusal on the hold prints the job's command; read
+the holder's reply when the command does not say what the job is.
+
+It is refused while the holder works, waits on a prompt, or its send is
+under way; a hold nothing holds is reported free. A freed hold is free
+until a send or open takes it again, so a step that uses it still names it
+with --hold. It prints the step to run for each session that waits for the
+hold.`
+}
+
+func (c *FreeCmd) HelpSections() []clikit.Section {
+	return []clikit.Section{{Title: "Examples", Body: `
+drive free release 'S2 released at 15:37; the job it left is its eval, which releases nothing'`}}
+}
+
+func (c *FreeCmd) Run(ctx *kong.Context, d *drive.Driver) error {
+	f, err := d.Free(c.Hold, strings.Join(c.Reason, " "))
+	if err != nil {
+		return err
+	}
+	d.Seen() // a hold nothing held leaves no other trace of the run
+	_, err = io.WriteString(ctx.Stdout, f.Text())
+	return err
 }
 
 // cleanup runs a cleanup and prints what became of it. A refusal did nothing,

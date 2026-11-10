@@ -14,7 +14,7 @@ exit 0
 02:02  answer                A1 amended, needed explaining — yes
 02:02  note                  plan: T1 land-pr; T2 approve and build
 02:02  note         T2       told the user
-02:02  refused      T1       nothing on record ends T1's park, so no wake would bring it back: no ask about it is open, it waits for no hold, and no --until was given
+02:02  refused      T1       nothing on record ends T1's park, so no wake would bring it back: no --until was given, no ask about it is open, and it waits for no hold
 02:02  park         T1       design checkpoint
 02:02  open-intent  J1       Review the spec in docs/spec.md (goal: Check docs/spec.md against the code it describes.)
 02:02  open         J1       block a00003, account , $ROOT/work

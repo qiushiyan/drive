@@ -1,0 +1,5 @@
+$ drive --driver session-driver free relase checking it is free
+exit 0
+--- stdout
+no step in this batch has named a hold relase, so nothing was freed; the holds its steps have named: release
+--- stderr

@@ -66,6 +66,27 @@ func (r *Responded) Text() string {
 	return s + "; it now reads " + string(r.After) + "\n"
 }
 
+// Text is what a free prints: the hold it handed back and from what, or that
+// nothing held it, then what to run for a session that waits for it.
+func (f *Freed) Text() string {
+	var b strings.Builder
+	switch {
+	case f.By != "":
+		fmt.Fprintf(&b, "freed %s: %s held it since %s through a background job its turn left running (%s); the next send or open with --hold %s takes it\n",
+			f.Name, f.By, f.Since.In(f.zone).Format("15:04"), clip(f.Job, 120), f.Name)
+	case f.Unnamed && len(f.Holds) > 0:
+		fmt.Fprintf(&b, "no step in this batch has named a hold %s, so nothing was freed; the holds its steps have named: %s\n", f.Name, strings.Join(f.Holds, ", "))
+	case f.Unnamed:
+		fmt.Fprintf(&b, "no step in this batch has named a hold %s, so nothing was freed\n", f.Name)
+	default:
+		fmt.Fprintf(&b, "%s is free: nothing holds it\n", f.Name)
+	}
+	if f.Next != "" {
+		fmt.Fprintf(&b, "next: %s\n", f.Next)
+	}
+	return b.String()
+}
+
 // Text is the line a watch prints.
 func (w *Watched) Text() string {
 	switch {
@@ -449,6 +470,8 @@ func describe(e batch.Event, zone *time.Location) string {
 		return e.Goal
 	case batch.KindRefused, batch.KindFailure, batch.KindPark:
 		return clip(e.Reason, 140)
+	case batch.KindFree:
+		return e.Hold + ": " + clip(e.Reason, 140)
 	case batch.KindWakeStop:
 		return "stopped by watch --stop-all"
 	case batch.KindLimit:

@@ -23,6 +23,7 @@ const (
 	KindWake       = "wake"         // a wake was posted (HTTP set) or failed (Reason set)
 	KindPark       = "park"
 	KindClose      = "close"
+	KindFree       = "free"    // a driver handed back a hold only a job of its holder kept: Hold, Session its holder, Reason the driver's
 	KindRefused    = "refused" // an action drive would not take, and why
 	KindFailure    = "failure" // an action that went wrong in the session
 	KindGrant      = "grant"   // authority the owner handed over
@@ -78,15 +79,16 @@ func Unable(evs []Event, now time.Time) map[string]time.Time {
 }
 
 // ByDriver says a driver's command wrote e: a step or its intent, a prompt
-// answered, an open or its intent, a park, a close, a wake or timer armed,
-// or a refusal. A watch writes its posts, its wakes, a watch that ended
-// without one and the notes of commands run after a wake, so none of those
-// is a driver's.
+// answered, an open or its intent, a park, a close, a hold freed, a wake or
+// timer armed, or a refusal. A watch writes its posts, its wakes, a watch
+// that ended without one and the notes of commands run after a wake, so
+// none of those is a driver's.
 func ByDriver(e Event) bool { return byDriver[e.Kind] }
 
 var byDriver = map[string]bool{
 	KindSendIntent: true, KindSend: true, KindRespond: true, KindPark: true,
 	KindClose: true, KindWatch: true, KindRefused: true, KindOpenIntent: true, KindOpen: true,
+	KindFree: true,
 }
 
 // Acted says a driver's command changed a session, or set a timer: a step
@@ -114,7 +116,7 @@ func Acted(e Event) bool {
 func Heard(e Event) bool {
 	switch e.Kind {
 	case KindSeen, KindSendIntent, KindSend, KindRespond, KindPark, KindClose, KindOpenIntent, KindOpen, KindAdopt,
-		KindRefused, KindAsk, KindAnswer, KindGrant, KindGoal, KindCleanup:
+		KindRefused, KindAsk, KindAnswer, KindGrant, KindGoal, KindCleanup, KindFree:
 		return true
 	case KindNote:
 		return e.ID != "" // drive's own notes have no id
@@ -455,11 +457,16 @@ func Find(members []*Member, ref string) *Member {
 		}
 	}
 	for _, m := range members {
-		if m.Block == ref || strings.HasSuffix(m.Block, ref) && len(ref) >= 6 {
+		if refers(ref, m.Block) {
 			return m
 		}
 	}
 	return nil
+}
+
+// refers says ref names block: its id, or its last six characters or more.
+func refers(ref, block string) bool {
+	return block == ref || len(ref) >= 6 && strings.HasSuffix(block, ref)
 }
 
 // resolved says which intents have an outcome: a send, an open, or a
@@ -509,18 +516,22 @@ type Hold struct {
 }
 
 // Holds lists the newest taking of each hold. A send that failed before it
-// reached its session took nothing. Whether a taking still holds depends on
-// the holder's turn, which only the session can say.
+// reached its session took nothing, and a hold a driver freed is no one's
+// until a later send takes it. Whether a taking still holds depends on the
+// holder's turn, which only the session can say.
 func Holds(evs []Event) []Hold {
 	done, sent := resolved(evs)
 	takings := map[string][]Hold{}
 	var names []string
 	for _, e := range evs {
-		if e.Kind == KindSendIntent && e.Hold != "" {
-			if _, ok := takings[e.Hold]; !ok {
+		switch {
+		case e.Kind == KindSendIntent && e.Hold != "":
+			if _, ok := takings[e.Hold]; !ok && !slices.Contains(names, e.Hold) {
 				names = append(names, e.Hold)
 			}
 			takings[e.Hold] = append(takings[e.Hold], Hold{Name: e.Hold, Session: e.Session, Since: e.At, Intent: e.Intent, Pending: !done[e.Intent]})
+		case e.Kind == KindFree:
+			delete(takings, e.Hold)
 		}
 	}
 	var out []Hold
@@ -536,42 +547,51 @@ func Holds(evs []Event) []Hold {
 	return out
 }
 
-// Waiting lists the sessions a send was refused for because another held
-// what it needed, and that have been sent nothing since nor closed. A
-// session outside the batch is refused under its block's short id, so once
-// it joins, its wait goes on under the label it joined with.
+// Waiting lists the sessions a send or an open was refused for because
+// another held what it needed, in the order each began to wait. A session
+// waits until a step reaches it, which also ends a park behind the hold, or
+// until it closes. One refused by its block id, before it joined the batch,
+// is the same waiter under the label it joins as: the refusal names the
+// block, and every later event the label.
 func Waiting(evs []Event) []Hold {
-	refused := map[string]Hold{}
-	var order []string
+	var out []Hold
+	labels := map[string]bool{} // the batch's labels so far
+	blocks := map[string]bool{} // the waiters a refusal named by a block id
+	at := func(session string) int {
+		return slices.IndexFunc(out, func(w Hold) bool { return w.Session == session })
+	}
 	for _, e := range evs {
-		switch {
-		case e.Kind == KindRefused && e.Hold != "":
-			if _, ok := refused[e.Session]; !ok {
-				order = append(order, e.Session)
-			}
-			if _, ok := refused[e.Session]; !ok || refused[e.Session].Name != e.Hold {
-				refused[e.Session] = Hold{Name: e.Hold, Session: e.Session, Since: e.At, Step: e.Text, Key: e.Key, Path: e.Path, Open: e.Mode == "open"}
-			}
-		case e.Kind == KindAdopt:
-			for i, s := range order {
-				h, ok := refused[s]
-				if !ok || s == e.Session || len(s) < 6 || !strings.HasSuffix(e.Block, s) {
+		switch e.Kind {
+		case KindOpen, KindAdopt:
+			labels[e.Session] = true
+			for i, w := range out {
+				if !blocks[w.Session] || !refers(w.Session, e.Block) {
 					continue
 				}
-				delete(refused, s)
-				if _, ok := refused[e.Session]; !ok {
-					h.Session, order[i], refused[e.Session] = e.Session, e.Session, h
+				delete(blocks, w.Session)
+				if at(e.Session) < 0 {
+					out[i].Session = e.Session
+				} else {
+					out = slices.Delete(out, i, i+1) // the label waits already, as for an open refused
 				}
+				break
 			}
-		case e.Kind == KindSend && e.Outcome != "", e.Kind == KindClose:
-			delete(refused, e.Session)
-		}
-	}
-	var out []Hold
-	for _, s := range order {
-		if h, ok := refused[s]; ok {
-			out = append(out, h)
-			delete(refused, s)
+		case KindRefused:
+			if e.Hold == "" {
+				continue
+			}
+			w := Hold{Name: e.Hold, Session: e.Session, Since: e.At, Step: e.Text, Key: e.Key, Path: e.Path, Open: e.Mode == "open"}
+			switch i := at(e.Session); {
+			case i < 0:
+				out = append(out, w)
+				blocks[e.Session] = !w.Open && !labels[e.Session]
+			case out[i].Name != e.Hold:
+				out[i] = w
+			}
+		case KindSend, KindClose:
+			if i := at(e.Session); i >= 0 && (e.Kind == KindClose || e.Outcome != "") {
+				out = slices.Delete(out, i, i+1)
+			}
 		}
 	}
 	return out

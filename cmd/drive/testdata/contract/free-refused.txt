@@ -1,0 +1,6 @@
+$ drive --driver session-driver free release S1 should be done by now
+exit 1
+--- stdout
+--- stderr
+drive: error: release stays held by S1 since 02:00, whose turn is still running: a hold is freed only once its holder's turn has ended
+next: S1's wake comes when its turn ends; if a background job still keeps release then, and it is not what release was taken for, run this again: drive --batch 2026-11-09 free release 'S1 should be done by now'

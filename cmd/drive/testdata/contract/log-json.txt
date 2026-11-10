@@ -110,7 +110,7 @@ exit 0
     "at": "2026-10-23T01:02:04Z",
     "kind": "refused",
     "session": "T1",
-    "reason": "nothing on record ends T1's park, so no wake would bring it back: no ask about it is open, it waits for no hold, and no --until was given"
+    "reason": "nothing on record ends T1's park, so no wake would bring it back: no --until was given, no ask about it is open, and it waits for no hold"
   },
   {
     "at": "2026-10-23T01:02:04Z",

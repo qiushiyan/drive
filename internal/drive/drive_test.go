@@ -547,17 +547,20 @@ func TestATypedOnlySkillInAFileIsTypedWithTheRestAttached(t *testing.T) {
 		if _, err := r.d.Send(r.view("T1"), drive.Step{File: f}, drive.SendOptions{Queue: true}); !isRefused(err) || !strings.Contains(err.Error(), "starts only when typed") {
 			t.Fatalf("queued, it is refused: %v", err)
 		}
-		// claude-steps knows a snippet by the line its file is typed as, so one headed by the skill is refused.
+		// A snippet headed by the skill is typed the same way, under its key.
 		c.Done("reviewed")
 		_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".config/tabtype"), 0o755)
 		_ = os.WriteFile(filepath.Join(r.d.Cfg.Home, ".config/tabtype/config.toml"),
 			[]byte("[[snippets]]\nkey = \"sr\"\nexpand = \"/strategic-review 9531\\nLook hardest at the door.\"\n"), 0o644)
-		intents := len(r.events(batch.KindSendIntent))
-		if _, err := r.d.Send(r.view("T1"), drive.Step{Key: "sr"}, drive.SendOptions{}); !isRefused(err) || !strings.Contains(err.Error(), "starts only when typed") {
-			t.Fatalf("a snippet headed by it is refused: %v", err)
+		sent, err := r.d.Send(r.view("T1"), drive.Step{Key: "sr"}, drive.SendOptions{})
+		if err != nil || !strings.HasPrefix(sent.Typed, "/strategic-review 9531 @") {
+			t.Fatalf("a snippet headed by it is typed as the skill's line: %+v %v", sent, err)
 		}
-		if n := len(r.events(batch.KindSendIntent)); n != intents {
-			t.Fatalf("refused before anything is recorded: %d intents, not %d", n, intents)
+		if rest, _ := os.ReadFile(sent.Path); strings.TrimSpace(string(rest)) != "Look hardest at the door." {
+			t.Fatalf("the snippet's other lines are attached: %q", rest)
+		}
+		if evs := r.events(batch.KindSend); evs[len(evs)-1].Key != "sr" {
+			t.Fatalf("its send keeps the snippet's key: %+v", evs[len(evs)-1])
 		}
 		// An open types it the same way.
 		o, err := r.d.Open("sr", drive.Step{File: f}, drive.OpenOptions{Dir: r.w.Root})
@@ -568,6 +571,70 @@ func TestATypedOnlySkillInAFileIsTypedWithTheRestAttached(t *testing.T) {
 			t.Fatalf("an open types the skill's line too: %q", typed)
 		}
 	})
+}
+
+// planlab's closeout key is one line, "/pl-loopy-handoff-distill merged and
+// deployed", whose skill starts only when typed. Sent with words after it,
+// drive refused it ten times across three batches (11-03 to 11-10), and each
+// time the driver typed the command itself with the words in a file. drive
+// does that: the command's line typed, where the session starts the skill,
+// the words attached, and the snippet's key kept on the record, which is
+// what metrics counts it by.
+func TestAKeyedTypedOnlyCommandIsTypedWithItsWordsAttached(t *testing.T) {
+	const (
+		line  = "/pl-loopy-handoff-distill merged and deployed"
+		rider = "The merged record has no marker for its owed read: add one in a docs pull request and merge it."
+	)
+	r := newRig(t, "none")
+	c := adopted(t, r, "T1")
+	c.Skill("pl-loopy-handoff-distill", true)
+	tab := filepath.Join(c.Cwd, ".tabtype.local.toml")
+	if err := os.WriteFile(tab, []byte("[[snippets]]\nkey = \"closeout\"\nexpand = \"\"\"\n"+line+"\n\"\"\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// What a file does: told to run the skill from one, as the snippet's
+	// pointer would tell it, the session cannot start it.
+	told := filepath.Join(r.w.Root, "told.md")
+	_ = os.WriteFile(told, []byte(line+"\n\n"+rider+"\n"), 0o644)
+	_ = r.w.Type(c.Block, "@"+told+" ")
+	_ = r.w.Key(c.Block, "enter")
+	if rd, err := r.d.Read("T1", drive.ReadLast, 1); err != nil || !strings.Contains(rd.Body, "runs only when you type it") {
+		t.Fatalf("a session told to run the skill from a file refuses: %+v %v", rd, err)
+	}
+	sent, err := r.d.Send(r.view("T1"), drive.Step{Key: "closeout", Text: rider}, drive.SendOptions{Hold: "planlab-main"})
+	if err != nil {
+		t.Fatalf("the key goes with its words: %v", err)
+	}
+	path, ok := strings.CutPrefix(sent.Typed, line+" @")
+	if typed, _ := c.Seen(); !ok || typed[len(typed)-1] != sent.Typed+" " {
+		t.Fatalf("the command's line is typed, its words attached: %q, typed %q", sent.Typed, typed)
+	}
+	if body, _ := os.ReadFile(path); strings.TrimSpace(string(body)) != rider {
+		t.Fatalf("the attachment is the words alone: %q", body)
+	}
+	// Told to run it from a file, the session says it cannot start the skill.
+	if rd, err := r.d.Read("T1", drive.ReadLast, 1); err != nil || rd.Body != "ok" {
+		t.Fatalf("the session starts the skill: %+v %v", rd, err)
+	}
+	if !strings.Contains(sent.Text(), line) || !strings.Contains(sent.Text(), "snippet from "+tab) {
+		t.Fatalf("the send prints the line typed and the snippet's file: %q", sent.Text())
+	}
+	for _, kind := range []string{batch.KindSendIntent, batch.KindSend} {
+		evs := r.events(kind)
+		if e := evs[len(evs)-1]; e.Key != "closeout" || e.Text != sent.Typed || e.Path != path || e.Hold != "planlab-main" {
+			t.Fatalf("the %s keeps the key, the line typed and the hold: %+v", kind, e)
+		}
+	}
+	if m, err := r.d.Metrics(); err != nil || m.Snippets != 1 || m.ByKey["closeout"] != 1 || m.Commands != 0 {
+		t.Fatalf("metrics count it as the owner's snippet: %+v %v", m, err)
+	}
+	// Mid-turn a mention attaches nothing, so queued it still waits for the turn's end.
+	c.Busy("the closeout")
+	typed, _ := c.Seen()
+	_, err = r.d.Send(r.view("T1"), drive.Step{Key: "closeout", Text: rider}, drive.SendOptions{Queue: true})
+	if after, _ := c.Seen(); !isRefused(err) || !strings.Contains(err.Error(), "starts only when typed") || len(after) != len(typed) {
+		t.Fatalf("queued, it is refused and nothing is typed: %v", err)
+	}
 }
 
 // A relaunch carries the step the session was last sent as the session got
@@ -1202,51 +1269,72 @@ func TestHoldWaitersAreListedAndTheRefusalSaysHowBack(t *testing.T) {
 	}
 }
 
-// A session outside the batch is refused under its block's short id, and
-// joins under the label its next send gives it; a waiter closed waits for
-// nothing. Seen live: S1, refused as bf4e51 on 9 Nov and sent its step as
-// S1 a minute later, was still listed as waiting the next day, after it
-// closed, and the holder's wakes said to send to it.
-func TestAWaiterIsKnownByItsSessionNotTheNameItWasRefusedUnder(t *testing.T) {
+// On 2026-11-09 a send to a block outside the batch was refused on release,
+// which S2 held. A minute later the block joined the batch as S1 on another
+// step, and status went on listing "waiting for it: bf4e51 (refused --file
+// /tmp/s1-a1.md at 14:46)" through S1's parks, its merge and its close: the
+// refusal named the block, and nothing after it did. A waiter is done once
+// its session is sent a step or closes, under the label it joined as.
+func TestAWaiterRefusedBeforeItJoinedIsDoneOnceItIsSent(t *testing.T) {
 	r := newRig(t, "webhook")
-	a, b, c := r.w.Add("A"), r.w.Add("B"), r.w.Add("C")
-	for _, s := range []*testkit.Claude{a, b, c} {
-		done(s, "x", "y")
-	}
-	if _, err := r.d.Send(r.view(a.Block[len(a.Block)-6:]), drive.Step{Line: "land it"}, drive.SendOptions{Label: "T5s"}); err != nil {
+	holder := adopted(t, r, "S2")
+	holder.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} }) // the release runs on
+	if _, err := r.d.Send(r.view("S2"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "land it"}, drive.SendOptions{Label: "T3s"}); err != nil {
-		t.Fatal(err)
-	}
-	a.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} })
-	if _, err := r.d.Send(r.view("T5s"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
-		t.Fatal(err)
-	}
-	short := b.Block[len(b.Block)-6:]
-	if _, err := r.d.Send(r.view(short), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); !isRefused(err) {
-		t.Fatalf("the hold is taken: %v", err)
-	}
-	if _, err := r.d.Send(r.view("T3s"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); !isRefused(err) {
-		t.Fatalf("the hold is taken: %v", err)
-	}
-	st, _ := r.d.Status(false)
-	if len(st.Holds) != 1 || !strings.Contains(st.Holds[0], "waiting for it: "+short) || !strings.Contains(st.Holds[0], "T3s") {
-		t.Fatalf("both are listed as waiting: %q", st.Holds)
-	}
-	a.Done("released")
-	if _, err := r.d.Send(r.view(short), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release", Label: "S1"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.d.Close(r.view("T3s")); err != nil {
-		t.Fatal(err)
-	}
-	st, _ = r.d.Status(false)
-	for _, h := range st.Holds {
-		if strings.Contains(h, "waiting for it") {
-			t.Fatalf("one was sent its step under the label it joined with and the other closed, so nobody waits: %q", st.Holds)
+	waits := func(want string) {
+		t.Helper()
+		st, err := r.d.Status(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := ""
+		for _, h := range st.Holds {
+			if _, who, ok := strings.Cut(h, "waiting for it: "); ok {
+				got, _, _ = strings.Cut(who, " ")
+			}
+		}
+		if got != want {
+			t.Fatalf("%q waits for release, want %q: %q", got, want, st.Holds)
 		}
 	}
+	c := r.w.Add("S1")
+	done(c, "onboard", "analysis")
+	ref := c.Block[len(c.Block)-6:]
+	merge := filepath.Join(r.w.Root, "merge.md")
+	_ = os.WriteFile(merge, []byte("Merge when the checks are green, and release.\n"), 0o644)
+	if _, err := r.d.Send(r.view(ref), drive.Step{File: merge}, drive.SendOptions{Hold: "release"}); !isRefused(err) || !strings.Contains(err.Error(), "held by S2") {
+		t.Fatalf("held: %v", err)
+	}
+	waits(ref)
+	if _, err := r.d.Send(r.view(ref), drive.Step{Line: "Fold the review's findings first."}, drive.SendOptions{Label: "S1"}); err != nil {
+		t.Fatal(err)
+	}
+	waits("")
+	// The holder's wake names no one it would have the driver send to again.
+	holder.Done("released")
+	l := hook(t, r)
+	e, err := r.d.Wait("S2", time.Minute, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.d.Wake("S2", e, ""); err != nil || strings.Contains(l.output(0), "waiting for release") {
+		t.Fatalf("its wake names no waiter: %v\n%s", err, l.output(0))
+	}
+	// One of the batch's own, refused and then closed, waits no more either.
+	if _, err := r.d.Send(r.view("S2"), drive.Step{Line: "and the changelog"}, drive.SendOptions{Hold: "release"}); err != nil {
+		t.Fatal(err)
+	}
+	holder.Edit(func(c *testkit.Claude) { c.Reply = nil })
+	holder.Busy("the changelog")
+	if _, err := r.d.Send(r.view("S1"), drive.Step{File: merge}, drive.SendOptions{Hold: "release"}); !isRefused(err) {
+		t.Fatalf("held again: %v", err)
+	}
+	waits("S1")
+	if err := r.d.Close(r.view("S1")); err != nil {
+		t.Fatal(err)
+	}
+	waits("")
 }
 
 func TestAStuckWatchIsFlaggedAndRestarted(t *testing.T) {
