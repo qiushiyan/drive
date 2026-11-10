@@ -312,7 +312,10 @@ const pong = `{"type":"user","uuid":"p0","timestamp":"2026-10-22T15:41:46.248Z",
 
 // Some local commands answer with a system row, not a user row: a /compact
 // with nothing to compact, /clear (the first rows of the new session's
-// transcript), and /cd or /wt, which record the command itself as one too.
+// transcript), and /wt, which records the command itself as one too. So does
+// a /cd that moves the session, which starts no turn: the worktree mod runs
+// one as a turn ends (rows as 2.1.322 wrote them on 10 Nov, the mod's queue
+// rows and origin included), and the turn's reply is still its answer.
 func TestALocalCommandAnswersWithASystemRow(t *testing.T) {
 	refused := read(t, pong,
 		`{"type":"user","message":{"role":"user","content":"/compact"},"uuid":"c1","timestamp":"2026-10-22T15:43:14.824Z"}`,
@@ -331,11 +334,28 @@ func TestALocalCommandAnswersWithASystemRow(t *testing.T) {
 		t.Fatalf("/clear is the new session's one prompt, answered: %+v last %+v", cleared.Prompts, cleared.Last)
 	}
 	moved := read(t, pong,
+		`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-22T15:46:02.560Z"}`,
+		`{"type":"queue-operation","operation":"dequeue","timestamp":"2026-10-22T15:46:02.563Z"}`,
+		`{"type":"relocated","relocatedCwd":"/x/drive"}`,
 		`{"type":"system","subtype":"local_command","content":"<command-name>/cd</command-name>\n            <command-message>cd</command-message>\n            <command-args>/x/drive/</command-args>","level":"info","timestamp":"2026-10-22T15:46:02.822Z","uuid":"m1","isMeta":false}`,
 		`{"type":"system","subtype":"local_command","content":"<local-command-stdout>Moved to \u001b[1m/x/drive\u001b[22m</local-command-stdout>","level":"info","timestamp":"2026-10-22T15:46:02.822Z","uuid":"m2","isMeta":false,"commandRun":{"command":"cd","args":"/x/drive/"}}`,
-		`{"type":"user","message":{"role":"user","content":"<system-reminder>\nThe session's working directory has changed to /x/drive (via /cd)."},"isMeta":true,"uuid":"m3","timestamp":"2026-10-22T15:46:02.822Z"}`)
-	if p := moved.Newest(); p == nil || p.Text != "/cd /x/drive/" || !moved.Answered() {
-		t.Fatalf("a /cd recorded as system rows is a prompt, answered: newest %+v last %+v", p, moved.Last)
+		`{"type":"user","message":{"role":"user","content":"<system-reminder>\nThe session's working directory has changed to /x/drive (via /cd)."},"isMeta":true,"origin":{"kind":"plugin","name":"worktree"},"uuid":"m3","timestamp":"2026-10-22T15:46:02.822Z"}`)
+	if p := moved.Newest(); p == nil || p.ID != "p0" || !moved.Answered() || moved.Dir != "/x/drive" {
+		t.Fatalf("a /cd that moved the session is no prompt: newest %+v, dir %q", p, moved.Dir)
+	}
+	if a, local := moved.Answer(); a == nil || local || a.Text != "pong" {
+		t.Fatalf("the turn's reply is still its answer: %+v", a)
+	}
+	// What left the queue went to the /cd, so a line typed while idle after it
+	// shows nothing waits, as when a line was lost with its process.
+	moved = read(t, pong,
+		`{"type":"queue-operation","operation":"enqueue","content":"lost","timestamp":"2026-10-22T15:45:00.000Z"}`,
+		`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-22T15:46:02.560Z"}`,
+		`{"type":"queue-operation","operation":"dequeue","timestamp":"2026-10-22T15:46:02.563Z"}`,
+		`{"type":"system","subtype":"local_command","content":"<command-name>/cd</command-name>\n            <command-message>cd</command-message>\n            <command-args>/x/drive/</command-args>","level":"info","timestamp":"2026-10-22T15:46:02.822Z","uuid":"m1","isMeta":false}`,
+		`{"type":"user","uuid":"p1","timestamp":"2026-10-22T15:47:00.000Z","origin":{"kind":"human"},"message":{"role":"user","content":"next"}}`)
+	if p := moved.Newest(); p == nil || p.ID != "p1" || moved.Queued != nil {
+		t.Fatalf("a line typed while idle after the /cd leaves nothing waiting: newest %+v", p)
 	}
 }
 

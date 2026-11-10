@@ -191,6 +191,30 @@ func TestAGoneSessionReopensWhereItLastWorked(t *testing.T) {
 	})
 }
 
+// The worktree mod moves a session that made a worktree into it once its
+// turn ends, by /cd. The move starts no turn, so the reply that ended the
+// turn is still its answer, and a step decided on the view before the move
+// still lands. Seen live: lab-tier-on's wake read "/cd … finished: Moved to
+// …" in place of the plan it had written, and its driver sent the brief
+// again (10 Nov).
+func TestAMoveIntoAWorktreeLeavesTheTurnAsItEnded(t *testing.T) {
+	r := newRig(t, "none")
+	c := adopted(t, r, "T1")
+	done(c, "plan the change", "The plan has three steps; nothing is applied.")
+	before := r.view("T1")
+	c.Relocate(filepath.Join(r.w.Root, "worktree"))
+	if after := r.view("T1"); after != before {
+		t.Fatalf("the move leaves the view as the turn ended: %s, then %s", before, after)
+	}
+	e, err := r.d.Wait("T1", time.Minute, 10*time.Minute)
+	if err != nil || e == nil || e.Reply != "The plan has three steps; nothing is applied." {
+		t.Fatalf("the wake carries the turn's reply, not the move's output: %+v, %v", e, err)
+	}
+	if _, err := r.d.Send(before, drive.Step{Line: "go"}, drive.SendOptions{}); err != nil {
+		t.Fatalf("a step decided before the move lands: %v", err)
+	}
+}
+
 // A turn that ended with a background job running is done, the job named;
 // a hold that job keeps says so, and the refusal of a waiter gives the step
 // that has the holder stop it, where an interrupt cannot.

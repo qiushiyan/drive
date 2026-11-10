@@ -188,10 +188,24 @@ func (c *Claude) Transcript() string {
 	return filepath.Join(c.Config, "projects", "proj", c.SID+".jsonl")
 }
 
-// Relocate is the session's /cd: the transcript records the move and the
-// process stands in dir.
+// Relocate is the session's /cd as the worktree mod runs it once a turn that
+// made a worktree ends, and the process stands in dir. The transcript records
+// it as Claude Code 2.1.322 does: the command passes through the queue
+// without its text, the move is a relocated row, the command and its output
+// are system rows, and the model is told in a meta row the mod's origin marks.
 func (c *Claude) Relocate(dir string) {
-	c.Write(map[string]any{"type": "relocated", "relocatedCwd": dir})
+	c.Write(
+		map[string]any{"type": "queue-operation", "operation": "enqueue"},
+		map[string]any{"type": "queue-operation", "operation": "dequeue"},
+		map[string]any{"type": "relocated", "relocatedCwd": dir},
+		map[string]any{"type": "system", "subtype": "local_command", "uuid": c.w.uuid(), "level": "info", "isMeta": false,
+			"content": "<command-name>/cd</command-name>\n            <command-message>cd</command-message>\n            <command-args>" + dir + "</command-args>"},
+		map[string]any{"type": "system", "subtype": "local_command", "uuid": c.w.uuid(), "level": "info", "isMeta": false,
+			"content":    "<local-command-stdout>Moved to \x1b[1m" + dir + "\x1b[22m</local-command-stdout>",
+			"commandRun": map[string]any{"command": "cd", "args": dir}},
+		map[string]any{"type": "user", "uuid": c.w.uuid(), "isMeta": true, "origin": map[string]any{"kind": "plugin", "name": "worktree"},
+			"message": map[string]any{"role": "user", "content": "<system-reminder>\nThe session's working directory has changed to " + dir + " (via /cd).\n</system-reminder>"}},
+	)
 	c.Cwd = dir
 }
 

@@ -134,6 +134,14 @@ var (
 var notTyped = []string{"<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>",
 	"<task-notification>", "<system-reminder>"}
 
+// commandOf is the slash command text records as markup, "" when it is none.
+func commandOf(text string) string {
+	if name := commandName.FindStringSubmatch(text); name != nil {
+		return name[1]
+	}
+	return ""
+}
+
 // AsTyped gives a slash command recorded as markup back as it was typed.
 func AsTyped(text string) string {
 	name := commandName.FindStringSubmatch(text)
@@ -162,8 +170,9 @@ type row struct {
 			ResetsAt int64 `json:"resetsAt"` // Unix seconds
 		} `json:"rate_limit_info"`
 	} `json:"apiErrorParams"`
-	Origin  *struct{ Kind string } `json:"origin"`
-	Message *struct {
+	Origin     *struct{ Kind string }    `json:"origin"`
+	CommandRun *struct{ Command string } `json:"commandRun"` // on a local command's output: the command, without its slash
+	Message    *struct {
 		Model   string          `json:"model"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
@@ -332,10 +341,20 @@ func Read(r io.Reader) (Frontier, error) {
 			case "local_command":
 				// Some local commands record themselves and their output as
 				// system rows: /clear's output, a refused /compact's, and /cd
-				// or /wt whole.
-				if strings.HasPrefix(strings.TrimLeft(text, " \t\n"), "<command-name>") {
+				// or /wt whole. A /cd that moved the session is neither prompt
+				// nor answer, whoever ran it: it starts no turn, and the
+				// relocated row says where the session now stands. The worktree
+				// mod runs one once a turn that made a worktree ends, and the
+				// reply before it is still what the turn answered.
+				switch {
+				case strings.HasPrefix(strings.TrimLeft(text, " \t\n"), "<command-name>"):
+					if commandOf(text) == "/cd" {
+						q.started() // the mod's passes through the queue
+						continue
+					}
 					f.take(Prompt{ID: e.UUID, At: e.at(), Text: AsTyped(text), Known: true}, &q)
-				} else {
+				case e.CommandRun != nil && e.CommandRun.Command == "cd":
+				default:
 					f.Last = &Entry{ID: e.UUID, At: e.at(), Text: text}
 				}
 			case "scheduled_task_fire":
