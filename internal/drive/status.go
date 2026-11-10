@@ -53,12 +53,12 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 	}
 	m := batch.Find(members, ref)
 	if m != nil && m.Closed {
-		return d.readEnded(b, m, "closed", mode, n)
+		return d.readEnded(b, m, Closed, mode, n)
 	}
 	o, err := d.observe(b, members, ref)
 	if err != nil {
 		if m != nil && gone(err) {
-			return d.readEnded(b, m, "gone", mode, n)
+			return d.readEnded(b, m, Gone, mode, n)
 		}
 		return nil, err
 	}
@@ -95,6 +95,9 @@ func (d *Driver) readEnded(b *batch.Batch, m *batch.Member, state State, mode Re
 	if m.SID != "" {
 		path = d.Host.Transcript(m.SID)
 	}
+	if path == "" && state == Gone && m.Starting {
+		return nil, &Refused{Reason: fmt.Sprintf("%s has nothing to read: its Claude Code never started in its block", m.Label), Next: d.openAgain(b, m)}
+	}
 	if path == "" {
 		return nil, &Refused{Reason: fmt.Sprintf("%s is %s, and no transcript of its session (%s) is found", m.Label, state, m.SID),
 			Next: d.run("log") + " has what was sent to it and how each step went"}
@@ -108,7 +111,7 @@ func (d *Driver) readEnded(b *batch.Batch, m *batch.Member, state State, mode Re
 		return nil, fmt.Errorf("reading %s's transcript: %w", m.Label, err)
 	}
 	r := &Reading{Label: m.Label, SID: m.SID, Goal: m.Goal, State: state, Account: m.Account}
-	if state == "gone" {
+	if state == Gone {
 		r.Next = d.reopen(b, m, &f)
 	}
 	return r, d.readText(r, f, mode, n, zoneOf(b))
@@ -196,8 +199,27 @@ type Row struct {
 	facts wakeFacts // what decides its wake, for a session read live
 }
 
+// wakeKind is how a member's wake stands, which a reader decides on; the
+// words are Wake's.
+type wakeKind int
+
+const (
+	wakeNever     wakeKind = iota // no watch was ever armed for it
+	wakeParked                    // parked: it wakes no one until its next step
+	wakeArmed                     // its watch runs, and posts when its turn ends
+	wakeJobHeld                   // its watch runs, and a job holds its post
+	wakeStalled                   // its watch runs, and waits for a driver that is not answering
+	wakeStuck                     // its watch runs long past when it should have posted
+	wakeStopped                   // stopped by watch --stop-all
+	wakePosting                   // its post is under way
+	wakeUnhandled                 // woken, and nothing done since
+	wakeActed                     // woken and acted on, with no wake armed since
+	wakeEnded                     // its watch ended without a wake
+)
+
 // Wake is how a member's wake stands.
 type Wake struct {
+	kind      wakeKind
 	Watch     string    // armed, woken at …, parked: why, none
 	Armed     bool      // its watch runs, stuck or not
 	Unhandled bool      // a wake was posted after the driver last acted on it
@@ -234,6 +256,28 @@ type Status struct {
 	// Parks are the parked sessions whose park needs the driver: its --until
 	// has come, or nothing on record ends it. A line each, with what to run.
 	Parks []string
+
+	free []freeHold // the holds that are free with sessions waiting for them
+}
+
+// freeHold is a hold that is free while sessions wait for it, with the send
+// or open to run for each: what its waiters' driver has to hear once.
+type freeHold struct {
+	Name string
+	Next string
+}
+
+// freeHolds lists them. A waiter needs no member to be one: an open refused on
+// a hold waits under the label it was to open as.
+func (d *Driver) freeHolds(b *batch.Batch, evs []batch.Event, members []*batch.Member, holds []holdNow) []freeHold {
+	var out []freeHold
+	for _, h := range holds {
+		if b == nil || h.by.held() || len(h.waiting) == 0 {
+			continue
+		}
+		out = append(out, freeHold{Name: h.Name, Next: d.waitersNext(b, evs, members, h.Name)})
+	}
+	return out
 }
 
 // InFlight is an action admitted with no outcome yet.
@@ -265,8 +309,8 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 	case err != nil:
 		return nil, err
 	}
-	// A parked waiter whose hold is free is due a wake, so the holds are
-	// read before the rows.
+	// A parked waiter's row says when its hold is free, so the holds are read
+	// before the rows.
 	holds := d.holdsNow(evs, members)
 	hearing := batch.Hearings(evs, d.now())
 	out.Rows, out.Others, out.Closed = d.rows(b, evs, members, blocks, holds, hearing, out.Zone, withProgress)
@@ -298,6 +342,16 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 	}
 	out.Parks = d.parkLines(needs, out.Zone)
 	out.Holds = holdLines(holds, out.Zone)
+	// A free hold someone waits for says what to run for each waiter, in place
+	// of who waits: that send or open is the news.
+	out.free = d.freeHolds(b, evs, members, holds)
+	for _, f := range out.free {
+		for i, line := range out.Holds {
+			if strings.HasPrefix(line, f.Name+": free") {
+				out.Holds[i] = f.Name + ": free; " + f.Next
+			}
+		}
+	}
 	grants, asks, _ := batch.Records(evs)
 	out.Grants = grants
 	for _, a := range asks {
@@ -361,7 +415,7 @@ func (d *Driver) memberRows(b *batch.Batch, evs []batch.Event, members []*batch.
 	free := map[string]string{} // a session waiting for a hold that is free, to that hold
 	for _, h := range holds {
 		for _, w := range h.waiting {
-			if !h.held {
+			if !h.by.held() {
 				free[w.Session] = h.Name
 			}
 		}
@@ -399,8 +453,8 @@ func holdLines(holds []holdNow, zone *time.Location) []string {
 	var out []string
 	for _, h := range holds {
 		line := h.Name + ": free"
-		if h.held {
-			line = fmt.Sprintf("%s: held by %s since %s, %s", h.Name, h.by.Session, h.by.Since.In(zone).Format("15:04"), h.by.why)
+		if h.by.held() {
+			line = fmt.Sprintf("%s: held by %s since %s, %s", h.Name, h.by.Session, h.by.Since.In(zone).Format("15:04"), h.by.why())
 		}
 		var waiting []string
 		for _, w := range h.waiting {
@@ -409,7 +463,7 @@ func holdLines(holds []holdNow, zone *time.Location) []string {
 		switch {
 		case len(waiting) > 0:
 			line += "; waiting for it: " + strings.Join(waiting, ", ")
-		case !h.held:
+		case !h.by.held():
 			continue
 		}
 		out = append(out, line)
@@ -444,37 +498,41 @@ func (d *Driver) inFlight(evs []batch.Event, members []*batch.Member) []InFlight
 // is free.
 func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, hearing batch.Hearing, zone *time.Location, free string, end parkEnd) Wake {
 	alive := d.Watches != nil && b != nil && d.Watches.Alive(watchName(b, m.Block))
-	woken := !m.Woken.IsZero() && !m.Woken.Before(m.Watched)
+	standing, since := m.Wake.Standing(d.now())
+	told, _ := m.Wake.Told()
 	parked := "parked " + end.words(zone)
 	if end.due(d.now()) {
 		parked += ", which has come"
 	}
 	switch {
 	case m.Parked != "" && free != "":
-		// A parked waiter whose hold is free wakes no one unless its watch is armed again.
-		return Wake{Watch: parked + ": " + m.Parked + "; " + free + " is free now, and " + d.run("watch", "--due") + " wakes it",
-			Due: "waits for " + free + ", which is free", Park: &end}
+		// It stays parked and wakes no one of itself: the hold's own line says
+		// what to send it, and the watchdog tells its driver once (freeHolds).
+		return Wake{kind: wakeParked, Watch: parked + ": " + m.Parked + "; " + free + " is free now", Park: &end}
 	case m.Parked != "":
-		return Wake{Watch: parked + ": " + m.Parked, Park: &end}
+		return Wake{kind: wakeParked, Watch: parked + ": " + m.Parked, Park: &end}
 	case alive:
 		plan := r.facts.plan()
 		switch {
 		case plan.held != "" && plan.at.After(d.now()):
-			return Wake{Watch: "armed: " + plan.held + ", so the wake comes when that turn ends, by " + plan.at.In(zone).Format("15:04") + " at the latest",
+			return Wake{kind: wakeJobHeld, Watch: "armed: " + plan.held + ", so the wake comes when that turn ends, by " + plan.at.In(zone).Format("15:04") + " at the latest",
 				Armed: true, HoldsUntil: plan.at, HoldWhy: plan.held}
 		case hearing.Strikes >= stallAfter:
-			return Wake{Watch: "armed: what it has to say waits until the driver answers", Armed: true}
+			return Wake{kind: wakeStalled, Watch: "armed: what it has to say waits until the driver answers", Armed: true}
 		case plan.stuck(d.now()):
-			return Wake{Watch: fmt.Sprintf("armed, but its turn ended %s ago: stuck (%s restarts it)", ago(r.For), d.run("watch", m.Label)), Due: "stuck", Armed: true}
+			return Wake{kind: wakeStuck, Watch: fmt.Sprintf("armed, but its turn ended %s ago: stuck (%s restarts it)", ago(r.For), d.run("watch", m.Label)), Due: "stuck", Armed: true}
 		}
-		return Wake{Watch: "armed", Armed: true}
-	case !m.Stopped.IsZero() && !m.Stopped.Before(m.Watched):
-		return Wake{Watch: "stopped " + m.Stopped.In(zone).Format("15:04") + " (" + d.run("watch", "--due") + " arms it again)", Due: "its wake was stopped"}
-	case m.Posting.After(m.Watched) && m.Posting.After(m.Woken) && m.Posting.After(m.WakeFailed):
-		return Wake{Watch: "posting since " + m.Posting.In(zone).Format("15:04")}
-	case woken && m.Woken.After(m.LastAction):
+		return Wake{kind: wakeArmed, Watch: "armed", Armed: true}
+	}
+	// No watch runs for it, so the record says what came of the last one.
+	switch standing {
+	case batch.WakeStopped:
+		return Wake{kind: wakeStopped, Watch: "stopped " + since.In(zone).Format("15:04") + " (" + d.run("watch", "--due") + " arms it again)", Due: "its wake was stopped"}
+	case batch.WakePosting:
+		return Wake{kind: wakePosting, Watch: "posting since " + since.In(zone).Format("15:04")}
+	case batch.WakeUnhandled:
 		// The driver owes it a decision.
-		w := Wake{Watch: "woken " + m.Woken.In(zone).Format("15:04") + " (nothing done since", Unhandled: true}
+		w := Wake{kind: wakeUnhandled, Watch: "woken " + told.At.In(zone).Format("15:04") + " (nothing done since", Unhandled: true}
 		f := r.facts
 		f.member = m
 		switch rp := f.repost(d.now()); {
@@ -488,12 +546,12 @@ func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, hearing batch.He
 		}
 		w.Watch += ")"
 		return w
-	case woken:
-		return Wake{Watch: "none (woken " + m.Woken.In(zone).Format("15:04") + ", acted on since)", Due: "acted on with no wake armed"}
-	case !m.Watched.IsZero():
-		return Wake{Watch: "ended without a wake (watches.log says why)", Due: "its watch ended without a wake"}
+	case batch.WakeActed:
+		return Wake{kind: wakeActed, Watch: "none (woken " + told.At.In(zone).Format("15:04") + ", acted on since)", Due: "acted on with no wake armed"}
+	case batch.WakeNoResult:
+		return Wake{kind: wakeEnded, Watch: "ended without a wake (watches.log says why)", Due: "its watch ended without a wake"}
 	}
-	return Wake{Watch: "none", Due: "never watched"}
+	return Wake{kind: wakeNever, Watch: "none", Due: "never watched"}
 }
 
 func sortedKeys(m map[string]bool) []string {
@@ -532,9 +590,18 @@ func (d *Driver) rowAt(b *batch.Batch, members []*batch.Member, label, block str
 		o, err = d.observe(b, members, label)
 	}
 	if err != nil {
-		r.State, r.Error = "gone", firstLine(err.Error())
+		// Gone is a block or a Claude Code that no longer runs; a read that
+		// merely failed says neither, and reads again.
+		r.State, r.Error = Unread, firstLine(err.Error())
+		if gone(err) {
+			r.State = Gone
+		}
 		if m := batch.Find(members, label); m != nil && gone(err) {
-			r.Next = d.reopen(b, m, nil)
+			if busy := d.Store.Busy("open:" + m.Label); m.Starting && busy != nil {
+				r.Error = fmt.Sprintf("its open is still under way (pid %d): Claude Code has not started in its block yet", busy.PID)
+			} else {
+				r.Next = d.reopen(b, m, nil)
+			}
 		}
 		return r
 	}
@@ -543,8 +610,8 @@ func (d *Driver) rowAt(b *batch.Batch, members []*batch.Member, label, block str
 	r.Input, r.Typed, r.View = o.Input, o.Typed, o.View
 	r.Jobs = d.Host.Shells(o.Session.Status.PID)
 	stable := r.Since
-	if m := o.Member; m != nil && m.Watched.After(stable) {
-		stable = m.Watched
+	if m := o.Member; m != nil && m.Wake.Armed().After(stable) {
+		stable = m.Wake.Armed()
 	}
 	r.facts = factsOf(o, d.turnNow(o), o.Member, stable, WakeQuiet)
 	if withProgress && d.Progress != nil && o.Session.ID != "" {

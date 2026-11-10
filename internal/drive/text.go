@@ -166,6 +166,9 @@ func StoppedText(stopped []Stopped) string {
 // LaterText is the line --due prints for a wake not due yet, or a session
 // that is gone.
 func (r Rearmed) LaterText() string {
+	if r.Free != "" {
+		return fmt.Sprintf("%s is free: %s\n", r.Free, r.Why)
+	}
 	if r.Gone != "" {
 		return fmt.Sprintf("%s is gone: %s\n", r.Label, r.Gone)
 	}
@@ -289,10 +292,10 @@ func (st *Status) Text(now time.Time) string {
 	}
 	for _, p := range st.InFlight {
 		if p.Driver != nil {
-			fmt.Fprintf(&b, "in flight: %s to %s since %s, by pid %d (%s)\n", p.Kind, p.Session, clock(p.At, st.Zone, now), p.Driver.PID, clip(p.Text, 60))
+			fmt.Fprintf(&b, "in flight: %s to %s since %s, by pid %d (%s)\n", p.Kind, p.Session, clock(p.At, st.Zone, now), p.Driver.PID, clip(intentWords(p.Event), 60))
 		} else {
 			fmt.Fprintf(&b, "left unfinished: %s to %s since %s, by a driver that has gone (%s); the next send, respond, park or close on %s settles it\n",
-				p.Kind, p.Session, clock(p.At, st.Zone, now), clip(p.Text, 60), p.Session)
+				p.Kind, p.Session, clock(p.At, st.Zone, now), clip(intentWords(p.Event), 60), p.Session)
 		}
 	}
 	for _, l := range st.Leftovers {
@@ -419,9 +422,9 @@ func describe(e batch.Event, zone *time.Location) string {
 		return clip(stepOf(e), 100)
 	case batch.KindOpenIntent:
 		if e.Goal != "" {
-			return clip(e.Text, 100) + " (goal: " + clip(e.Goal, 100) + ")"
+			return clip(openWords(e), 100) + " (goal: " + clip(e.Goal, 100) + ")"
 		}
-		return clip(e.Text, 100)
+		return clip(openWords(e), 100)
 	case batch.KindOpen, batch.KindAdopt:
 		return fmt.Sprintf("block %s, account %s, %s", rex.Short(e.Block), e.Account, e.Dir)
 	case batch.KindRespond:
@@ -608,4 +611,12 @@ func BatchesText(metas []batch.Meta, drivers batch.Drivers) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// intentWords is what an intent set out to do, in a few words.
+func intentWords(e batch.Event) string {
+	if e.Kind == batch.KindOpenIntent {
+		return openWords(e)
+	}
+	return e.Text
 }

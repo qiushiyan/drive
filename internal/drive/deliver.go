@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/session"
 	"github.com/qiushiyan/drive/internal/skill"
 	"github.com/qiushiyan/drive/internal/turn"
@@ -32,8 +33,8 @@ func (a *action) deliver(line string) (string, error) {
 	if err == nil {
 		f, err = s.Frontier()
 	}
-	if p := f.Newest(); err != nil || p == nil || p.ID != got.ID || p.Queued || turnState(s, f) != "working" {
-		return "garbled", &Failed{What: fmt.Sprintf("%s received the line without its start (%q), and that turn is not one drive can take back", o.Label, clip(got.Text, 120)),
+	if p := f.Newest(); err != nil || p == nil || p.ID != got.ID || p.Queued || turnState(s, f) != Working {
+		return batch.SendGarbled, &Failed{What: fmt.Sprintf("%s received the line without its start (%q), and that turn is not one drive can take back", o.Label, clip(got.Text, 120)),
 			Next: fmt.Sprintf("read what it made of it (%s) before sending the step again", d.run("read", o.Label))}
 	}
 	_ = a.press("ctrl+c")
@@ -57,10 +58,10 @@ func (a *action) deliver(line string) (string, error) {
 		return outcome, err
 	}
 	if got != nil {
-		return "garbled", &Failed{What: fmt.Sprintf("%s lost the start of the line twice; it last received %q", o.Label, clip(got.Text, 120)),
+		return batch.SendGarbled, &Failed{What: fmt.Sprintf("%s lost the start of the line twice; it last received %q", o.Label, clip(got.Text, 120)),
 			Next: fmt.Sprintf("it is working on that; read it first (%s), and interrupt it if it works on the wrong thing: %s", d.run("read", o.Label), d.run("respond", viewNow(o), "interrupt"))}
 	}
-	return "recovered", nil
+	return batch.SendRecovered, nil
 }
 
 // typeAndConfirm types a line and waits for a prompt the session did not
@@ -111,16 +112,16 @@ func (a *action) typeAndConfirm(line string) (string, *turn.Prompt, error) {
 		switch received(line, *p) {
 		case "":
 			continue
-		case "arrived":
-			return "arrived", nil, d.checkAnswer(o, p.At)
-		case "queued":
-			return "queued", nil, nil
-		case "garbled":
+		case batch.SendArrived:
+			return batch.SendArrived, nil, d.checkAnswer(o, p.At)
+		case batch.SendQueued:
+			return batch.SendQueued, nil, nil
+		case batch.SendGarbled:
 			return "", p, nil
 		}
 		// Something reached the session, the line among it or not: a send
 		// that reached it, so a hold it took stands while that turn runs.
-		return "other", nil, &Failed{What: fmt.Sprintf("%s received %q where %q was typed", o.Label, clip(strings.TrimSpace(p.Text), 120), clip(want, 120)),
+		return batch.SendOther, nil, &Failed{What: fmt.Sprintf("%s received %q where %q was typed", o.Label, clip(strings.TrimSpace(p.Text), 120), clip(want, 120)),
 			Next: fmt.Sprintf("read what it made of it before interrupting anything: %s; only if it works on the wrong thing, interrupt it: %s",
 				d.run("read", o.Label), d.run("respond", viewNow(o), "interrupt"))}
 	}
@@ -130,7 +131,7 @@ func (a *action) typeAndConfirm(line string) (string, *turn.Prompt, error) {
 			what += fmt.Sprintf("; its input box holds %q, so Enter may not have reached it", clip(typed, 80))
 		}
 	}
-	return "unknown", nil, &Failed{What: what,
+	return batch.SendUnknown, nil, &Failed{What: what,
 		Next: fmt.Sprintf("if the line sits in its input box (%s shows it), clear it and send again: %s", d.run("read", o.Label), d.run("respond", viewNow(o), "clear"))}
 }
 
@@ -154,19 +155,19 @@ func received(line string, p turn.Prompt) string {
 	want := strings.TrimSpace(line)
 	if !p.Known {
 		if skill.Command(want) != "" {
-			return "queued"
+			return batch.SendQueued
 		}
 		return ""
 	}
 	switch got := strings.TrimSpace(p.Text); {
 	case got == want && p.Queued:
-		return "queued"
+		return batch.SendQueued
 	case got == want:
-		return "arrived"
+		return batch.SendArrived
 	case got != "" && strings.HasSuffix(want, got):
-		return "garbled"
+		return batch.SendGarbled
 	}
-	return "other"
+	return batch.SendOther
 }
 
 // viewNow is the session's view as it stands when a message is built, for

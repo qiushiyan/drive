@@ -167,6 +167,30 @@ func TestAWakeBeingPostedReadsPosting(t *testing.T) {
 	}
 }
 
+// A watch that dies while it posts, as a reboot or a kill ends it, records no
+// result. Its post reads as under way for as long as a post's retries can
+// take, and from then on as a watch that ended without a wake, which the
+// watchdog arms again: before, it read "posting" for good and nothing was due.
+func TestAPostThatNeverReturnsIsDue(t *testing.T) {
+	r := newRig(t, "webhook")
+	c := adopted(t, r, "T1")
+	woken(r, c)
+	r.w.Clock.Sleep(time.Second)
+	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindPosting, Session: "T1", Block: c.Block})
+	r.w.Clock.Sleep(11 * time.Minute)
+	if st, _ := r.d.Status(false); !strings.HasPrefix(st.Rows[0].Watch, "posting") || st.Rows[0].Due != "" {
+		t.Fatalf("a post's retries can take ten minutes: %+v", st.Rows[0].Wake)
+	}
+	r.w.Clock.Sleep(2 * time.Minute)
+	st, _ := r.d.Status(false)
+	if !strings.HasPrefix(st.Rows[0].Watch, "ended without a wake") || st.Rows[0].Due == "" {
+		t.Fatalf("a post with no result after that ended without a wake: %+v", st.Rows[0].Wake)
+	}
+	if armed, _, err := r.d.Due(); err != nil || len(armed) != 1 || armed[0].Label != "T1" || !r.watches.Alive(watchOf(c)) {
+		t.Fatalf("the watchdog arms it again: %+v %v", armed, err)
+	}
+}
+
 // A new batch stops the old one's watches, timers included.
 func TestANewBatchStopsTheOldOnesWatches(t *testing.T) {
 	r := newRig(t, "webhook")

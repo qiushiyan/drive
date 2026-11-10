@@ -276,7 +276,7 @@ func groupOf(c Card) string {
 		return GroupParked
 	case !read:
 		return GroupUnread
-	case r.State == "working":
+	case r.State == Working:
 		return GroupWorking
 	}
 	return GroupNext

@@ -57,7 +57,7 @@ func endOf(evs []batch.Event, m *batch.Member, until time.Time) parkEnd {
 	}
 	for _, w := range batch.Waiting(evs) {
 		if w.Session == m.Label {
-			e.Hold = w.Name
+			e.Hold = w.Hold
 		}
 	}
 	return e

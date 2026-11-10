@@ -146,7 +146,7 @@ func (d *Driver) ready(o *Observation, opt SendOptions, step Step) error {
 	state := o.State()
 	view := o.View.String()
 	switch {
-	case state == "blocked:auth":
+	case state == BlockedAuth:
 		msg := ""
 		if o.Frontier.Error != nil {
 			msg = fmt.Sprintf(": it answered %q", o.Frontier.Error.Text)
@@ -160,7 +160,7 @@ func (d *Driver) ready(o *Observation, opt SendOptions, step Step) error {
 		}
 		return &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt%s", o.Label, state.promptKind(), call),
 			Next: "answer it first; " + d.answerNext(o.Label, view, state)}
-	case state == "working" && !opt.Queue:
+	case state == Working && !opt.Queue:
 		queued := opt
 		queued.Queue = true
 		return &Refused{Reason: fmt.Sprintf("%s is working (for %s)", o.Label, since(d.now(), o.Session.Since())),
@@ -185,7 +185,7 @@ func (d *Driver) ready(o *Observation, opt SendOptions, step Step) error {
 // view: two whole commands, and on a question what each does there.
 func (d *Driver) answerNext(label, view string, state State) string {
 	approve, deny := d.run("respond", view, "approve"), d.run("respond", view, "deny")
-	if state == "blocked:question" {
+	if state == BlockedQuestion {
 		return fmt.Sprintf("see the question and its options (%s); %s takes the option ❯ points at, %s dismisses the question and stops the turn, after which a step can answer it in words",
 			d.run("read", label, "--screen"), approve, deny)
 	}
@@ -357,13 +357,13 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 			}
 		}
 		if opt.Hold != "" {
-			if h, held := d.holder(evs, members, opt.Hold, o.Label); held {
+			if h := d.holder(evs, members, opt.Hold, o.Label); h.held() {
 				// The refused session is left untouched, so no wake of its own comes: one in the batch is parked.
 				park := ""
 				if batch.Find(members, o.Label) != nil {
 					park = o.View.String()
 				}
-				return &holdRefused{Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), h.why),
+				return &holdRefused{Refused{Reason: fmt.Sprintf("%s is held by %s since %s, %s", opt.Hold, h.Session, h.Since.In(b.Zone()).Format("15:04"), h.why()),
 					Next: d.holdNext(b, h, o.Label, park, d.sendCommand(o.View.String(), p.step, opt), false)}, opt.Hold, p.step, ""}
 			}
 		}

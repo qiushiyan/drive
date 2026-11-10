@@ -71,7 +71,7 @@ func arrival(f turn.Frontier, intent batch.Event) (outcome, instead string) {
 		}
 		switch got := received(intent.Text, p); got {
 		case "":
-		case "other":
+		case batch.SendOther:
 			instead = strings.TrimSpace(p.Text)
 		default:
 			return got, ""

@@ -61,7 +61,7 @@ func (d *Driver) Respond(view, response string) (res *Responded, err error) {
 		}
 		keys = []string{map[string]string{"approve": "enter", "deny": "escape"}[response]}
 	case "interrupt":
-		if before != "working" {
+		if before != Working {
 			r := &Refused{Reason: fmt.Sprintf("%s is %s; there is no turn to interrupt", o.Label, before)}
 			if jobs := d.Host.Shells(o.Session.Status.PID); len(jobs) > 0 {
 				r.Reason += fmt.Sprintf(", but a background job of its runs: %s", clip(jobs[0].Command, 120))
@@ -228,7 +228,7 @@ func (d *Driver) Close(view string) (err error) {
 	park := func(why string) string { return d.run("park", view, text(why)) }
 	parkUntil := func(why string) string { return d.run("park", view, "--until", "WHEN", text(why)) }
 	switch {
-	case state == "working":
+	case state == Working:
 		return &Refused{Reason: fmt.Sprintf("%s is working", o.Label),
 			Next: d.whenTurnEnds(o) + "; close it then, on the view that comes with it"}
 	case state.onPrompt():

@@ -1,6 +1,7 @@
 package drive_test
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -66,18 +67,24 @@ func TestAHoldOnlyAJobKeepsCanBeFreed(t *testing.T) {
 	if len(frees) != 1 || frees[0].Session != "S2" || frees[0].Hold != "release" || frees[0].Reason != why || !batch.Heard(frees[0]) {
 		t.Fatalf("the log keeps the free and its reason, as a driver's trace: %+v", frees)
 	}
-	// Free for every reader: status, the parked waiter's wake, the page, the log.
+	// Free for every reader: status, watch --due, the page, the log.
 	st, err := r.d.Status(false)
-	if err != nil || len(st.Holds) != 1 || !strings.HasPrefix(st.Holds[0], "release: free; waiting for it: S1") {
-		t.Fatalf("status reads it free: %q %v", st.Holds, err)
+	if err != nil || len(st.Holds) != 1 || st.Holds[0] != "release: free; S1 waits for release; send its step now: drive --batch b1 send "+r.view("S1")+" --hold release 'merge when ready'" {
+		t.Fatalf("status reads it free, with its waiter's send: %q %v", st.Holds, err)
 	}
 	for _, row := range st.Rows {
 		if row.Label == "S1" && !strings.Contains(row.Watch, "release is free now") {
 			t.Fatalf("the parked waiter's line says so: %q", row.Watch)
 		}
 	}
-	if armed, _, err := r.d.Due(); err != nil || len(armed) != 1 || armed[0].Label != "S1" || !strings.Contains(armed[0].Why, "release, which is free") {
-		t.Fatalf("--due wakes the parked waiter: %+v %v", armed, err)
+	// The waiter stays parked with no watch of its own: its turn ended long
+	// before, and the news is the hold.
+	armed, later, err := r.d.Due()
+	if err != nil || len(armed) != 0 || r.watches.Alive(watchOf(waiter)) {
+		t.Fatalf("--due arms no watch for a parked waiter: %+v %v", armed, err)
+	}
+	if len(later) != 1 || later[0].Free != "release" || !strings.HasPrefix(later[0].LaterText(), "release is free: S1 waits for release; send its step now: drive --batch b1 send ") {
+		t.Fatalf("--due says the hold is free and what to send: %+v", later)
 	}
 	if ov, err := r.d.Overview(true); err != nil || len(ov.Holds) != 1 || !strings.HasPrefix(ov.Holds[0], "release: free") {
 		t.Fatalf("the page reads it free: %+v %v", ov, err)
@@ -243,5 +250,83 @@ func TestFreeingAHoldNothingHoldsSaysSo(t *testing.T) {
 	}
 	if len(r.events(batch.KindFree)) != 0 || len(r.events(batch.KindRefused)) != 0 {
 		t.Fatal("nothing is recorded")
+	}
+}
+
+// A session parked behind a hold was armed a watch on every watchdog run once
+// the hold was free, and each watch posted "its turn ended": four posts in
+// twenty minutes for one view while a run heard each and left it parked,
+// parking it again with a time included, none of them naming the hold. A
+// hold that comes free is news of its own, told once by the watchdog to
+// whoever waits for it, an open that was refused included, with the send or
+// open each was refused; again only while no run has heard, and anew once
+// the hold has been taken or refused again.
+func TestAFreeHoldIsToldOnceToWhoeverWaits(t *testing.T) {
+	r, holder, waiter := holding(t, "webhook", evalRunsOn)
+	l := hook(t, r)
+	merge := drive.Step{Line: "merge when ready"}
+	if _, err := r.d.Send(r.view("S1"), merge, drive.SendOptions{Hold: "release"}); !isRefused(err) {
+		t.Fatalf("refused on the hold: %v", err)
+	}
+	if err := r.d.Park(r.view("S1"), "waits for release, held by S2", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(r.w.Root, "work")
+	if _, err := r.d.Open("J1", drive.Step{Line: "judge the release"}, drive.OpenOptions{Dir: dir, Hold: "release"}); !isRefused(err) {
+		t.Fatalf("an open refused on the hold waits too, with no session yet: %v", err)
+	}
+	if _, err := r.d.Free("release", "S2 released; the job it left is its eval"); err != nil {
+		t.Fatal(err)
+	}
+	// due runs the watchdog once the run before it is over, and says what it posted.
+	due := func() string {
+		t.Helper()
+		r.w.Clock.Sleep(11 * time.Minute)
+		reports, err := r.d.DueAll()
+		if err != nil || len(reports) != 1 || reports[0].Err != nil {
+			t.Fatalf("the watchdog ran: %+v %v", reports, err)
+		}
+		if r.watches.Alive(watchOf(waiter)) {
+			t.Fatal("a parked waiter is armed no watch")
+		}
+		return reports[0].Posted
+	}
+	posted := due()
+	if l.count() != 1 || !strings.Contains(posted, "release is free: S1 and J1 wait for release, and the first step sent takes it") ||
+		!strings.Contains(posted, "--hold release 'merge when ready'") || !strings.Contains(posted, "open J1") {
+		t.Fatalf("told once, each waiter with what it was refused: %d %q", l.count(), posted)
+	}
+	if posted = due(); l.count() != 2 || !strings.Contains(posted, "release is free") {
+		t.Fatalf("no run answered, so it is told again: %d %q", l.count(), posted)
+	}
+	r.d.Seen() // a run hears it, and leaves both waiting
+	if posted = due(); posted != "" || l.count() != 2 {
+		t.Fatalf("heard, it is told no more: %d %q", l.count(), posted)
+	}
+	// Parking the waiter again, with a time, is its driver's answer: no news.
+	if err := r.d.Park(r.view("S1"), "the merge can wait until tomorrow", r.w.Clock.Now().Add(20*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if posted = due(); posted != "" || l.count() != 2 {
+		t.Fatalf("parked again, it is told no more: %d %q", l.count(), posted)
+	}
+	if st, _ := r.d.Status(false); len(st.Holds) != 1 || !strings.HasPrefix(st.Holds[0], "release: free; S1 and J1 wait for release") {
+		t.Fatalf("status still says it is free, and for whom: %q", st.Holds)
+	}
+	// The holder takes it again, the waiter is refused again, and it comes
+	// free again: that is news.
+	holder.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} })
+	if _, err := r.d.Send(r.view("S2"), drive.Step{Line: "and the changelog"}, drive.SendOptions{Hold: "release"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.Send(r.view("S1"), merge, drive.SendOptions{Hold: "release"}); !isRefused(err) {
+		t.Fatalf("held again: %v", err)
+	}
+	if posted = due(); posted != "" || l.count() != 2 {
+		t.Fatalf("held, there is nothing to tell: %d %q", l.count(), posted)
+	}
+	holder.Done("the changelog is in")
+	if posted = due(); l.count() != 3 || !strings.Contains(posted, "release is free") {
+		t.Fatalf("free again after it was taken, it is told again: %d %q", l.count(), posted)
 	}
 }

@@ -51,6 +51,29 @@ const (
 	KindLimit = "limit"
 )
 
+// How a send ended, as its event's Outcome says.
+const (
+	SendArrived   = "arrived"   // the session took the step as written
+	SendQueued    = "queued"    // it waits behind the turn the session runs
+	SendRecovered = "recovered" // it arrived whole once retyped, its start lost the first time
+	SendGarbled   = "garbled"   // it arrived without its start
+	SendOther     = "other"     // the session received something else
+	SendUnknown   = "unknown"   // nothing new reached the transcript in time
+)
+
+// Delivered says a send ended with its step in the session as it was
+// written.
+func Delivered(outcome string) bool {
+	return outcome == SendArrived || outcome == SendQueued || outcome == SendRecovered
+}
+
+// Reached says a send is known to have put something in the session: its
+// step, the step without its start, or something else. One left unknown is
+// not known to, and no outcome is none of them.
+func Reached(outcome string) bool {
+	return Delivered(outcome) || outcome == SendGarbled || outcome == SendOther
+}
+
 // Unable is the accounts the batch found taking no step as of now, each to
 // when it can again: a rejected login, recorded with no Due, for as long as
 // the batch lasts, since nothing says when its owner logs in again; a usage
@@ -189,6 +212,14 @@ type Member struct {
 	Model  string
 	Effort string
 	Joined time.Time
+	// Starting says its block is on record and no open has yet said Claude
+	// Code started in it: the launch is under way, or its driver ended, or it
+	// failed. Opening is then the request it was opened with, as recorded,
+	// and Ref the conversation it was to resume, which is not yet its own:
+	// a label reopened onto its own conversation keeps that SID meanwhile.
+	Starting bool
+	Opening  *Event
+	Ref      string
 	// Goal is what the session sets out to do, in plain terms for the owner:
 	// the latest recorded for its label, which outlives a reopen and a
 	// relaunch under that label.
@@ -206,24 +237,15 @@ type Member struct {
 	LastSend   *Event
 	// Noticed says a send that carried the notice reached the session:
 	// arrived, queued or recovered. One left unknown or garbled may not have.
-	Noticed    bool
-	Watched    time.Time // when its wake was last armed
-	Stopped    time.Time // when its wake was last stopped by watch --stop-all
-	Posting    time.Time // when a watch last began posting
-	Woken      time.Time // when its wake was last posted
-	WokenView  string    // the view that wake carried
-	WokenTimes int       // how many wakes were posted for that view
-	WokenAcked int       // how many of those a driver left a trace after
-	WokenJobs  int       // the background jobs it still ran at that wake
-	PrevView   string    // the view the wake before it carried
-	WakeFailed time.Time // when a watch last ended without a wake
+	Noticed bool
+	// Wake is what the log says of its wake: the watch armed for it, the posts
+	// made about it and whether a driver answered them.
+	Wake WakeRecord
 	// Notices are what the watchdog told the driver of it, by what they are:
 	// gone, watch-failing or park. Each counts once a driver left a trace after it.
 	Notices map[string]Notice
 
-	posting   bool // a post has begun with no result yet
-	postHeard bool // a driver left a trace since that post began
-	woke      bool // that post was answered 2xx
+	born int // the position of the open or adoption that put it in its block
 }
 
 // NoticePark is the watchdog telling a driver of a park nothing on record
@@ -236,22 +258,12 @@ type Notice struct {
 	Heard bool
 }
 
-// WokenHeard says a driver left a trace after its last wake's post began, which
-// is before that post can have returned: a run can act before it does.
-func (m *Member) WokenHeard() bool { return m.woke && m.postHeard }
-
-// heard notes a driver's trace.
+// heard notes a driver's trace: whatever the watchdog told it of the member
+// has been heard.
 func (m *Member) heard() {
 	for what, n := range m.Notices {
 		n.Heard = true
 		m.Notices[what] = n
-	}
-	if m.postHeard {
-		return
-	}
-	m.postHeard = true
-	if m.woke {
-		m.WokenAcked++
 	}
 }
 
@@ -262,6 +274,7 @@ func Members(evs []Event) []*Member {
 	read := map[string]bool{} // session ids that read the notice
 	goals := map[string]string{}
 	opening := map[string]string{} // an open's intent, to the goal it sets once the block opens
+	asked := map[string]*Event{}   // an open's intent, to the request it recorded
 	for i := range evs {
 		e := &evs[i]
 		m := by[e.Session]
@@ -275,6 +288,9 @@ func Members(evs []Event) []*Member {
 			if e.Goal != "" {
 				opening[e.Intent] = e.Goal
 			}
+			if e.Intent != "" {
+				asked[e.Intent] = e
+			}
 		case KindGoal:
 			goals[e.Session] = e.Goal
 		case KindOpen, KindAdopt:
@@ -284,7 +300,21 @@ func Members(evs []Event) []*Member {
 				goals[e.Session] = g
 				delete(opening, e.Intent)
 			}
-			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Model: e.Model, Effort: e.Effort, Joined: e.At, Resumed: read[e.Ref]}
+			started := e.Kind == KindAdopt || e.SID != ""
+			if old, ok := by[e.Session]; ok && !old.Closed && old.Block == e.Block && started && (old.Starting || old.SID == e.SID) {
+				// Claude Code started in the block its open recorded: the same
+				// member, now open. Said twice, as by the driver that opened it
+				// and one that found it running, it is said once.
+				old.SID, old.Account, old.Dir = cmp.Or(e.SID, old.SID), cmp.Or(e.Account, old.Account), cmp.Or(e.Dir, old.Dir)
+				old.Model, old.Effort = cmp.Or(e.Model, old.Model), cmp.Or(e.Effort, old.Effort)
+				old.Starting, old.Opening = false, nil
+				continue
+			}
+			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Model: e.Model, Effort: e.Effort, Joined: e.At, Resumed: read[e.Ref], born: i + 1,
+				Starting: !started, Ref: e.Ref}
+			if m.Starting && e.Intent != "" {
+				m.Opening = asked[e.Intent]
+			}
 			if old, ok := by[e.Session]; ok {
 				if e.Ref != "" && e.Ref == old.SID {
 					// Its own conversation resumed in a new block, as after Rex
@@ -303,7 +333,7 @@ func Members(evs []Event) []*Member {
 			if m != nil && e.Outcome != "" {
 				m.LastAction, m.LastSend, m.Parked, m.ParkedUntil = e.At, e, "", time.Time{}
 				delete(m.Notices, NoticePark)
-				if e.Notice && (e.Outcome == "arrived" || e.Outcome == "queued" || e.Outcome == "recovered") {
+				if e.Notice && Delivered(e.Outcome) {
 					m.Noticed, read[m.SID] = true, true
 				}
 			}
@@ -323,37 +353,14 @@ func Members(evs []Event) []*Member {
 			}
 		case KindWatch:
 			if m != nil {
-				m.Watched = e.At
+				m.Wake.armed, m.Wake.armedAt = e.At, i+1
 			}
 		case KindWakeStop:
 			if m != nil {
-				m.Stopped = e.At
-			}
-		case KindPosting:
-			if m != nil {
-				m.Posting, m.posting, m.postHeard, m.woke = e.At, true, false, false
-			}
-		case KindWake:
-			switch {
-			case m == nil:
-			case e.HTTP != 0:
-				if e.View != m.WokenView {
-					m.WokenTimes, m.WokenAcked = 0, 0
-				}
-				if !m.posting {
-					m.postHeard = false // a wake with no post on record: nothing has answered it yet
-				}
-				m.Woken, m.PrevView, m.WokenView, m.WokenJobs = e.At, m.WokenView, e.View, e.Jobs
-				m.WokenTimes++
-				m.posting, m.woke = false, true
-				if m.postHeard {
-					m.WokenAcked++
-				}
-			default:
-				m.WakeFailed, m.posting = e.At, false
+				m.Wake.stopped = e.At
 			}
 		case KindTold:
-			if m != nil {
+			if m != nil && e.Outcome != NoticeHoldFree { // that one is its waiter's (Waiting)
 				if m.Notices == nil {
 					m.Notices = map[string]Notice{}
 				}
@@ -364,13 +371,23 @@ func Members(evs []Event) []*Member {
 				}
 			}
 		case KindFailure:
-			if m != nil && strings.HasPrefix(e.Reason, "watch ended without a wake") {
-				m.WakeFailed = e.At
+			if m != nil && IsWatchEnded(*e) {
+				m.Wake.ended = e.At
 			}
+		}
+	}
+	// A post is its member's while the member runs in the block the post was
+	// about: one begun before a label was reopened is the old block's.
+	posts := Posts(evs)
+	for i := range posts {
+		p := &posts[i]
+		if m := by[p.Session]; m != nil && p.began > m.born && (p.Block == "" || m.Block == "" || p.Block == m.Block) {
+			m.Wake.add(p)
 		}
 	}
 	for _, m := range order {
 		m.Goal = goals[m.Label]
+		m.Wake.acted = m.LastAction
 	}
 	return order
 }
@@ -395,17 +412,20 @@ const HeardWithin = 10 * time.Minute
 // Hearings reads how a batch's wakes are being heard as of now.
 func Hearings(evs []Event, now time.Time) Hearing {
 	var h Hearing
-	began := map[string]time.Time{} // when each session's newest post began
-	for _, e := range evs {
+	posts := Posts(evs)
+	result := map[int]*Post{} // a wake event's position, to the post it ended
+	for i := range posts {
+		if p := &posts[i]; !p.Pending() {
+			result[p.ended] = p
+		}
+	}
+	for i, e := range evs {
 		switch {
 		case Heard(e):
 			h.Heard, h.Strikes, h.Since, h.Last = e.At, 0, time.Time{}, time.Time{}
-		case e.Kind == KindPosting && e.Via == "":
-			began[e.Session] = e.At
 		case e.Kind == KindWake && e.Via == "":
-			b, ok := began[e.Session]
-			delete(began, e.Session)
-			if ok && !h.Heard.IsZero() && !h.Heard.Before(b) && e.HTTP != 0 {
+			p := result[i+1]
+			if p != nil && p.recorded && !h.Heard.IsZero() && !h.Heard.Before(p.Began) && e.HTTP != 0 {
 				continue // a run answered before its post returned
 			}
 			h.Last = e.At
@@ -504,19 +524,38 @@ func Unresolved(evs []Event, session string) []Event {
 	return out
 }
 
-// Hold is a resource a session holds from the moment its send is admitted
-// until the turn that send started has ended.
+// Hold is a taking of a resource: a session holds it from the moment its send
+// is admitted until the turn that send started has ended.
 type Hold struct {
 	Name    string
 	Session string
 	Since   time.Time // when the send that took it was admitted
 	Intent  string
-	Pending bool   // that send has no outcome yet
-	Step    string // for a session waiting for the hold: the step it was refused
-	Key     string // that step's snippet, when it was one
-	Path    string // that step's file, when it was one
-	Open    bool   // the refused action was an open: Step is the drive open to run
+	Pending bool // that send has no outcome yet
 }
+
+// Waiter is a session a send or an open was refused for because another held
+// what it needed: it waits for that hold from then until a step reaches it or
+// it closes.
+type Waiter struct {
+	Hold    string    // the hold it waits for
+	Session string    // its label; its block's short id until it joins the batch; the label an open was refused under
+	Since   time.Time // when it began to wait
+	Step    string    // the step it was refused
+	Key     string    // that step's snippet, when it was one
+	Path    string    // that step's file, when it was one
+	Open    bool      // the refused action was an open: Step is the drive open to run
+	// Told is when the watchdog last told the driver the hold is free for it,
+	// and Heard whether a driver left a trace since. The telling stands while
+	// the session waits on as it did: a refusal on the hold again, or anyone
+	// taking the hold, has it wait anew, and parking it again does not.
+	Told  time.Time
+	Heard bool
+}
+
+// NoticeHoldFree is the watchdog telling a driver that the hold a session
+// waits for is free: a told event with the waiter as Session and the hold.
+const NoticeHoldFree = "hold-free"
 
 // Holds lists the newest taking of each hold. A send that failed before it
 // reached its session took nothing, and a hold a driver freed is no one's
@@ -556,15 +595,34 @@ func Holds(evs []Event) []Hold {
 // until it closes. One refused by its block id, before it joined the batch,
 // is the same waiter under the label it joins as: the refusal names the
 // block, and every later event the label.
-func Waiting(evs []Event) []Hold {
-	var out []Hold
+func Waiting(evs []Event) []Waiter {
+	var out []Waiter
 	labels := map[string]bool{} // the batch's labels so far
 	blocks := map[string]bool{} // the waiters a refusal named by a block id
 	at := func(session string) int {
-		return slices.IndexFunc(out, func(w Hold) bool { return w.Session == session })
+		return slices.IndexFunc(out, func(w Waiter) bool { return w.Session == session })
 	}
 	for _, e := range evs {
+		if Heard(e) {
+			for i := range out {
+				out[i].Heard = !out[i].Told.IsZero()
+			}
+		}
 		switch e.Kind {
+		case KindTold:
+			if i := at(e.Session); e.Outcome == NoticeHoldFree && i >= 0 && out[i].Hold == e.Hold {
+				out[i].Told, out[i].Heard = e.At, false
+				if e.Reason != "" {
+					out[i].Told = time.Time{} // the post failed, so it told no one
+				}
+			}
+		case KindSendIntent:
+			// The hold is taken, so whoever still waits for it waits anew.
+			for i := range out {
+				if e.Hold != "" && out[i].Hold == e.Hold {
+					out[i].Told, out[i].Heard = time.Time{}, false
+				}
+			}
 		case KindOpen, KindAdopt:
 			labels[e.Session] = true
 			for i, w := range out {
@@ -583,13 +641,15 @@ func Waiting(evs []Event) []Hold {
 			if e.Hold == "" {
 				continue
 			}
-			w := Hold{Name: e.Hold, Session: e.Session, Since: e.At, Step: e.Text, Key: e.Key, Path: e.Path, Open: e.Mode == "open"}
+			w := Waiter{Hold: e.Hold, Session: e.Session, Since: e.At, Step: e.Text, Key: e.Key, Path: e.Path, Open: e.Mode == "open"}
 			switch i := at(e.Session); {
 			case i < 0:
 				out = append(out, w)
 				blocks[e.Session] = !w.Open && !labels[e.Session]
-			case out[i].Name != e.Hold:
+			case out[i].Hold != e.Hold:
 				out[i] = w
+			default:
+				out[i].Told, out[i].Heard = time.Time{}, false // refused on it again: it was not free after all
 			}
 		case KindSend, KindClose:
 			if i := at(e.Session); i >= 0 && (e.Kind == KindClose || e.Outcome != "") {
