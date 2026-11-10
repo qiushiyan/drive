@@ -108,7 +108,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 			}
 		}
 		// The goal rides on the intent, and stands once the block opens.
-		return b.Append(batch.Event{At: d.now(), Kind: batch.KindOpenIntent, Session: label, Intent: intent, Dir: opt.Dir, Text: clip(stepSummary(step), 200), Goal: goal})
+		return b.Append(openIntent(d.now(), label, intent, step, opt, goal))
 	})
 	if err != nil {
 		return nil, unsent(err, whole)
@@ -133,7 +133,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		screen, _ := d.Term.Capture(block, false)
 		f := &Failed{What: fmt.Sprintf("Claude Code did not start in block %s within 90 s; its screen ends:\n%s", rex.Short(block), tail(strings.TrimSpace(screen), 600)),
 			// drive closes only a block with Claude Code in it; this one has none.
-			Next: fmt.Sprintf("close the block once you have read why: rex block close %s", block)}
+			Next: fmt.Sprintf("close the block once you have read why (rex block close %s), then open it again: %s", block, whole)}
 		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindFailure, Session: label, Block: block, Reason: f.What})
 		return nil, f
 	}
@@ -171,6 +171,53 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	}
 	out.Sent, err = a.send(p, SendOptions{Hold: opt.Hold}, a.o.View.String())
 	return out, err
+}
+
+// openIntent is the record of an open as it was asked for, written before
+// anything opens: its directory, account, model, the conversation it resumes,
+// its hold and its first step, each as given, so an open whose Claude Code
+// never starts can be asked for again whole. Mode says how the step was
+// given, which an older drive's intent, holding only a clipped summary, does
+// not.
+func openIntent(at time.Time, label, intent string, step Step, opt OpenOptions, goal string) batch.Event {
+	e := batch.Event{At: at, Kind: batch.KindOpenIntent, Session: label, Intent: intent, Dir: opt.Dir, Account: opt.Account,
+		Model: opt.Model, Ref: opt.Resume, Hold: opt.Hold, Goal: goal, Mode: "none"}
+	switch {
+	case step.Key != "":
+		e.Mode, e.Key, e.Text = "snippet", step.Key, step.Text
+	case step.File != "":
+		e.Mode, e.Path = "file", step.File
+	case step.Line != "":
+		e.Mode, e.Text = "line", step.Line
+	}
+	return e
+}
+
+// openStep is the first step an open-intent recorded, and whether it holds
+// the step as given: an older drive's holds a summary no open can take.
+func openStep(e batch.Event) (step Step, whole bool) {
+	switch e.Mode {
+	case "snippet":
+		return Step{Key: e.Key, Text: e.Text}, true
+	case "file":
+		return Step{File: e.Path}, true
+	case "line":
+		return Step{Line: e.Text}, true
+	case "none":
+		return Step{}, true
+	}
+	return Step{}, false
+}
+
+// openWords is an open-intent's first step in a few words, for a line of
+// status or the log.
+func openWords(e batch.Event) string {
+	if step, whole := openStep(e); whole && !step.empty() {
+		return stepSummary(step)
+	} else if whole {
+		return "no step"
+	}
+	return e.Text
 }
 
 // placeBlock is the block an open runs in: the label's own, when its own

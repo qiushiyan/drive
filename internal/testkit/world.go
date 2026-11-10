@@ -50,6 +50,10 @@ type World struct {
 	// OnCapture runs once, the next time a screen is captured: another
 	// driver acting between a driver's read and its action.
 	OnCapture func()
+	// NoStart names the labels whose launch leaves a shell where Claude Code
+	// should run, as a launcher that fails does: the block opens, and no
+	// session ever registers in it.
+	NoStart map[string]bool
 	// StatusFails and KeyFails make the next reads of Rex's records, or key
 	// presses, fail, as a busy Rex server sometimes does.
 	StatusFails int
@@ -938,6 +942,10 @@ func (w *World) open(o rex.Open) string {
 	}
 	if o.Session != "" {
 		c.Rex = o.Session
+	}
+	if w.NoStart[o.Label] {
+		c.Running = false
+		return c.Block
 	}
 	if cmd := strings.Join(o.Command, " "); strings.Contains(cmd, "--resume ") {
 		id := strings.Fields(strings.SplitN(cmd, "--resume ", 2)[1])[0]

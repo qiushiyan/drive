@@ -1434,3 +1434,109 @@ func TestClearEmptiesTheBoxWhereverTheCursorStands(t *testing.T) {
 // later is an hour from the rig's now: a park's --until for a test whose park
 // is not about what ends it.
 func (r *rig) later() time.Time { return r.w.Clock.Now().Add(time.Hour) }
+
+// An open records its block the moment Rex opens it, before Claude Code has
+// started. One whose Claude Code never starts left a member that read gone
+// with "its conversation resumed where it stopped" and an open with no
+// --resume, no step and no hold, which the watchdog then posted. Nothing of
+// its is there to resume: it is opened again as it was asked for.
+func TestAnOpenWhoseClaudeCodeNeverStartsIsOpenedAgainWhole(t *testing.T) {
+	r := newRig(t, "webhook")
+	l := hook(t, r)
+	r.w.NoStart = map[string]bool{"J1": true}
+	dir := filepath.Join(r.w.Root, "work")
+	step, opt := drive.Step{Line: "judge the release"}, drive.OpenOptions{Dir: dir, Model: "fable", Hold: "release"}
+	again := "drive --batch b1 open J1 --dir " + dir + " --model fable --hold release 'judge the release'"
+	_, err := r.d.Open("J1", step, opt)
+	var failed *drive.Failed
+	if !errors.As(err, &failed) || !strings.Contains(failed.What, "did not start") || !strings.HasSuffix(failed.Next, "then open it again: "+again) {
+		t.Fatalf("the failed open says to close its block and open it again, whole: %v", err)
+	}
+	st, err := r.d.Status(false)
+	if err != nil || len(st.Rows) != 1 {
+		t.Fatalf("it stays on record: %+v %v", st, err)
+	}
+	row := st.Rows[0]
+	if row.State != drive.Gone || strings.Contains(row.Next, "resumed where it stopped") ||
+		row.Next != "its Claude Code never started in that block, so no conversation of its is there to resume; open it again with its step: "+again {
+		t.Fatalf("a session that never started is opened again, not resumed: %s %q", row.State, row.Next)
+	}
+	if _, err := r.d.Read("J1", drive.ReadLast, 1); !isRefused(err) || !strings.Contains(err.Error(), "nothing to read") || !strings.Contains(err.Error(), again) {
+		t.Fatalf("a read of it says the same: %v", err)
+	}
+	r.w.Clock.Sleep(11 * time.Minute)
+	reports, err := r.d.DueAll()
+	if err != nil || l.count() != 1 || !strings.Contains(reports[0].Posted, "J1 is gone: its Claude Code never started") || !strings.Contains(reports[0].Posted, again) {
+		t.Fatalf("the watchdog tells its driver that, once: %+v %v", reports, err)
+	}
+	// Opened again, it starts, and the label is the new block's.
+	r.w.NoStart = nil
+	o, err := r.d.Open("J1", step, opt)
+	if err != nil || o.Sent == nil || o.Sent.Outcome != "arrived" {
+		t.Fatalf("opened again: %+v %v", o, err)
+	}
+	if st, _ := r.d.Status(false); len(st.Rows) != 1 || st.Rows[0].State == drive.Gone || st.Rows[0].Block != o.Block {
+		t.Fatalf("it runs in its new block: %+v", st.Rows)
+	}
+}
+
+// A driver that ends while Claude Code starts leaves the block on record and
+// nothing saying a session runs in it. The next driver to act on it puts
+// that on record, so the session's own conversation is what a later reopen
+// resumes; an open an older drive recorded, whose step the log kept only in
+// part, says so and replays none of it.
+func TestAStartingSessionFoundRunningIsItsOwn(t *testing.T) {
+	r := newRig(t, "none")
+	c := r.w.Add("J2")
+	now := r.w.Clock.Now()
+	_ = r.b.Append(
+		batch.Event{At: now, Kind: batch.KindOpenIntent, Session: "J2", Intent: "i1", Dir: r.w.Root, Mode: "line", Text: "review the plan"},
+		batch.Event{At: now, Kind: batch.KindOpen, Session: "J2", Intent: "i1", Block: c.Block, Dir: r.w.Root, Outcome: "starting"},
+		batch.Event{At: now, Kind: batch.KindOpenIntent, Session: "J3", Intent: "i2", Dir: r.w.Root, Text: "file /tmp/plan.md"},
+		batch.Event{At: now, Kind: batch.KindOpen, Session: "J3", Intent: "i2", Block: "block:00000000-0000-0000-0000-00000dead003", Dir: r.w.Root, Outcome: "starting"},
+	)
+	member := func(label string) *batch.Member {
+		evs, _ := r.b.Events()
+		return batch.Find(batch.Members(evs), label)
+	}
+	if m := member("J2"); m == nil || !m.Starting || m.SID != "" {
+		t.Fatalf("its block is on record, and no session yet: %+v", m)
+	}
+	if _, err := r.d.Send(r.view("J2"), drive.Step{Line: "review the plan"}, drive.SendOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	m := member("J2")
+	if m.Starting || m.SID == "" || m.LastSend == nil {
+		t.Fatalf("the driver that found it running put its session on record, and its step stands: %+v", m)
+	}
+	c.Crash()
+	st, _ := r.d.Status(false)
+	for _, row := range st.Rows {
+		switch row.Label {
+		case "J2":
+			if !strings.Contains(row.Next, "its conversation resumed where it stopped") || !strings.Contains(row.Next, "--resume "+m.SID) {
+				t.Fatalf("gone after it ran, its own conversation is resumed: %q", row.Next)
+			}
+		case "J3":
+			if !strings.Contains(row.Next, `then send the step it was to take, which the record kept only as "file /tmp/plan.md": drive --batch b1 open J3 --dir `+r.w.Root) ||
+				strings.HasSuffix(row.Next, "plan.md") {
+				t.Fatalf("an older record's step is named, never replayed: %q", row.Next)
+			}
+		}
+	}
+}
+
+// A read that merely failed says nothing of whether the session runs: it
+// read as gone, the word for a block or a Claude Code that no longer does.
+func TestAReadThatFailedIsUnreadNotGone(t *testing.T) {
+	r := newRig(t, "none")
+	adopted(t, r, "T1")
+	r.w.StatusFails = 1
+	st, err := r.d.Status(false)
+	if err != nil || st.Rows[0].State != drive.Unread || st.Rows[0].Next != "" || st.Rows[0].Error == "" {
+		t.Fatalf("a failed read is unread, with why and no reopen: %+v %v", st.Rows[0], err)
+	}
+	if st, _ := r.d.Status(false); st.Rows[0].State != drive.Done {
+		t.Fatalf("read again, it reads as it stands: %+v", st.Rows[0])
+	}
+}

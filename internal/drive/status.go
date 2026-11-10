@@ -53,12 +53,12 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 	}
 	m := batch.Find(members, ref)
 	if m != nil && m.Closed {
-		return d.readEnded(b, m, "closed", mode, n)
+		return d.readEnded(b, m, Closed, mode, n)
 	}
 	o, err := d.observe(b, members, ref)
 	if err != nil {
 		if m != nil && gone(err) {
-			return d.readEnded(b, m, "gone", mode, n)
+			return d.readEnded(b, m, Gone, mode, n)
 		}
 		return nil, err
 	}
@@ -95,6 +95,9 @@ func (d *Driver) readEnded(b *batch.Batch, m *batch.Member, state State, mode Re
 	if m.SID != "" {
 		path = d.Host.Transcript(m.SID)
 	}
+	if path == "" && state == Gone && m.Starting {
+		return nil, &Refused{Reason: fmt.Sprintf("%s has nothing to read: its Claude Code never started in its block", m.Label), Next: d.openAgain(b, m)}
+	}
 	if path == "" {
 		return nil, &Refused{Reason: fmt.Sprintf("%s is %s, and no transcript of its session (%s) is found", m.Label, state, m.SID),
 			Next: d.run("log") + " has what was sent to it and how each step went"}
@@ -108,7 +111,7 @@ func (d *Driver) readEnded(b *batch.Batch, m *batch.Member, state State, mode Re
 		return nil, fmt.Errorf("reading %s's transcript: %w", m.Label, err)
 	}
 	r := &Reading{Label: m.Label, SID: m.SID, Goal: m.Goal, State: state, Account: m.Account}
-	if state == "gone" {
+	if state == Gone {
 		r.Next = d.reopen(b, m, &f)
 	}
 	return r, d.readText(r, f, mode, n, zoneOf(b))
@@ -587,9 +590,18 @@ func (d *Driver) rowAt(b *batch.Batch, members []*batch.Member, label, block str
 		o, err = d.observe(b, members, label)
 	}
 	if err != nil {
-		r.State, r.Error = "gone", firstLine(err.Error())
+		// Gone is a block or a Claude Code that no longer runs; a read that
+		// merely failed says neither, and reads again.
+		r.State, r.Error = Unread, firstLine(err.Error())
+		if gone(err) {
+			r.State = Gone
+		}
 		if m := batch.Find(members, label); m != nil && gone(err) {
-			r.Next = d.reopen(b, m, nil)
+			if busy := d.Store.Busy("open:" + m.Label); m.Starting && busy != nil {
+				r.Error = fmt.Sprintf("its open is still under way (pid %d): Claude Code has not started in its block yet", busy.PID)
+			} else {
+				r.Next = d.reopen(b, m, nil)
+			}
 		}
 		return r
 	}

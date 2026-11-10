@@ -28,6 +28,14 @@ const (
 	BlockedAuth       State = "blocked:auth" // a rejected login
 )
 
+// What a session that could not be read live reads as. These are no turn's
+// state: turnState never gives them.
+const (
+	Gone   State = "gone"   // its block or its Claude Code no longer runs
+	Closed State = "closed" // its driver closed it
+	Unread State = "unread" // it runs, as far as anything says, and the read failed
+)
+
 // blocked says the session is stopped on something only someone else
 // moves: a prompt, or a rejected login.
 func (s State) blocked() bool { return strings.HasPrefix(string(s), "blocked") }

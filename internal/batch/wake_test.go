@@ -151,3 +151,25 @@ func TestAPostWithNoResultIsOver(t *testing.T) {
 		t.Fatalf("the newer post takes the result: %+v", posts)
 	}
 }
+
+// An open is two events, the block and then the session Claude Code started
+// in it: one member, whose record of what was done to it stands across both,
+// however often the second is said.
+func TestAnOpenIsOneMember(t *testing.T) {
+	block := Event{Kind: KindOpen, Session: "A", Block: "b1", Intent: "i1", Outcome: "starting"}
+	started := Event{Kind: KindOpen, Session: "A", Block: "b1", SID: "sid-A", Account: "acct"}
+	evs := seq(Event{Kind: KindOpenIntent, Session: "A", Intent: "i1", Mode: "line", Text: "go"}, block)
+	m := Find(Members(evs), "A")
+	if !m.Starting || m.Opening == nil || m.Opening.Text != "go" || m.SID != "" {
+		t.Fatalf("its block is on record with what was asked, and no session: %+v", m)
+	}
+	evs = seq(append(evs, started, watch("A"), posting("A", "v1"), wake("A", "v1", 204), started)...)
+	ms := Members(evs)
+	m = Find(ms, "A")
+	if len(ms) != 1 || m.Starting || m.SID != "sid-A" || m.Account != "acct" || !m.Joined.Equal(evs[1].At) {
+		t.Fatalf("started, it is the same member, open: %+v", m)
+	}
+	if s, _ := m.Wake.Standing(t0.Add(time.Hour)); s != WakeUnhandled {
+		t.Fatalf("saying it started a second time takes nothing from its record: %d", s)
+	}
+}

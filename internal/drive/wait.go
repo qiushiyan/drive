@@ -102,7 +102,7 @@ func (d *Driver) wait(ref string, planFor func(o *Observation, t Turn, stable ti
 				d.sleep(d.poll())
 				continue
 			}
-			e := &Ending{Label: ref, State: "gone", Msg: r.Reason, post: posting{why: whyGone, due: d.now()},
+			e := &Ending{Label: ref, State: Gone, Msg: r.Reason, post: posting{why: whyGone, due: d.now()},
 				Next: fmt.Sprintf("%s lists what runs; if %s still runs there, watch it again: %s", d.run("status"), ref, d.run("watch", ref))}
 			if m := batch.Find(members, ref); m != nil {
 				e.Block = m.Block

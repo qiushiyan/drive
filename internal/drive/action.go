@@ -90,8 +90,33 @@ func (a *action) read(v turn.View, promptOnly bool) error {
 	if err != nil {
 		return err
 	}
+	if err := a.started(o); err != nil {
+		return err
+	}
 	a.o = o
 	return a.d.checkView(o, v, promptOnly, a.evs)
+}
+
+// started puts on record that Claude Code runs in a member's block, when the
+// open that recorded the block never said so: its driver ended while Claude
+// Code started. The caller owns the session, and no open of its label is
+// under way, so this is the only driver to say it; from here the member's
+// conversation is its own, to resume if it is ever gone.
+func (a *action) started(o *Observation) error {
+	m := o.Member
+	if a.b == nil || m == nil || !m.Starting || o.Session.ID == "" || a.d.Store.Busy("open:"+m.Label) != nil {
+		return nil
+	}
+	if err := a.b.Append(batch.Event{At: a.d.now(), Kind: batch.KindOpen, Session: m.Label, Block: m.Block, SID: o.Session.ID,
+		Account: o.Session.Account, Dir: o.Session.Dir, Model: m.Model, Ref: m.Ref, Outcome: "settled", Note: "its driver ended before Claude Code started"}); err != nil {
+		return err
+	}
+	evs, err := a.b.Events()
+	if err != nil {
+		return err
+	}
+	a.evs, o.Member = evs, batch.Find(batch.Members(evs), m.Label)
+	return nil
 }
 
 // typeInto and press are how an action reaches the session's keyboard;

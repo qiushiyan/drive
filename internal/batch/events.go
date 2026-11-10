@@ -186,6 +186,14 @@ type Member struct {
 	// and reopen ask for again; "" is the launcher's default.
 	Model  string
 	Joined time.Time
+	// Starting says its block is on record and no open has yet said Claude
+	// Code started in it: the launch is under way, or its driver ended, or it
+	// failed. Opening is then the request it was opened with, as recorded,
+	// and Ref the conversation it was to resume, which is not yet its own:
+	// a label reopened onto its own conversation keeps that SID meanwhile.
+	Starting bool
+	Opening  *Event
+	Ref      string
 	// Goal is what the session sets out to do, in plain terms for the owner:
 	// the latest recorded for its label, which outlives a reopen and a
 	// relaunch under that label.
@@ -240,6 +248,7 @@ func Members(evs []Event) []*Member {
 	read := map[string]bool{} // session ids that read the notice
 	goals := map[string]string{}
 	opening := map[string]string{} // an open's intent, to the goal it sets once the block opens
+	asked := map[string]*Event{}   // an open's intent, to the request it recorded
 	for i := range evs {
 		e := &evs[i]
 		m := by[e.Session]
@@ -253,6 +262,9 @@ func Members(evs []Event) []*Member {
 			if e.Goal != "" {
 				opening[e.Intent] = e.Goal
 			}
+			if e.Intent != "" {
+				asked[e.Intent] = e
+			}
 		case KindGoal:
 			goals[e.Session] = e.Goal
 		case KindOpen, KindAdopt:
@@ -262,7 +274,20 @@ func Members(evs []Event) []*Member {
 				goals[e.Session] = g
 				delete(opening, e.Intent)
 			}
-			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Model: e.Model, Joined: e.At, Resumed: read[e.Ref], born: i + 1}
+			started := e.Kind == KindAdopt || e.SID != ""
+			if old, ok := by[e.Session]; ok && !old.Closed && old.Block == e.Block && started && (old.Starting || old.SID == e.SID) {
+				// Claude Code started in the block its open recorded: the same
+				// member, now open. Said twice, as by the driver that opened it
+				// and one that found it running, it is said once.
+				old.SID, old.Account, old.Dir, old.Model = cmp.Or(e.SID, old.SID), cmp.Or(e.Account, old.Account), cmp.Or(e.Dir, old.Dir), cmp.Or(e.Model, old.Model)
+				old.Starting, old.Opening = false, nil
+				continue
+			}
+			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Model: e.Model, Joined: e.At, Resumed: read[e.Ref], born: i + 1,
+				Starting: !started, Ref: e.Ref}
+			if m.Starting && e.Intent != "" {
+				m.Opening = asked[e.Intent]
+			}
 			if old, ok := by[e.Session]; ok {
 				if e.Ref != "" && e.Ref == old.SID {
 					// Its own conversation resumed in a new block, as after Rex
