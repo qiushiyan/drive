@@ -1,0 +1,5 @@
+$ drive send S1@12c8579c --snippet closeout --hold planlab-main The merged record has no marker for its owed read: add one in a docs pull request.
+exit 0
+--- stdout
+arrived S1: /pl-loopy-handoff-distill merged and deployed @$HOME/state/batches/b7/sends/S1-2.md, snippet from $ROOT/work/.tabtype.local.toml
+--- stderr

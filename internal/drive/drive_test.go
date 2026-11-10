@@ -547,17 +547,20 @@ func TestATypedOnlySkillInAFileIsTypedWithTheRestAttached(t *testing.T) {
 		if _, err := r.d.Send(r.view("T1"), drive.Step{File: f}, drive.SendOptions{Queue: true}); !isRefused(err) || !strings.Contains(err.Error(), "starts only when typed") {
 			t.Fatalf("queued, it is refused: %v", err)
 		}
-		// claude-steps knows a snippet by the line its file is typed as, so one headed by the skill is refused.
+		// A snippet headed by the skill is typed the same way, under its key.
 		c.Done("reviewed")
 		_ = os.MkdirAll(filepath.Join(r.d.Cfg.Home, ".config/tabtype"), 0o755)
 		_ = os.WriteFile(filepath.Join(r.d.Cfg.Home, ".config/tabtype/config.toml"),
 			[]byte("[[snippets]]\nkey = \"sr\"\nexpand = \"/strategic-review 9531\\nLook hardest at the door.\"\n"), 0o644)
-		intents := len(r.events(batch.KindSendIntent))
-		if _, err := r.d.Send(r.view("T1"), drive.Step{Key: "sr"}, drive.SendOptions{}); !isRefused(err) || !strings.Contains(err.Error(), "starts only when typed") {
-			t.Fatalf("a snippet headed by it is refused: %v", err)
+		sent, err := r.d.Send(r.view("T1"), drive.Step{Key: "sr"}, drive.SendOptions{})
+		if err != nil || !strings.HasPrefix(sent.Typed, "/strategic-review 9531 @") {
+			t.Fatalf("a snippet headed by it is typed as the skill's line: %+v %v", sent, err)
 		}
-		if n := len(r.events(batch.KindSendIntent)); n != intents {
-			t.Fatalf("refused before anything is recorded: %d intents, not %d", n, intents)
+		if rest, _ := os.ReadFile(sent.Path); strings.TrimSpace(string(rest)) != "Look hardest at the door." {
+			t.Fatalf("the snippet's other lines are attached: %q", rest)
+		}
+		if evs := r.events(batch.KindSend); evs[len(evs)-1].Key != "sr" {
+			t.Fatalf("its send keeps the snippet's key: %+v", evs[len(evs)-1])
 		}
 		// An open types it the same way.
 		o, err := r.d.Open("sr", drive.Step{File: f}, drive.OpenOptions{Dir: r.w.Root})
@@ -568,6 +571,70 @@ func TestATypedOnlySkillInAFileIsTypedWithTheRestAttached(t *testing.T) {
 			t.Fatalf("an open types the skill's line too: %q", typed)
 		}
 	})
+}
+
+// planlab's closeout key is one line, "/pl-loopy-handoff-distill merged and
+// deployed", whose skill starts only when typed. Sent with words after it,
+// drive refused it ten times across three batches (11-03 to 11-10), and each
+// time the driver typed the command itself with the words in a file. drive
+// does that: the command's line typed, where the session starts the skill,
+// the words attached, and the snippet's key kept on the record, which is
+// what metrics counts it by.
+func TestAKeyedTypedOnlyCommandIsTypedWithItsWordsAttached(t *testing.T) {
+	const (
+		line  = "/pl-loopy-handoff-distill merged and deployed"
+		rider = "The merged record has no marker for its owed read: add one in a docs pull request and merge it."
+	)
+	r := newRig(t, "none")
+	c := adopted(t, r, "T1")
+	c.Skill("pl-loopy-handoff-distill", true)
+	tab := filepath.Join(c.Cwd, ".tabtype.local.toml")
+	if err := os.WriteFile(tab, []byte("[[snippets]]\nkey = \"closeout\"\nexpand = \"\"\"\n"+line+"\n\"\"\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// What a file does: told to run the skill from one, as the snippet's
+	// pointer would tell it, the session cannot start it.
+	told := filepath.Join(r.w.Root, "told.md")
+	_ = os.WriteFile(told, []byte(line+"\n\n"+rider+"\n"), 0o644)
+	_ = r.w.Type(c.Block, "@"+told+" ")
+	_ = r.w.Key(c.Block, "enter")
+	if rd, err := r.d.Read("T1", drive.ReadLast, 1); err != nil || !strings.Contains(rd.Body, "runs only when you type it") {
+		t.Fatalf("a session told to run the skill from a file refuses: %+v %v", rd, err)
+	}
+	sent, err := r.d.Send(r.view("T1"), drive.Step{Key: "closeout", Text: rider}, drive.SendOptions{Hold: "planlab-main"})
+	if err != nil {
+		t.Fatalf("the key goes with its words: %v", err)
+	}
+	path, ok := strings.CutPrefix(sent.Typed, line+" @")
+	if typed, _ := c.Seen(); !ok || typed[len(typed)-1] != sent.Typed+" " {
+		t.Fatalf("the command's line is typed, its words attached: %q, typed %q", sent.Typed, typed)
+	}
+	if body, _ := os.ReadFile(path); strings.TrimSpace(string(body)) != rider {
+		t.Fatalf("the attachment is the words alone: %q", body)
+	}
+	// Told to run it from a file, the session says it cannot start the skill.
+	if rd, err := r.d.Read("T1", drive.ReadLast, 1); err != nil || rd.Body != "ok" {
+		t.Fatalf("the session starts the skill: %+v %v", rd, err)
+	}
+	if !strings.Contains(sent.Text(), line) || !strings.Contains(sent.Text(), "snippet from "+tab) {
+		t.Fatalf("the send prints the line typed and the snippet's file: %q", sent.Text())
+	}
+	for _, kind := range []string{batch.KindSendIntent, batch.KindSend} {
+		evs := r.events(kind)
+		if e := evs[len(evs)-1]; e.Key != "closeout" || e.Text != sent.Typed || e.Path != path || e.Hold != "planlab-main" {
+			t.Fatalf("the %s keeps the key, the line typed and the hold: %+v", kind, e)
+		}
+	}
+	if m, err := r.d.Metrics(); err != nil || m.Snippets != 1 || m.ByKey["closeout"] != 1 || m.Commands != 0 {
+		t.Fatalf("metrics count it as the owner's snippet: %+v %v", m, err)
+	}
+	// Mid-turn a mention attaches nothing, so queued it still waits for the turn's end.
+	c.Busy("the closeout")
+	typed, _ := c.Seen()
+	_, err = r.d.Send(r.view("T1"), drive.Step{Key: "closeout", Text: rider}, drive.SendOptions{Queue: true})
+	if after, _ := c.Seen(); !isRefused(err) || !strings.Contains(err.Error(), "starts only when typed") || len(after) != len(typed) {
+		t.Fatalf("queued, it is refused and nothing is typed: %v", err)
+	}
 }
 
 // A relaunch carries the step the session was last sent as the session got

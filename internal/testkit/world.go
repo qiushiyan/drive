@@ -11,8 +11,9 @@
 // turn was cut short there finds "No response requested." in its place.
 // A slash command typed while busy is queued without its text, one behind
 // spaces is words, an expired login answers with an API error and no Stop,
-// typing can lose a line's head, which comes back as a line break, and a
-// prompt draws its options behind the ❯ the input box uses.
+// typing can lose a line's head, which comes back as a line break, a
+// prompt draws its options behind the ❯ the input box uses, and a session
+// a file tells to run a skill that starts only when typed cannot start it.
 package testkit
 
 import (
@@ -20,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -132,12 +134,78 @@ type Claude struct {
 	SlowCompact bool
 	crashed     bool // the process is gone; Rex was never told
 
-	// Reply decides what a taken prompt does. The default answers "ok" and ends the turn.
+	// Reply decides what a taken prompt does. The default answers "ok" and
+	// ends the turn, or says it cannot start a skill that starts only when
+	// typed, when a file tells it to (Skill).
 	Reply func(c *Claude, prompt string)
 
 	Typed     []string
 	Keys      []string
-	limitMenu bool // the menu a usage limit shows, which Enter or Escape stops
+	limitMenu bool            // the menu a usage limit shows, which Enter or Escape stops
+	typedOnly map[string]bool // its project's skills that start only when typed
+}
+
+// Skill checks a skill into the session's project, <cwd>/.claude/skills. One
+// that starts only when typed sets disable-model-invocation: its line typed
+// starts it, and the model cannot, so a session a file tells to run it says
+// so and runs nothing (seen live: /strategic-review, planlab's
+// /pl-loopy-handoff-distill).
+func (c *Claude) Skill(name string, typedOnly bool) {
+	front := "---\nname: " + name + "\n"
+	if typedOnly {
+		front += "disable-model-invocation: true\n"
+	}
+	dir := filepath.Join(c.Cwd, ".claude", "skills", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		c.w.T.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(front+"---\nbody\n"), 0o644); err != nil {
+		c.w.T.Fatal(err)
+	}
+	c.Edit(func(c *Claude) {
+		if c.typedOnly == nil {
+			c.typedOnly = map[string]bool{}
+		}
+		c.typedOnly[name] = typedOnly
+	})
+}
+
+// A prompt that is one file: its @-mention, which attaches it, or the line
+// that asks for it to be read.
+var filePrompt = regexp.MustCompile(`^(?:@(/\S+)|Read (/.+) and do what it asks\.)$`)
+
+// answer is what a session does with a prompt no Reply decides: it answers
+// "ok", unless the prompt is a file that tells it to run a skill that starts
+// only when typed, which it cannot start.
+func (c *Claude) answer(prompt string) {
+	if name := c.toldToRun(prompt); name != "" {
+		c.Done("I can't start /" + name + " myself: it runs only when you type it.")
+		return
+	}
+	c.Done("ok")
+}
+
+// toldToRun is the typed-only skill a file prompt tells the session to run,
+// "" when it tells it none.
+func (c *Claude) toldToRun(prompt string) string {
+	m := filePrompt.FindStringSubmatch(strings.TrimSpace(prompt))
+	if m == nil {
+		return ""
+	}
+	body, err := os.ReadFile(m[1] + m[2])
+	if err != nil {
+		return ""
+	}
+	c.w.mu.Lock()
+	defer c.w.mu.Unlock()
+	for line := range strings.SplitSeq(string(body), "\n") {
+		if command, ok := strings.CutPrefix(strings.TrimSpace(line), "/"); ok {
+			if name, _, _ := strings.Cut(command, " "); c.typedOnly[name] {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 // Add puts a running session in a new block.
@@ -373,7 +441,7 @@ func (c *Claude) takeQueued() {
 	if reply != nil {
 		reply(c, text)
 	} else {
-		c.Done("ok")
+		c.answer(text)
 	}
 }
 
@@ -803,7 +871,7 @@ func (w *World) Key(block string, keys ...string) error {
 		if reply != nil {
 			reply(c, text)
 		} else {
-			c.Done("ok")
+			c.answer(text)
 		}
 	}
 	if compact && !slow {

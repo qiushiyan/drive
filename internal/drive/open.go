@@ -78,11 +78,10 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 			err = &Failed{What: fmt.Sprintf("opened %s in block %s, but its first step was not sent: %s", label, rex.Short(block), r.Reason), Next: r.Next}
 		}
 	}()
-	again := d.openCommand(label, opt, Step{})
 	whole := d.openCommand(label, opt, step) // the open as it was asked for, its step on it
 	if !step.empty() {
 		// The account is the launcher's choice, so skills are read from the default one.
-		if _, err := d.plan(opt.Dir, filepath.Join(d.Cfg.Home, ".claude"), again, step, !d.readNotice(b, opt.Resume)); err != nil {
+		if _, err := d.plan(opt.Dir, filepath.Join(d.Cfg.Home, ".claude"), step, !d.readNotice(b, opt.Resume)); err != nil {
 			return nil, err
 		}
 	}
@@ -166,7 +165,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	f, _ := s.Frontier()
 	a.o = &Observation{in: b, Label: label, Session: s, Frontier: f, View: turn.ViewOf(label, s.ID, f)}
 	// A resumed session read the notice in the conversation it resumes.
-	p, err := d.plan(s.Dir, s.Config, d.run("send", a.o.View.String()), step, !d.readNotice(b, opt.Resume))
+	p, err := d.plan(s.Dir, s.Config, step, !d.readNotice(b, opt.Resume))
 	if err != nil {
 		return out, err
 	}

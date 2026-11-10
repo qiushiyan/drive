@@ -366,6 +366,23 @@ func TestContractCloseCleanup(t *testing.T) {
 	c.run("close-cleanup", "close", view(t, out), "--cleanup")
 }
 
+// A snippet whose one line starts a skill that runs only when typed, sent
+// with words after it, as the skill's planlab page teaches the closeout: the
+// line is typed and the words attached.
+func TestContractSnippetOfATypedOnlyCommand(t *testing.T) {
+	c := newContract(t)
+	s := c.w.Add("S1")
+	s.Busy("land it")
+	s.Done("Merged and deployed.")
+	s.Skill("pl-loopy-handoff-distill", true)
+	write(t, filepath.Join(s.Cwd, ".tabtype.local.toml"), "[[snippets]]\nkey = \"closeout\"\nexpand = \"/pl-loopy-handoff-distill merged and deployed\"\n")
+	cli(c.app, "batch", "new", "b7")
+	_, out, _ := cli(c.app, "read", s.Block[len(s.Block)-6:])
+	cli(c.app, "send", view(t, out), "--as", "S1", "recap")
+	_, out, _ = cli(c.app, "read", "S1")
+	c.run("send-snippet-typed-only", "send", view(t, out), "--snippet", "closeout", "--hold", "planlab-main", "The merged record has no marker for its owed read: add one in a docs pull request.")
+}
+
 // A driver's reads tell drive its run heard the wake, since a run with nothing to
 // do leaves no other trace, and the machine's watchdog is no driver's.
 func TestAReadIsHeardAndTheWatchdogIsNot(t *testing.T) {

@@ -246,11 +246,11 @@ A step is one of:
                           typing would garble (over 500 bytes, a newline or control
                           character, a leading ! or #) goes as a file instead
   --file PATH             typed as @<copy>, which attaches it, drive keeping the copy;
-                          queued mid-turn, a line asks the session to read the copy. A
-                          file whose first line starts a skill that runs only when typed
-                          is typed as that line with the rest attached, never queued
+                          queued mid-turn, a line asks the session to read the copy
   --snippet KEY 'TEXT'    the owner's snippet for the session's directory, with the
                           step's words, TEXT, where the owner would type after it
+A file or a snippet whose first line starts a skill that runs only when typed is
+typed as that line with the rest attached, never queued.
 Text that starts with a dash goes after --, which ends the flags.
 The first step a session gets in a batch carries the owner's notice: at the head
 of its file, or attached after its line.`}}
