@@ -59,7 +59,9 @@ drives says so, and only that driver acts on it.`
 func (c *StatusCmd) HelpSections() []clikit.Section {
 	return []clikit.Section{{Title: "Columns", Body: `
 STATE  working | done | idle (no prompt yet) | interrupted (an interrupt or a deny)
-       | error | blocked:permission | blocked:question | blocked:auth (a rejected login).
+       | error | blocked:permission | blocked:question | blocked:auth (a rejected login)
+       | gone (its block or its Claude Code no longer runs; a line under the table gives
+       the open that brings it back) | unread (the read failed; run status again).
        A background job a session still runs is listed under the table.
 INPUT  empty | suggestion (Claude Code's dimmed guess; typing replaces it)
        | typed (a line left unsent) | prompt (a prompt's options) | unknown (no box on screen)
@@ -69,7 +71,9 @@ WAKE   armed, or armed while a job of its holds the wake, by the time it says | 
        | none, or ended without a wake: no wake comes until drive watch --due
        | parked, then what ends the park, then why: on A3 (an open ask) | behind HOLD
        | until MM-DD HH:MM, "which has come" once it has | with nothing to end it
-Hold lines name who holds each hold, and who waits for it with the step it was refused.
+Hold lines name who holds each hold, and who waits for it with the step it was refused;
+a free hold someone waits for gives the send or open to run for each waiter instead,
+and the watchdog wakes you about it once.
 "park of" lines name the parks whose --until has come, then those nothing ends, each
 line with what to run; the watchdog wakes you about each park once.
 "left by" lines name what a closed session left that stays, and why; each is a fact
@@ -369,7 +373,8 @@ next further off, up to two hours, until a drive command shows it runs.
 
 --due-all runs from the machine's scheduler, every few minutes, and costs no
 model run unless something needs a driver: a session that is gone, a watch
-that keeps failing, or open asks after six hours with no wake.
+that keeps failing, a park whose time has come, a hold that came free while a
+session waits for it, or open asks after six hours with no wake.
 
 A restart of Rex's server ends every session in it. Stop the wakes first
 with --stop-all, so none wakes its driver mid-restart; it prints the

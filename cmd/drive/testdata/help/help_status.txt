@@ -23,7 +23,9 @@ Inherited flags:
 
 Columns:
   STATE  working | done | idle (no prompt yet) | interrupted (an interrupt or a deny)
-         | error | blocked:permission | blocked:question | blocked:auth (a rejected login).
+         | error | blocked:permission | blocked:question | blocked:auth (a rejected login)
+         | gone (its block or its Claude Code no longer runs; a line under the table gives
+         the open that brings it back) | unread (the read failed; run status again).
          A background job a session still runs is listed under the table.
   INPUT  empty | suggestion (Claude Code's dimmed guess; typing replaces it)
          | typed (a line left unsent) | prompt (a prompt's options) | unknown (no box on screen)
@@ -33,7 +35,9 @@ Columns:
          | none, or ended without a wake: no wake comes until drive watch --due
          | parked, then what ends the park, then why: on A3 (an open ask) | behind HOLD
          | until MM-DD HH:MM, "which has come" once it has | with nothing to end it
-  Hold lines name who holds each hold, and who waits for it with the step it was refused.
+  Hold lines name who holds each hold, and who waits for it with the step it was refused;
+  a free hold someone waits for gives the send or open to run for each waiter instead,
+  and the watchdog wakes you about it once.
   "park of" lines name the parks whose --until has come, then those nothing ends, each
   line with what to run; the watchdog wakes you about each park once.
   "left by" lines name what a closed session left that stays, and why; each is a fact
