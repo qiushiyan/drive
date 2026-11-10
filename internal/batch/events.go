@@ -203,24 +203,15 @@ type Member struct {
 	LastSend   *Event
 	// Noticed says a send that carried the notice reached the session:
 	// arrived, queued or recovered. One left unknown or garbled may not have.
-	Noticed    bool
-	Watched    time.Time // when its wake was last armed
-	Stopped    time.Time // when its wake was last stopped by watch --stop-all
-	Posting    time.Time // when a watch last began posting
-	Woken      time.Time // when its wake was last posted
-	WokenView  string    // the view that wake carried
-	WokenTimes int       // how many wakes were posted for that view
-	WokenAcked int       // how many of those a driver left a trace after
-	WokenJobs  int       // the background jobs it still ran at that wake
-	PrevView   string    // the view the wake before it carried
-	WakeFailed time.Time // when a watch last ended without a wake
+	Noticed bool
+	// Wake is what the log says of its wake: the watch armed for it, the posts
+	// made about it and whether a driver answered them.
+	Wake WakeRecord
 	// Notices are what the watchdog told the driver of it, by what they are:
 	// gone, watch-failing or park. Each counts once a driver left a trace after it.
 	Notices map[string]Notice
 
-	posting   bool // a post has begun with no result yet
-	postHeard bool // a driver left a trace since that post began
-	woke      bool // that post was answered 2xx
+	born int // the position of the open or adoption that put it in its block
 }
 
 // NoticePark is the watchdog telling a driver of a park nothing on record
@@ -233,22 +224,12 @@ type Notice struct {
 	Heard bool
 }
 
-// WokenHeard says a driver left a trace after its last wake's post began, which
-// is before that post can have returned: a run can act before it does.
-func (m *Member) WokenHeard() bool { return m.woke && m.postHeard }
-
-// heard notes a driver's trace.
+// heard notes a driver's trace: whatever the watchdog told it of the member
+// has been heard.
 func (m *Member) heard() {
 	for what, n := range m.Notices {
 		n.Heard = true
 		m.Notices[what] = n
-	}
-	if m.postHeard {
-		return
-	}
-	m.postHeard = true
-	if m.woke {
-		m.WokenAcked++
 	}
 }
 
@@ -281,7 +262,7 @@ func Members(evs []Event) []*Member {
 				goals[e.Session] = g
 				delete(opening, e.Intent)
 			}
-			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Model: e.Model, Joined: e.At, Resumed: read[e.Ref]}
+			m = &Member{Label: e.Session, Block: e.Block, SID: e.SID, Account: e.Account, Dir: e.Dir, Model: e.Model, Joined: e.At, Resumed: read[e.Ref], born: i + 1}
 			if old, ok := by[e.Session]; ok {
 				if e.Ref != "" && e.Ref == old.SID {
 					// Its own conversation resumed in a new block, as after Rex
@@ -320,34 +301,11 @@ func Members(evs []Event) []*Member {
 			}
 		case KindWatch:
 			if m != nil {
-				m.Watched = e.At
+				m.Wake.armed, m.Wake.armedAt = e.At, i+1
 			}
 		case KindWakeStop:
 			if m != nil {
-				m.Stopped = e.At
-			}
-		case KindPosting:
-			if m != nil {
-				m.Posting, m.posting, m.postHeard, m.woke = e.At, true, false, false
-			}
-		case KindWake:
-			switch {
-			case m == nil:
-			case e.HTTP != 0:
-				if e.View != m.WokenView {
-					m.WokenTimes, m.WokenAcked = 0, 0
-				}
-				if !m.posting {
-					m.postHeard = false // a wake with no post on record: nothing has answered it yet
-				}
-				m.Woken, m.PrevView, m.WokenView, m.WokenJobs = e.At, m.WokenView, e.View, e.Jobs
-				m.WokenTimes++
-				m.posting, m.woke = false, true
-				if m.postHeard {
-					m.WokenAcked++
-				}
-			default:
-				m.WakeFailed, m.posting = e.At, false
+				m.Wake.stopped = e.At
 			}
 		case KindTold:
 			if m != nil {
@@ -361,13 +319,23 @@ func Members(evs []Event) []*Member {
 				}
 			}
 		case KindFailure:
-			if m != nil && strings.HasPrefix(e.Reason, "watch ended without a wake") {
-				m.WakeFailed = e.At
+			if m != nil && IsWatchEnded(*e) {
+				m.Wake.ended = e.At
 			}
+		}
+	}
+	// A post is its member's while the member runs in the block the post was
+	// about: one begun before a label was reopened is the old block's.
+	posts := Posts(evs)
+	for i := range posts {
+		p := &posts[i]
+		if m := by[p.Session]; m != nil && p.began > m.born && (p.Block == "" || m.Block == "" || p.Block == m.Block) {
+			m.Wake.add(p)
 		}
 	}
 	for _, m := range order {
 		m.Goal = goals[m.Label]
+		m.Wake.acted = m.LastAction
 	}
 	return order
 }
@@ -392,17 +360,20 @@ const HeardWithin = 10 * time.Minute
 // Hearings reads how a batch's wakes are being heard as of now.
 func Hearings(evs []Event, now time.Time) Hearing {
 	var h Hearing
-	began := map[string]time.Time{} // when each session's newest post began
-	for _, e := range evs {
+	posts := Posts(evs)
+	result := map[int]*Post{} // a wake event's position, to the post it ended
+	for i := range posts {
+		if p := &posts[i]; !p.Pending() {
+			result[p.ended] = p
+		}
+	}
+	for i, e := range evs {
 		switch {
 		case Heard(e):
 			h.Heard, h.Strikes, h.Since, h.Last = e.At, 0, time.Time{}, time.Time{}
-		case e.Kind == KindPosting && e.Via == "":
-			began[e.Session] = e.At
 		case e.Kind == KindWake && e.Via == "":
-			b, ok := began[e.Session]
-			delete(began, e.Session)
-			if ok && !h.Heard.IsZero() && !h.Heard.Before(b) && e.HTTP != 0 {
+			p := result[i+1]
+			if p != nil && p.recorded && !h.Heard.IsZero() && !h.Heard.Before(p.Began) && e.HTTP != 0 {
 				continue // a run answered before its post returned
 			}
 			h.Last = e.At

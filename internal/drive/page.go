@@ -654,17 +654,18 @@ func stripOf(ov *Overview, c Card, group string, now time.Time) stripView {
 		}
 		// Whether the driver will hear of it: a wake nobody acted on, one
 		// that should have come and has not, or none at all.
-		switch {
-		case r.Unhandled:
-			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "The driver was woken " + at(m.Woken) + " and has done nothing since.", Error: true})
-			s.Alerts = append(s.Alerts, "woken "+pageClock(m.Woken, now, ov.Zone)+", nothing done since")
-		case !ov.Wakes || m.Parked != "":
-		case r.Armed && r.HoldsUntil.After(now):
+		told, _ := m.Wake.Told()
+		switch kind := r.Wake.kind; {
+		case kind == wakeUnhandled:
+			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "The driver was woken " + at(told.At) + " and has done nothing since.", Error: true})
+			s.Alerts = append(s.Alerts, "woken "+pageClock(told.At, now, ov.Zone)+", nothing done since")
+		case !ov.Wakes || kind == wakeParked:
+		case kind == wakeJobHeld:
 			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "Armed: " + r.HoldWhy + ", so its driver hears when that turn ends, or " + at(r.HoldsUntil) + " at the latest."})
-		case r.Due == "" && r.Armed:
+		case kind == wakeArmed, kind == wakeStalled:
 			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "Armed: its driver hears when its turn ends."})
-		case r.Due == "":
-		case r.Armed:
+		case kind == wakePosting:
+		case kind == wakeStuck:
 			s.Facts = append(s.Facts, factView{Title: "Wake", Text: "Its wake is armed but has not come since its turn ended, so the driver may not have heard.", Error: true})
 			s.Alerts = append(s.Alerts, "its wake has not come")
 		default:

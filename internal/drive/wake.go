@@ -99,8 +99,8 @@ func (d *Driver) Watch(ref string) (*Watched, error) {
 	if d.Watches.Alive(name) {
 		m := batch.Find(members, o.Session.Block)
 		stable := o.Session.Since()
-		if m != nil && m.Watched.After(stable) {
-			stable = m.Watched
+		if m != nil && m.Wake.Armed().After(stable) {
+			stable = m.Wake.Armed()
 		}
 		if !factsOf(o, d.turnNow(o), m, stable, WakeQuiet).plan().stuck(d.now()) {
 			return &Watched{Label: o.Label, Already: true}, nil
@@ -193,7 +193,7 @@ func (d *Driver) Due() (armed, later []Rearmed, err error) {
 		}
 		n := 0
 		for _, e := range evs {
-			if e.Kind == batch.KindFailure && e.Session == r.Label && strings.HasPrefix(e.Reason, "watch ended without a wake") {
+			if e.Session == r.Label && batch.IsWatchEnded(e) {
 				n++
 			}
 		}
@@ -313,7 +313,7 @@ func (d *Driver) rerun(b *batch.Batch, words ...string) []string {
 // WatchFailed records a watch that ended without posting its wake.
 func (d *Driver) WatchFailed(label string, err error) {
 	if b, berr := d.Batch(); berr == nil {
-		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindFailure, Session: label, Reason: "watch ended without a wake: " + firstLine(err.Error())})
+		_ = b.Append(batch.WatchEnded(d.now(), label, firstLine(err.Error())))
 	}
 }
 
@@ -439,8 +439,11 @@ func (d *Driver) carried(b *batch.Batch, evs []batch.Event, e *Ending) []Carried
 		}
 		view := o.View.String()
 		t := d.turnNow(o)
+		if _, told := m.Wake.ToldOf(view); told {
+			continue // a wake carried this view already
+		}
 		switch {
-		case !t.Over, m.WokenTimes > 0 && m.WokenView == view:
+		case !t.Over:
 			continue
 		case !t.State.onPrompt() && t.Shells+t.Orphans > 0 && replyReads(o) != turn.ReadsAsking:
 			continue
@@ -549,8 +552,10 @@ func (d *Driver) post(label string, e *Ending, note string, p posting) error {
 		// The watchdog posts a wake nobody acted on once more, for the same view.
 		again := ""
 		if evs, err := b.Events(); err == nil {
-			if m := batch.Find(batch.Members(evs), label); m != nil && view != "" && m.WokenView == view && m.Woken.After(m.LastAction) {
-				again = fmt.Sprintf("posted again: nothing was done after its wake at %s\n", m.Woken.In(b.Zone()).Format("15:04"))
+			if m := batch.Find(batch.Members(evs), label); m != nil && view != "" {
+				if told, ok := m.Wake.ToldOf(view); ok && m.Wake.Unhandled() {
+					again = fmt.Sprintf("posted again: nothing was done after its wake at %s\n", told.At.In(b.Zone()).Format("15:04"))
+				}
 			}
 		}
 		e.Waiting = d.waiterLines(b, e.Label) // ahead of next:, which the wake ends on

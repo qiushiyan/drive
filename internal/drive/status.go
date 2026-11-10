@@ -196,8 +196,27 @@ type Row struct {
 	facts wakeFacts // what decides its wake, for a session read live
 }
 
+// wakeKind is how a member's wake stands, which a reader decides on; the
+// words are Wake's.
+type wakeKind int
+
+const (
+	wakeNever     wakeKind = iota // no watch was ever armed for it
+	wakeParked                    // parked: it wakes no one until its next step
+	wakeArmed                     // its watch runs, and posts when its turn ends
+	wakeJobHeld                   // its watch runs, and a job holds its post
+	wakeStalled                   // its watch runs, and waits for a driver that is not answering
+	wakeStuck                     // its watch runs long past when it should have posted
+	wakeStopped                   // stopped by watch --stop-all
+	wakePosting                   // its post is under way
+	wakeUnhandled                 // woken, and nothing done since
+	wakeActed                     // woken and acted on, with no wake armed since
+	wakeEnded                     // its watch ended without a wake
+)
+
 // Wake is how a member's wake stands.
 type Wake struct {
+	kind      wakeKind
 	Watch     string    // armed, woken at …, parked: why, none
 	Armed     bool      // its watch runs, stuck or not
 	Unhandled bool      // a wake was posted after the driver last acted on it
@@ -444,7 +463,8 @@ func (d *Driver) inFlight(evs []batch.Event, members []*batch.Member) []InFlight
 // is free.
 func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, hearing batch.Hearing, zone *time.Location, free string, end parkEnd) Wake {
 	alive := d.Watches != nil && b != nil && d.Watches.Alive(watchName(b, m.Block))
-	woken := !m.Woken.IsZero() && !m.Woken.Before(m.Watched)
+	standing, since := m.Wake.Standing(d.now())
+	told, _ := m.Wake.Told()
 	parked := "parked " + end.words(zone)
 	if end.due(d.now()) {
 		parked += ", which has come"
@@ -452,29 +472,32 @@ func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, hearing batch.He
 	switch {
 	case m.Parked != "" && free != "":
 		// A parked waiter whose hold is free wakes no one unless its watch is armed again.
-		return Wake{Watch: parked + ": " + m.Parked + "; " + free + " is free now, and " + d.run("watch", "--due") + " wakes it",
+		return Wake{kind: wakeParked, Watch: parked + ": " + m.Parked + "; " + free + " is free now, and " + d.run("watch", "--due") + " wakes it",
 			Due: "waits for " + free + ", which is free", Park: &end}
 	case m.Parked != "":
-		return Wake{Watch: parked + ": " + m.Parked, Park: &end}
+		return Wake{kind: wakeParked, Watch: parked + ": " + m.Parked, Park: &end}
 	case alive:
 		plan := r.facts.plan()
 		switch {
 		case plan.held != "" && plan.at.After(d.now()):
-			return Wake{Watch: "armed: " + plan.held + ", so the wake comes when that turn ends, by " + plan.at.In(zone).Format("15:04") + " at the latest",
+			return Wake{kind: wakeJobHeld, Watch: "armed: " + plan.held + ", so the wake comes when that turn ends, by " + plan.at.In(zone).Format("15:04") + " at the latest",
 				Armed: true, HoldsUntil: plan.at, HoldWhy: plan.held}
 		case hearing.Strikes >= stallAfter:
-			return Wake{Watch: "armed: what it has to say waits until the driver answers", Armed: true}
+			return Wake{kind: wakeStalled, Watch: "armed: what it has to say waits until the driver answers", Armed: true}
 		case plan.stuck(d.now()):
-			return Wake{Watch: fmt.Sprintf("armed, but its turn ended %s ago: stuck (%s restarts it)", ago(r.For), d.run("watch", m.Label)), Due: "stuck", Armed: true}
+			return Wake{kind: wakeStuck, Watch: fmt.Sprintf("armed, but its turn ended %s ago: stuck (%s restarts it)", ago(r.For), d.run("watch", m.Label)), Due: "stuck", Armed: true}
 		}
-		return Wake{Watch: "armed", Armed: true}
-	case !m.Stopped.IsZero() && !m.Stopped.Before(m.Watched):
-		return Wake{Watch: "stopped " + m.Stopped.In(zone).Format("15:04") + " (" + d.run("watch", "--due") + " arms it again)", Due: "its wake was stopped"}
-	case m.Posting.After(m.Watched) && m.Posting.After(m.Woken) && m.Posting.After(m.WakeFailed):
-		return Wake{Watch: "posting since " + m.Posting.In(zone).Format("15:04")}
-	case woken && m.Woken.After(m.LastAction):
+		return Wake{kind: wakeArmed, Watch: "armed", Armed: true}
+	}
+	// No watch runs for it, so the record says what came of the last one.
+	switch standing {
+	case batch.WakeStopped:
+		return Wake{kind: wakeStopped, Watch: "stopped " + since.In(zone).Format("15:04") + " (" + d.run("watch", "--due") + " arms it again)", Due: "its wake was stopped"}
+	case batch.WakePosting:
+		return Wake{kind: wakePosting, Watch: "posting since " + since.In(zone).Format("15:04")}
+	case batch.WakeUnhandled:
 		// The driver owes it a decision.
-		w := Wake{Watch: "woken " + m.Woken.In(zone).Format("15:04") + " (nothing done since", Unhandled: true}
+		w := Wake{kind: wakeUnhandled, Watch: "woken " + told.At.In(zone).Format("15:04") + " (nothing done since", Unhandled: true}
 		f := r.facts
 		f.member = m
 		switch rp := f.repost(d.now()); {
@@ -488,12 +511,12 @@ func (d *Driver) wakeOf(b *batch.Batch, m *batch.Member, r Row, hearing batch.He
 		}
 		w.Watch += ")"
 		return w
-	case woken:
-		return Wake{Watch: "none (woken " + m.Woken.In(zone).Format("15:04") + ", acted on since)", Due: "acted on with no wake armed"}
-	case !m.Watched.IsZero():
-		return Wake{Watch: "ended without a wake (watches.log says why)", Due: "its watch ended without a wake"}
+	case batch.WakeActed:
+		return Wake{kind: wakeActed, Watch: "none (woken " + told.At.In(zone).Format("15:04") + ", acted on since)", Due: "acted on with no wake armed"}
+	case batch.WakeNoResult:
+		return Wake{kind: wakeEnded, Watch: "ended without a wake (watches.log says why)", Due: "its watch ended without a wake"}
 	}
-	return Wake{Watch: "none", Due: "never watched"}
+	return Wake{kind: wakeNever, Watch: "none", Due: "never watched"}
 }
 
 func sortedKeys(m map[string]bool) []string {
@@ -543,8 +566,8 @@ func (d *Driver) rowAt(b *batch.Batch, members []*batch.Member, label, block str
 	r.Input, r.Typed, r.View = o.Input, o.Typed, o.View
 	r.Jobs = d.Host.Shells(o.Session.Status.PID)
 	stable := r.Since
-	if m := o.Member; m != nil && m.Watched.After(stable) {
-		stable = m.Watched
+	if m := o.Member; m != nil && m.Wake.Armed().After(stable) {
+		stable = m.Wake.Armed()
 	}
 	r.facts = factsOf(o, d.turnNow(o), o.Member, stable, WakeQuiet)
 	if withProgress && d.Progress != nil && o.Session.ID != "" {

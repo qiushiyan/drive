@@ -45,9 +45,6 @@ const (
 	// mostHeld bounds how long a run under way holds a wake back, as a driver
 	// busy on other sessions would otherwise hold it for good.
 	mostHeld = 10 * time.Minute
-	// postLimit is how long a post can take, with its retries, before one
-	// that recorded no result is taken to have died.
-	postLimit = 12 * time.Minute
 	// stallAfter is how many wakes in a row failed or went unheard before a
 	// batch's wakes back off, as while the bot's usage is out.
 	stallAfter = 3
@@ -140,19 +137,23 @@ func (f wakeFacts) plan() wakePlan {
 	if !t.Over {
 		return wakePlan{}
 	}
-	told := m != nil && m.WokenTimes > 0 && m.WokenView == f.view
+	var told batch.Told
+	wasTold := false // a wake carried this view to the driver
+	if m != nil {
+		told, wasTold = m.Wake.ToldOf(f.view)
+	}
 	if t.State != "done" || t.Shells+t.Orphans == 0 {
 		why := map[bool]string{true: whyPrompt, false: whyEnded}[t.State.onPrompt()]
 		if t.State != "done" && !t.State.onPrompt() {
 			why = whyStopped
 		}
-		if told {
+		if wasTold {
 			switch {
-			case m.Woken.After(m.Watched) && m.WokenJobs == 0:
+			case m.Wake.PostedSinceArmed() && told.Jobs == 0:
 				return wakePlan{covered: true}
-			case m.WokenJobs > 0:
+			case told.Jobs > 0:
 				why = whyJobEnded
-			case !m.WokenHeard():
+			case !told.Heard:
 				why = whyUnheard
 			default:
 				why = whyRepost
@@ -164,10 +165,10 @@ func (f wakeFacts) plan() wakePlan {
 		return wakePlan{at: f.stable, why: why}
 	}
 	switch {
-	case told && m.WokenAcked > 0:
-		return wakePlan{at: m.Woken.Add(jobHold << min(m.WokenAcked, 8)), held: "its driver has heard its reply, and a job of its still runs", why: whyJobCheck}
-	case told:
-		return wakePlan{at: m.Woken.Add(repostAfter), why: whyUnheard} // a wake no run answered is no wake
+	case wasTold && told.Acked > 0:
+		return wakePlan{at: told.At.Add(jobHold << min(told.Acked, 8)), held: "its driver has heard its reply, and a job of its still runs", why: whyJobCheck}
+	case wasTold:
+		return wakePlan{at: told.At.Add(repostAfter), why: whyUnheard} // a wake no run answered is no wake
 	case f.sentForReply():
 		return wakePlan{at: f.stable.Add(f.quiet), why: whyRecap}
 	case f.reads == turn.ReadsAsking:
@@ -208,18 +209,18 @@ type repost struct {
 // run heard and did nothing about goes once more, so one lost to a run that died
 // is not lost, and never again for one view.
 func (f wakeFacts) repost(now time.Time) repost {
-	m := f.member
+	told, _ := f.member.Wake.Told()
 	switch {
-	case f.view != "" && m.WokenView != "" && f.view != m.WokenView:
+	case f.view != "" && told.View != "" && f.view != told.View:
 		return repost{due: "it moved on by itself since its last wake"}
-	case !m.WokenHeard() && now.Sub(m.Woken) > repostAfter:
-		return repost{due: "woken " + ago(now.Sub(m.Woken)) + " ago, and no driver has run since"}
-	case m.WokenView == m.PrevView:
+	case !told.Heard && now.Sub(told.At) > repostAfter:
+		return repost{due: "woken " + ago(now.Sub(told.At)) + " ago, and no driver has run since"}
+	case told.Times >= 2:
 		return repost{done: true}
-	case now.Sub(m.Woken) > repostAfter:
-		return repost{due: "woken " + ago(now.Sub(m.Woken)) + " ago with nothing done since"}
+	case now.Sub(told.At) > repostAfter:
+		return repost{due: "woken " + ago(now.Sub(told.At)) + " ago with nothing done since"}
 	}
-	return repost{again: m.Woken.Add(repostAfter)}
+	return repost{again: told.At.Add(repostAfter)}
 }
 
 // noticeDue says the watchdog should tell the driver something about m:
@@ -254,17 +255,21 @@ func wakeHeld(evs []batch.Event, now, ready time.Time) string {
 	}
 	var posted, posting, heard time.Time
 	for _, e := range evs {
-		switch {
-		case batch.Heard(e):
+		if batch.Heard(e) {
 			heard = e.At
-		case e.Kind == batch.KindPosting:
-			posting = e.At
-		case e.Kind == batch.KindWake && e.Via == "":
-			posting, posted = time.Time{}, e.At
+		}
+	}
+	for _, p := range batch.Posts(evs) {
+		switch {
+		case p.Via != "": // its carrier's post is the one under way
+		case p.Pending():
+			posting = p.Began
+		case !p.Lost():
+			posted = p.Ended
 		}
 	}
 	switch {
-	case !posting.IsZero() && now.Sub(posting) < postLimit:
+	case !posting.IsZero() && now.Sub(posting) < batch.PostLimit:
 		return heldPosting
 	case !posted.IsZero() && now.Sub(posted) < wakeGap:
 		return heldGap

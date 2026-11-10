@@ -133,29 +133,8 @@ func (m *Metrics) asks(evs []batch.Event) {
 // delivery, refusals, failures, wakes and what followed each, and, in a
 // batch that wakes its driver, the turns left unwatched.
 func (m *Metrics) actions(evs []batch.Event, wakes bool) {
-	woken := map[string]wakeDrew{} // what a session's newest wake has drawn so far
-	settle := func(session string) {
-		switch woken[session] {
-		case drewActed:
-			m.WakesActedOn++
-		case drewHeard:
-			m.WakesHeardOnly++
-		case drewNothing:
-			m.WakesUntraced++
-		}
-	}
 	unwatched := map[string]int{} // a session's steps that no wake, park or close has followed yet
 	for _, e := range evs {
-		if batch.Heard(e) { // a run is the driver's, whichever session it turned to
-			for s, drew := range woken {
-				if drew == drewNothing {
-					woken[s] = drewHeard
-				}
-			}
-		}
-		if _, open := woken[e.Session]; open && batch.Acted(e) {
-			woken[e.Session] = drewActed
-		}
 		switch e.Kind {
 		case batch.KindSend:
 			if e.Mode == "notice" {
@@ -216,12 +195,21 @@ func (m *Metrics) actions(evs []batch.Event, wakes bool) {
 			} else {
 				m.Wakes++
 			}
-			settle(e.Session) // the wake before it, by what came between the two
-			woken[e.Session] = drewNothing
 		}
 	}
-	for s := range woken {
-		settle(s) // its last wake, by what came before the batch's end
+	// What each wake drew is its post's to say: a driver's trace or action
+	// from when the post began, since a run can act before its post returns,
+	// until the session's next post began.
+	for _, p := range batch.Posts(evs) {
+		switch {
+		case p.Session == "" || !p.Delivered():
+		case !p.Acted.IsZero():
+			m.WakesActedOn++
+		case !p.Heard.IsZero():
+			m.WakesHeardOnly++
+		default:
+			m.WakesUntraced++
+		}
 	}
 	if wakes {
 		for _, n := range unwatched {
@@ -229,15 +217,6 @@ func (m *Metrics) actions(evs []batch.Event, wakes bool) {
 		}
 	}
 }
-
-// wakeDrew is the most a session's wake has drawn from a driver.
-type wakeDrew int
-
-const (
-	drewNothing wakeDrew = iota + 1 // no driver heard since
-	drewHeard                       // a driver ran
-	drewActed                       // a driver changed the session
-)
 
 // merges finds the changes the batch's sessions merged: every pull request
 // a session linked that merged since the batch started, counted once

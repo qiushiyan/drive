@@ -1115,6 +1115,35 @@ func TestAWakeIsCountedByWhatItDrew(t *testing.T) {
 	}
 }
 
+// A run can read the batch before the post that started it has returned, as
+// one did on 2026-11-03. Status and the pacing count that wake heard, from
+// when its post began; metrics counted it from when the post returned, and
+// called it untraced.
+func TestAWakeAnsweredBeforeItsPostReturnsIsHeard(t *testing.T) {
+	r := newRig(t, "webhook")
+	c := adopted(t, r, "T1")
+	woken(r, c)
+	view := r.view("T1")
+	r.w.Clock.Sleep(2 * time.Minute)
+	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindPosting, Session: "T1", Block: c.Block, View: view, Why: "turn-ended"})
+	r.w.Clock.Sleep(time.Second)
+	r.d.Seen() // the run the post started reads the batch
+	r.w.Clock.Sleep(time.Second)
+	_ = r.b.Append(batch.Event{At: r.w.Clock.Now(), Kind: batch.KindWake, Session: "T1", Block: c.Block, HTTP: 204, View: view, Why: "turn-ended"})
+	r.w.Clock.Sleep(time.Hour)
+	evs, _ := r.b.Events()
+	if h := batch.Hearings(evs, r.w.Clock.Now()); h.Strikes != 0 {
+		t.Fatalf("the pacing counts it heard: %+v", h)
+	}
+	m, err := r.d.Metrics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := [3]int{m.WakesActedOn, m.WakesHeardOnly, m.WakesUntraced}; got != [3]int{0, 1, 0} {
+		t.Fatalf("metrics count it heard too: acted on, heard only, untraced = %v", got)
+	}
+}
+
 // notify.log was empty after ~130 waits in a batch, so a delivered wake and
 // a dead wait looked the same. Every post is now recorded.
 func TestWakeRecordsEveryPost(t *testing.T) {
