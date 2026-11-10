@@ -738,8 +738,8 @@ type LogCmd struct {
 func (c *LogCmd) HelpSections() []clikit.Section {
 	return []clikit.Section{{Title: "JSON", Body: `
 The batch's events, oldest first, as recorded: at, kind, and the fields its kind carries,
-among session, block, sid, account, dir, intent, mode, key, path, text, notice, outcome,
-reason, hold, view, action, call, id, ref, source, scope, question, recommendation,
+among session, block, sid, account, dir, model, effort, intent, mode, key, path, text, notice,
+outcome, reason, hold, view, action, call, id, ref, source, scope, question, recommendation,
 if_unanswered, took, explained, note, goal, http, try, via, branch, jobs, why, due, held_by.`}}
 }
 

@@ -222,6 +222,10 @@ func TestTheJSONIsDescribed(t *testing.T) {
 	cli(c.app, "send", view(t, out), "--as", "T1", "go")
 	cli(c.app, "record", "ask", "T1", "--question", "q", "--recommendation", "r", "--if-unanswered", "u")
 	cli(c.app, "record", "grant", "--source", "s", "--scope", "x")
+	// An open on a model and at an effort level of its own records both.
+	if code, _, errs := cli(c.app, "open", "J1", "--dir", t1.Cwd, "--model", "fable", "--effort", "xhigh", "review it"); code != 0 {
+		t.Fatalf("open: %s", errs)
+	}
 	for _, args := range [][]string{{"status", "--quick"}, {"read", "T1"}, {"wait", "T1"}, {"log"}, {"metrics"}} {
 		_, out, errs := cli(c.app, append(args, "--json")...)
 		var doc any
