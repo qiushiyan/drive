@@ -1269,6 +1269,74 @@ func TestHoldWaitersAreListedAndTheRefusalSaysHowBack(t *testing.T) {
 	}
 }
 
+// On 2026-11-09 a send to a block outside the batch was refused on release,
+// which S2 held. A minute later the block joined the batch as S1 on another
+// step, and status went on listing "waiting for it: bf4e51 (refused --file
+// /tmp/s1-a1.md at 14:46)" through S1's parks, its merge and its close: the
+// refusal named the block, and nothing after it did. A waiter is done once
+// its session is sent a step or closes, under the label it joined as.
+func TestAWaiterRefusedBeforeItJoinedIsDoneOnceItIsSent(t *testing.T) {
+	r := newRig(t, "webhook")
+	holder := adopted(t, r, "S2")
+	holder.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} }) // the release runs on
+	if _, err := r.d.Send(r.view("S2"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
+		t.Fatal(err)
+	}
+	waits := func(want string) {
+		t.Helper()
+		st, err := r.d.Status(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := ""
+		for _, h := range st.Holds {
+			if _, who, ok := strings.Cut(h, "waiting for it: "); ok {
+				got, _, _ = strings.Cut(who, " ")
+			}
+		}
+		if got != want {
+			t.Fatalf("%q waits for release, want %q: %q", got, want, st.Holds)
+		}
+	}
+	c := r.w.Add("S1")
+	done(c, "onboard", "analysis")
+	ref := c.Block[len(c.Block)-6:]
+	merge := filepath.Join(r.w.Root, "merge.md")
+	_ = os.WriteFile(merge, []byte("Merge when the checks are green, and release.\n"), 0o644)
+	if _, err := r.d.Send(r.view(ref), drive.Step{File: merge}, drive.SendOptions{Hold: "release"}); !isRefused(err) || !strings.Contains(err.Error(), "held by S2") {
+		t.Fatalf("held: %v", err)
+	}
+	waits(ref)
+	if _, err := r.d.Send(r.view(ref), drive.Step{Line: "Fold the review's findings first."}, drive.SendOptions{Label: "S1"}); err != nil {
+		t.Fatal(err)
+	}
+	waits("")
+	// The holder's wake names no one it would have the driver send to again.
+	holder.Done("released")
+	l := hook(t, r)
+	e, err := r.d.Wait("S2", time.Minute, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.d.Wake("S2", e, ""); err != nil || strings.Contains(l.output(0), "waiting for release") {
+		t.Fatalf("its wake names no waiter: %v\n%s", err, l.output(0))
+	}
+	// One of the batch's own, refused and then closed, waits no more either.
+	if _, err := r.d.Send(r.view("S2"), drive.Step{Line: "and the changelog"}, drive.SendOptions{Hold: "release"}); err != nil {
+		t.Fatal(err)
+	}
+	holder.Edit(func(c *testkit.Claude) { c.Reply = nil })
+	holder.Busy("the changelog")
+	if _, err := r.d.Send(r.view("S1"), drive.Step{File: merge}, drive.SendOptions{Hold: "release"}); !isRefused(err) {
+		t.Fatalf("held again: %v", err)
+	}
+	waits("S1")
+	if err := r.d.Close(r.view("S1")); err != nil {
+		t.Fatal(err)
+	}
+	waits("")
+}
+
 func TestAStuckWatchIsFlaggedAndRestarted(t *testing.T) {
 	r := newRig(t, "webhook")
 	r.d.Cfg.Webhook = config.Webhook{URL: "http://127.0.0.1:1/none"}
