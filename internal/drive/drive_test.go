@@ -1202,6 +1202,53 @@ func TestHoldWaitersAreListedAndTheRefusalSaysHowBack(t *testing.T) {
 	}
 }
 
+// A session outside the batch is refused under its block's short id, and
+// joins under the label its next send gives it; a waiter closed waits for
+// nothing. Seen live: S1, refused as bf4e51 on 9 Nov and sent its step as
+// S1 a minute later, was still listed as waiting the next day, after it
+// closed, and the holder's wakes said to send to it.
+func TestAWaiterIsKnownByItsSessionNotTheNameItWasRefusedUnder(t *testing.T) {
+	r := newRig(t, "webhook")
+	a, b, c := r.w.Add("A"), r.w.Add("B"), r.w.Add("C")
+	for _, s := range []*testkit.Claude{a, b, c} {
+		done(s, "x", "y")
+	}
+	if _, err := r.d.Send(r.view(a.Block[len(a.Block)-6:]), drive.Step{Line: "land it"}, drive.SendOptions{Label: "T5s"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.Send(r.view(c.Block[len(c.Block)-6:]), drive.Step{Line: "land it"}, drive.SendOptions{Label: "T3s"}); err != nil {
+		t.Fatal(err)
+	}
+	a.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} })
+	if _, err := r.d.Send(r.view("T5s"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); err != nil {
+		t.Fatal(err)
+	}
+	short := b.Block[len(b.Block)-6:]
+	if _, err := r.d.Send(r.view(short), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); !isRefused(err) {
+		t.Fatalf("the hold is taken: %v", err)
+	}
+	if _, err := r.d.Send(r.view("T3s"), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release"}); !isRefused(err) {
+		t.Fatalf("the hold is taken: %v", err)
+	}
+	st, _ := r.d.Status(false)
+	if len(st.Holds) != 1 || !strings.Contains(st.Holds[0], "waiting for it: "+short) || !strings.Contains(st.Holds[0], "T3s") {
+		t.Fatalf("both are listed as waiting: %q", st.Holds)
+	}
+	a.Done("released")
+	if _, err := r.d.Send(r.view(short), drive.Step{Line: "release"}, drive.SendOptions{Hold: "release", Label: "S1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.d.Close(r.view("T3s")); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = r.d.Status(false)
+	for _, h := range st.Holds {
+		if strings.Contains(h, "waiting for it") {
+			t.Fatalf("one was sent its step under the label it joined with and the other closed, so nobody waits: %q", st.Holds)
+		}
+	}
+}
+
 func TestAStuckWatchIsFlaggedAndRestarted(t *testing.T) {
 	r := newRig(t, "webhook")
 	r.d.Cfg.Webhook = config.Webhook{URL: "http://127.0.0.1:1/none"}

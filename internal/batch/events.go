@@ -537,7 +537,9 @@ func Holds(evs []Event) []Hold {
 }
 
 // Waiting lists the sessions a send was refused for because another held
-// what it needed, and that have been sent nothing since.
+// what it needed, and that have been sent nothing since nor closed. A
+// session outside the batch is refused under its block's short id, so once
+// it joins, its wait goes on under the label it joined with.
 func Waiting(evs []Event) []Hold {
 	refused := map[string]Hold{}
 	var order []string
@@ -550,7 +552,18 @@ func Waiting(evs []Event) []Hold {
 			if _, ok := refused[e.Session]; !ok || refused[e.Session].Name != e.Hold {
 				refused[e.Session] = Hold{Name: e.Hold, Session: e.Session, Since: e.At, Step: e.Text, Key: e.Key, Path: e.Path, Open: e.Mode == "open"}
 			}
-		case e.Kind == KindSend && e.Outcome != "":
+		case e.Kind == KindAdopt:
+			for i, s := range order {
+				h, ok := refused[s]
+				if !ok || s == e.Session || len(s) < 6 || !strings.HasSuffix(e.Block, s) {
+					continue
+				}
+				delete(refused, s)
+				if _, ok := refused[e.Session]; !ok {
+					h.Session, order[i], refused[e.Session] = e.Session, e.Session, h
+				}
+			}
+		case e.Kind == KindSend && e.Outcome != "", e.Kind == KindClose:
 			delete(refused, e.Session)
 		}
 	}
