@@ -5,5 +5,5 @@ ok
 
 sr-9531 is gone on account acct@example.com (session sid-1)
 goal: Review pull request 9531 before it merges.
-next: bring it back under its label, its conversation resumed where it stopped: drive --batch b8 open sr-9531 --dir $ROOT/work --resume sid-1 --account acct@example.com --effort xhigh
+next: its block no longer exists; if it was closed to end the session, put that on record: drive --batch b8 close sr-9531; if not, bring it back under its label, its conversation resumed where it stopped: drive --batch b8 open sr-9531 --dir $ROOT/work --resume sid-1 --account acct@example.com --effort xhigh
 --- stderr

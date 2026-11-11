@@ -45,6 +45,22 @@ func (d *Driver) workedIn(m *batch.Member, f *turn.Frontier) string {
 	return f.Dir
 }
 
+// goneNext says what to run about a member of b whose session is gone, err
+// being what its read met: the close that puts on record a session someone
+// ended outside drive, closing its tab or its Claude Code, then the open
+// that brings it back. A block that no longer exists was closed by hand, as
+// a restart of Rex's server brings every block back with a shell in it.
+func (d *Driver) goneNext(b *batch.Batch, m *batch.Member, f *turn.Frontier, err error) string {
+	end, back := d.run("close", m.Label), d.reopen(b, m, f)
+	switch {
+	case errors.Is(err, rex.ErrNoBlock):
+		return fmt.Sprintf("its block no longer exists; if it was closed to end the session, put that on record: %s; if not, %s", end, back)
+	case m.Starting:
+		return back
+	}
+	return fmt.Sprintf("its Claude Code no longer runs in its block; if its work is done, close it: %s; if not, %s", end, back)
+}
+
 // reopen says how to bring back a member of b whose session is gone: its
 // own conversation resumed under its label, where it worked, on the model
 // and at the effort level it was opened with, on its account unless b found

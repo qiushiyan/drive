@@ -1,0 +1,8 @@
+$ drive read C2
+exit 0
+--- stdout
+ok
+
+C2 is gone on account acct@example.com (session sid-2)
+next: its block no longer exists; if it was closed to end the session, put that on record: drive --batch b6 close C2; if not, bring it back under its label, its conversation resumed where it stopped: drive --batch b6 open C2 --dir $ROOT/work --resume sid-2 --account acct@example.com
+--- stderr

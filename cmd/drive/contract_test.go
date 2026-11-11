@@ -396,6 +396,36 @@ func TestContractCloseCleanup(t *testing.T) {
 	c.run("close-cleanup", "close", view(t, out), "--cleanup")
 }
 
+// What the owner does by hand a close follows: a line left in an input box
+// that the owner lets go is cleared and the session closed on the view it
+// was refused on, and a session whose tab the owner closed is put on record
+// closed by its label, as it has no view.
+func TestContractCloseAfterTheOwner(t *testing.T) {
+	c := newContract(t)
+	typed, closed := c.w.Add("C1"), c.w.Add("C2")
+	for _, s := range []*testkit.Claude{typed, closed} {
+		s.Busy("land it")
+		s.Done("Merged.")
+	}
+	cli(c.app, "batch", "new", "b6")
+	for _, s := range []*testkit.Claude{typed, closed} {
+		_, out, _ := cli(c.app, "read", s.Block[len(s.Block)-6:])
+		cli(c.app, "send", view(t, out), "--as", s.Label, "recap")
+	}
+	typed.Edit(func(c *testkit.Claude) { c.Input = "h" })
+	_, out, _ := cli(c.app, "read", "C1")
+	c.run("close-unsent-line", "close", view(t, out))
+	c.run("close-cleared", "respond", view(t, out), "clear")
+	c.run("close-after-clear", "close", view(t, out))
+
+	if err := c.w.Close(closed.Block); err != nil { // the owner closes its tab
+		t.Fatal(err)
+	}
+	c.run("close-read-gone", "read", "C2")
+	c.run("close-gone", "close", "C2")
+	c.run("close-gone-again", "close", "C2")
+}
+
 // An ask that replaces another records it moot in the same write, an ask
 // whose session closed after it gets a "since" line with what to run, and
 // a restatement stands it again from then.

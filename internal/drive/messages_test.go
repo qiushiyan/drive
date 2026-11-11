@@ -84,7 +84,7 @@ func TestEveryNextRunsAsWritten(t *testing.T) {
 		{"a close over an unsent line", "none", func(r *rig, c *testkit.Claude) string {
 			c.Edit(func(c *testkit.Claude) { c.Input = "hold off on the merge" })
 			return nextOf(r.d.Close(r.view("T1")))
-		}, []string{"drive --batch b1 park T1@"}},
+		}, []string{"drive --batch b1 park T1@", "drive --batch b1 respond T1@", " clear, then drive --batch b1 close T1@"}},
 		{"a close over a background job", "webhook", func(r *rig, c *testkit.Claude) string {
 			c.Edit(func(c *testkit.Claude) {
 				c.Shells = []session.Shell{{Started: r.w.Clock.Now(), Command: "pnpm test --watch"}}

@@ -1,0 +1,6 @@
+$ drive close C1@4bfdfefb
+exit 1
+--- stdout
+--- stderr
+drive: error: C1's input box holds an unsent line: "h"
+next: leave the block, as the line may be the owner's: ask them about it (drive --batch b6 record ask C1 --question 'C1'\''s input box holds a line nobody sent; is it yours?' --if-unanswered 'the line stays unsent'), then park it: drive --batch b6 park C1@4bfdfefb 'an unsent line in its input box'; once they say it can go, or if it is a step of yours that never went out, clear it and close: drive --batch b6 respond C1@4bfdfefb clear, then drive --batch b6 close C1@4bfdfefb

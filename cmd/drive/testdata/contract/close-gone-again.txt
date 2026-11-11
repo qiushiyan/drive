@@ -1,0 +1,5 @@
+$ drive close C2
+exit 1
+--- stdout
+--- stderr
+drive: error: C2 is already closed

@@ -817,7 +817,7 @@ func entryOf(e batch.Event, asks map[string]*batch.Event, now time.Time, zone *t
 	case batch.KindPark:
 		v.Kind, v.Head, v.Text = "park", "Parked:", e.Reason
 	case batch.KindClose:
-		v.Kind, v.Head = "done", "Closed"
+		v.Kind, v.Head, v.Text = "done", "Closed", e.Note // a gone one's says so
 	case batch.KindAsk:
 		v.Kind, v.Head, v.Text = "you", "Asked "+e.ID+":", e.Question
 		if e.Ref != "" {

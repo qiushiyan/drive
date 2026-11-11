@@ -62,7 +62,8 @@ func (c *StatusCmd) HelpSections() []clikit.Section {
 STATE  working | done | idle (no prompt yet) | interrupted (an interrupt or a deny)
        | error | blocked:permission | blocked:question | blocked:auth (a rejected login)
        | gone (its block or its Claude Code no longer runs; a line under the table gives
-       the open that brings it back) | starting (its open is under way)
+       the close that records it ended and the open that brings it back)
+       | starting (its open is under way)
        | unread (the read failed; run status again).
        A background job a session still runs is listed under the table.
 INPUT  empty | suggestion (Claude Code's dimmed guess; typing replaces it)
@@ -95,7 +96,8 @@ sessions    a row per session in the batch; others, a row per Claude session out
             pending), last_sent, watch (the WAKE column's words), unhandled_wake (a wake was
             posted and nothing done since), wake_due (why --due would arm its wake; left out
             when nothing is due), view, error (why the row could not be read), next (for a
-            session that is gone, the open that brings it back), jobs (started, command)
+            session that is gone, the close that records it ended and the open that brings it
+            back), jobs (started, command)
 closed      the batch's sessions closed since
 holds       a line per hold, as the table prints it
 open_asks   id, session, at, question, recommendation, if_unanswered (as restated last),
@@ -141,8 +143,9 @@ func (c *ReadCmd) Help() string {
 Every mode prints what it read, then where the session stands, its goal as
 recorded, its view and next:; a session another driver drives says so, with
 no next:. A closed or gone session is read from its transcript as it ended,
-with no view, since there is nothing left to act on; a gone one's next: is
-the open that brings it back.`
+with no view, since there is nothing left to act on but a gone one's close
+by its label; a gone one's next: is that close and the open that brings it
+back.`
 }
 
 func (c *ReadCmd) HelpSections() []clikit.Section {
@@ -525,7 +528,7 @@ func (c *ParkCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type CloseCmd struct {
-	View    string `arg:"" help:"The view the close was decided on."`
+	View    string `arg:"" help:"The view the close was decided on; a gone session, which has none, by its label."`
 	Cleanup bool   `help:"Then remove its branch and worktree once merged, as drive cleanup does."`
 }
 
@@ -533,15 +536,27 @@ func (c *CloseCmd) Help() string {
 	return `
 Refused while the session works, runs a background job, or holds a typed
 line nobody sent: next: gives what to do first, such as the step that has
-the session stop its job.`
+the session stop its job.
+
+A session that is gone, its tab closed outside drive or its Claude Code
+ended, has no view and is closed by its label: the close is put on record,
+its park and wake end, and a block left running only a shell is closed
+too. It prints the open that brings the session back.`
 }
 
 func (c *CloseCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	label := sessionOf(c.View)
-	if err := d.Close(c.View); err != nil {
+	if label == c.View {
+		out, err := d.CloseGone(label)
+		if err != nil {
+			return err
+		}
+		fmt.Fprint(ctx.Stdout, out.Text())
+	} else if err := d.Close(c.View); err != nil {
 		return err
+	} else {
+		fmt.Fprintf(ctx.Stdout, "closed %s\n", label)
 	}
-	fmt.Fprintf(ctx.Stdout, "closed %s\n", label)
 	if !c.Cleanup {
 		return nil
 	}

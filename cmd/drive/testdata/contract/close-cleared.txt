@@ -1,0 +1,5 @@
+$ drive respond C1@4bfdfefb clear
+exit 0
+--- stdout
+clear C1; it now reads done
+--- stderr

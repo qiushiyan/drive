@@ -3,5 +3,5 @@ exit 0
 --- stdout
 S1 (a00001): its session is gone
 why: S1 (block a00001) cannot be read: rex block: Error: block target "block:00000000-0000-0000-0000-000000a00001" not found
-next: bring it back under its label, its conversation resumed where it stopped: drive --batch 2026-10-28 open S1 --dir $ROOT/work --resume sid-1 --account acct@example.com
+next: its block no longer exists; if it was closed to end the session, put that on record: drive --batch 2026-10-28 close S1; if not, bring it back under its label, its conversation resumed where it stopped: drive --batch 2026-10-28 open S1 --dir $ROOT/work --resume sid-1 --account acct@example.com
 --- stderr

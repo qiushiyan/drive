@@ -72,7 +72,7 @@ func TestARestartedSessionComesBackUnderItsLabel(t *testing.T) {
 		t.Fatalf("the gone wake names the open that brings it back: %+v %v", e, err)
 	}
 	st, err := r.d.Status(false)
-	if err != nil || len(st.Rows) != 2 || st.Rows[1].Next == "" || !strings.Contains(st.Text(r.w.Clock.Now()), "T2 is gone: bring it back") {
+	if err != nil || len(st.Rows) != 2 || st.Rows[1].Next == "" || !strings.Contains(st.Text(r.w.Clock.Now()), "T2 is gone: its block no longer exists; if it was closed to end the session, put that on record: drive --batch b2 close T2; if not, bring it back") {
 		t.Fatalf("status reads with the batch's Rex session gone, and names each open: %+v %v", st, err)
 	}
 	if rd, err := r.d.Read("T2", drive.ReadLast, 10); err != nil || rd.State != "gone" || rd.Next != st.Rows[1].Next {

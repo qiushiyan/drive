@@ -1,0 +1,6 @@
+$ drive close C2
+exit 0
+--- stdout
+closed C2, which was gone: its block no longer exists
+if that was not its end, bring it back under its label, its conversation resumed where it stopped: drive --batch b6 open C2 --dir $ROOT/work --resume sid-2 --account acct@example.com
+--- stderr

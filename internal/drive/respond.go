@@ -1,11 +1,13 @@
 package drive
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/qiushiyan/drive/internal/batch"
+	"github.com/qiushiyan/drive/internal/rex"
 	"github.com/qiushiyan/drive/internal/session"
 	"github.com/qiushiyan/drive/internal/turn"
 )
@@ -205,7 +207,8 @@ func (d *Driver) Park(view, reason string, until time.Time) (err error) {
 
 // Close closes a session's block once its last step has run, decided on
 // view: refused while it works, waits on a prompt, runs a background job,
-// or holds typed text.
+// or holds typed text. A session that is gone has no view, and CloseGone
+// closes it by its label.
 func (d *Driver) Close(view string) (err error) {
 	v, err := turn.ParseView(view)
 	if err != nil {
@@ -235,9 +238,12 @@ func (d *Driver) Close(view string) (err error) {
 		return &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: its turn has not ended", o.Label, state.promptKind()),
 			Next: d.answerNext(o.Label, view, state)}
 	case o.Input == turn.InputTyped:
+		// The owner's word, or a step of the driver's own that never went out,
+		// lets the line go: a clear leaves the view as it was.
 		return &Refused{Reason: fmt.Sprintf("%s's input box holds an unsent line: %q", o.Label, clip(o.Typed, 80)),
 			Next: "leave the block, as the line may be the owner's: ask them about it (" + d.askAbout(o.Label, o.Label+"'s input box holds a line nobody sent; is it yours?", "the line stays unsent") +
-				"), then park it: " + park("an unsent line in its input box")}
+				"), then park it: " + park("an unsent line in its input box") +
+				"; once they say it can go, or if it is a step of yours that never went out, clear it and close: " + d.run("respond", view, "clear") + ", then " + d.run("close", view)}
 	case len(d.Host.Shells(st.PID)) > 0:
 		job := d.Host.Shells(st.PID)[0]
 		next := "if the job should have ended, have the session stop it, and close it once that turn ends: " + d.stopJob(view, job) +
@@ -258,4 +264,95 @@ func (d *Driver) Close(view string) (err error) {
 		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindClose, Session: o.Label, Block: o.Session.Block, View: v.String()})
 	}
 	return nil
+}
+
+// ClosedGone is what closing a gone session did.
+type ClosedGone struct {
+	Label string
+	Block string // what became of its block
+	Back  string // the open that brings its conversation back
+}
+
+// CloseGone puts on record the close of a member whose session is gone: its
+// block closed outside drive, most often by the owner ending it, or its
+// Claude Code ended. Nothing runs there for a check to keep, so no view is
+// asked for, and a session that runs is refused, to be closed on the view
+// it is read at. Its wake stops, its park ends and cleanup takes what it
+// left. A block left running only a shell, as a restart of Rex's server
+// leaves one, is closed with it; one with another program in front is left.
+// Its conversation stays, for the open that brings it back.
+func (d *Driver) CloseGone(label string) (out *ClosedGone, err error) {
+	again := d.run("close", label)
+	b, err := d.inBatch()
+	if err != nil {
+		return nil, unsent(err, again)
+	}
+	var members []*batch.Member
+	if b != nil {
+		evs, err := b.Events()
+		if err != nil {
+			return nil, unsent(err, again)
+		}
+		members = batch.Members(evs)
+	}
+	m := batch.Find(members, label)
+	if m == nil {
+		_, err := turn.ParseView(label)
+		return nil, &Refused{Reason: err.Error()}
+	}
+	a, err := d.take(b, m.Label, m.Block, "closing "+m.Label)
+	if err != nil {
+		return nil, err
+	}
+	defer a.finish(&err)
+	if err := d.settle(b, m.Label, m.Block); err != nil {
+		return nil, unsent(err, again)
+	}
+	evs, err := b.Events()
+	if err != nil {
+		return nil, unsent(err, again)
+	}
+	members = batch.Members(evs)
+	m = batch.Find(members, m.Label)
+	switch busy := d.opening(m); {
+	case m.Closed:
+		return nil, &Refused{Reason: fmt.Sprintf("%s is already closed", m.Label)}
+	case busy != nil:
+		return nil, &Refused{Reason: fmt.Sprintf("%s is not gone: %s", m.Label, openingWords(busy)),
+			Next: fmt.Sprintf("let it finish; once it is done, %s shows where it stands", d.run("read", m.Label))}
+	}
+	_, read := d.observe(b, members, m.Label)
+	switch {
+	case read == nil:
+		return nil, &Refused{Reason: fmt.Sprintf("%s still runs, so it is closed on the view you read it at", m.Label),
+			Next: d.run("read", m.Label) + " prints the view; close that"}
+	case !gone(read):
+		return nil, unsent(read, again)
+	}
+	out = &ClosedGone{Label: m.Label, Back: d.reopen(b, m, nil)}
+	closedShell := false
+	switch front, ferr := d.Term.Foreground(m.Block); {
+	case errors.Is(ferr, rex.ErrNoBlock):
+		out.Block = "its block no longer exists"
+	case ferr != nil:
+		out.Block = fmt.Sprintf("its block is left open, as Rex did not say what runs there: %v", ferr)
+	case !isShell(front):
+		out.Block = fmt.Sprintf("its block is left open, as %s runs in front there", front)
+	default:
+		if err := d.Term.Close(m.Block); err != nil {
+			return nil, &Refused{Reason: fmt.Sprintf("Rex did not close the shell left in %s's block: %v", m.Label, err), Next: "try it again: " + again}
+		}
+		closedShell, out.Block = true, "the shell left in its block is closed too"
+	}
+	if d.Watches != nil {
+		_ = d.Watches.Stop(watchName(b, m.Block))
+	}
+	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindClose, Session: m.Label, Block: m.Block, Outcome: "gone",
+		Note: "it was gone: " + out.Block}); err != nil {
+		if closedShell {
+			return nil, &Failed{What: fmt.Sprintf("closed the shell left in %s's block, but the close was not recorded: %v", m.Label, err), Next: "record it: " + again}
+		}
+		return nil, unsent(err, again)
+	}
+	return out, nil
 }

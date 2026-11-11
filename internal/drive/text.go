@@ -638,3 +638,10 @@ func intentWords(e batch.Event) string {
 	}
 	return e.Text
 }
+
+// Text is what closing a gone session prints: that it closed, what became
+// of its block, and the open that brings it back, should that not have been
+// its end.
+func (c *ClosedGone) Text() string {
+	return fmt.Sprintf("closed %s, which was gone: %s\nif that was not its end, %s\n", c.Label, c.Block, c.Back)
+}

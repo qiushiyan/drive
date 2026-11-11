@@ -6,8 +6,14 @@ Refused while the session works, runs a background job, or holds a typed
 line nobody sent: next: gives what to do first, such as the step that has
 the session stop its job.
 
+A session that is gone, its tab closed outside drive or its Claude Code
+ended, has no view and is closed by its label: the close is put on record,
+its park and wake end, and a block left running only a shell is closed
+too. It prints the open that brings the session back.
+
 Arguments:
-  <view>               The view the close was decided on.
+  <view>               The view the close was decided on; a gone session, which has none, by its
+                       label.
 
 Flags:
       --cleanup        Then remove its branch and worktree once merged, as drive cleanup does.

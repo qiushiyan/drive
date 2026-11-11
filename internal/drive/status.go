@@ -54,12 +54,12 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 	}
 	m := batch.Find(members, ref)
 	if m != nil && m.Closed {
-		return d.readEnded(b, m, Closed, mode, n)
+		return d.readEnded(b, m, nil, mode, n)
 	}
 	o, err := d.observe(b, members, ref)
 	if err != nil {
 		if m != nil && gone(err) {
-			return d.readEnded(b, m, Gone, mode, n)
+			return d.readEnded(b, m, err, mode, n)
 		}
 		return nil, err
 	}
@@ -91,7 +91,12 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 // readEnded reads a member whose session has ended, its block closed or its
 // process gone, from its transcript, which outlives both: a report run after
 // a reset still has its recap. It has no screen, prompt or view to act on.
-func (d *Driver) readEnded(b *batch.Batch, m *batch.Member, state State, mode ReadMode, n int) (*Reading, error) {
+// goneBy is what the read of a gone one met, nil for one its driver closed.
+func (d *Driver) readEnded(b *batch.Batch, m *batch.Member, goneBy error, mode ReadMode, n int) (*Reading, error) {
+	state := Closed
+	if goneBy != nil {
+		state = Gone
+	}
 	path := ""
 	if m.SID != "" {
 		path = d.Host.Transcript(m.SID)
@@ -118,7 +123,7 @@ func (d *Driver) readEnded(b *batch.Batch, m *batch.Member, state State, mode Re
 	}
 	r := &Reading{Label: m.Label, SID: m.SID, Goal: m.Goal, State: state, Account: m.Account}
 	if state == Gone {
-		r.Next = d.reopen(b, m, &f)
+		r.Next = d.goneNext(b, m, &f, goneBy)
 	}
 	return r, d.readText(r, f, mode, n, zoneOf(b))
 }
@@ -628,7 +633,7 @@ func (d *Driver) rowAt(b *batch.Batch, members []*batch.Member, label, block str
 			if busy := d.opening(m); busy != nil {
 				r.State, r.Error = Starting, openingWords(busy)
 			} else {
-				r.Next = d.reopen(b, m, nil)
+				r.Next = d.goneNext(b, m, nil, err)
 			}
 		}
 		return r
