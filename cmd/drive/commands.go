@@ -79,7 +79,10 @@ and the watchdog wakes you about it once.
 "park of" lines name the parks whose --until has come, then those nothing ends, each
 line with what to run; the watchdog wakes you about each park once.
 "left by" lines name what a closed session left that stays, and why; each is a fact
-to know, not a question for the owner. Run without --quick.`},
+to know, not a question for the owner. Run without --quick.
+An open ask's "since" line says its session closed, or its newest pull request merged
+(read without --quick), after the ask was asked or restated, with what to run: an ask
+outlives both only while it still holds something, and you judge which.`},
 		{Title: "JSON", Body: `
 batch       name, driver (left out for a driver of no name), started, wake, webhook,
             rex_session, tz; null with no current batch
@@ -95,7 +98,10 @@ sessions    a row per session in the batch; others, a row per Claude session out
             session that is gone, the open that brings it back), jobs (started, command)
 closed      the batch's sessions closed since
 holds       a line per hold, as the table prints it
-open_asks   id, session, at, question, recommendation, if_unanswered
+open_asks   id, session, at, question, recommendation, if_unanswered (as restated last),
+            restated_at (left out until it is), overtaken (the "since" line, left out when
+            there is none: closed_at, pr, repo, merged_at, each left out when it did not
+            happen, and next)
 grants      id, at, scope, source
 in_flight   actions admitted with no outcome yet: kind, session, at, text, driver_pid (left
             out once that driver has gone)
@@ -606,11 +612,12 @@ func (c *CleanupCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 }
 
 type RecordCmd struct {
-	Grant  GrantCmd  `cmd:"" help:"Record authority the owner handed over, in their words, with what it covers."`
-	Ask    AskCmd    `cmd:"" help:"Record a question put to the owner, with its recommendation and what happens unanswered."`
-	Answer AnswerCmd `cmd:"" help:"Record the owner's answer to an ask."`
-	Note   NoteCmd   `cmd:"" help:"Record a note, such as the plan, for the run after a reset to read."`
-	Goal   GoalCmd   `cmd:"" help:"Record what a session sets out to do, in plain terms for the owner."`
+	Grant   GrantCmd   `cmd:"" help:"Record authority the owner handed over, in their words, with what it covers."`
+	Ask     AskCmd     `cmd:"" help:"Record a question put to the owner, with its recommendation and what happens unanswered."`
+	Answer  AnswerCmd  `cmd:"" help:"Record the owner's answer to an ask."`
+	Restate RestateCmd `cmd:"" help:"Record what an open ask waits on now, once its session closed or its change merged."`
+	Note    NoteCmd    `cmd:"" help:"Record a note, such as the plan, for the run after a reset to read."`
+	Goal    GoalCmd    `cmd:"" help:"Record what a session sets out to do, in plain terms for the owner."`
 }
 
 func (RecordCmd) Help() string {
@@ -650,11 +657,38 @@ type AskCmd struct {
 	Question       string `required:"" help:"The question, as the owner reads it."`
 	Recommendation string `help:"What you recommend."`
 	IfUnanswered   string `required:"" help:"What happens while nobody answers."`
+	Replaces       string `placeholder:"ASK" help:"The open ask this question replaces, such as A4, recorded moot in the same write."`
 }
 
 func (c *AskCmd) Run(ctx *kong.Context, d *drive.Driver) error {
-	id, err := d.Ask(strings.TrimPrefix(c.Session, "-"), c.Question, c.Recommendation, c.IfUnanswered)
-	return recorded(ctx.Stdout, "ask", id, err)
+	id, err := d.Ask(strings.TrimPrefix(c.Session, "-"), c.Question, c.Recommendation, c.IfUnanswered, c.Replaces)
+	if err := recorded(ctx.Stdout, "ask", id, err); err != nil || c.Replaces == "" {
+		return err
+	}
+	_, err = fmt.Fprintf(ctx.Stdout, "recorded %s moot, replaced by %s\n", c.Replaces, id)
+	return err
+}
+
+type RestateCmd struct {
+	Ask          string `arg:"" help:"The open ask, such as A3."`
+	IfUnanswered string `required:"" help:"What happens while nobody answers, as it stands now."`
+}
+
+func (c *RestateCmd) Help() string {
+	return `
+Status gives an open ask a "since" line once its session closed or its newest
+pull request merged after it was asked. One that still holds something, such
+as a production write or a message, is restated: status drops the line, and
+the owner's page shows the ask as waiting on these words from now. One that
+holds nothing is recorded moot with record answer instead.`
+}
+
+func (c *RestateCmd) Run(ctx *kong.Context, d *drive.Driver) error {
+	if err := d.Restate(c.Ask, c.IfUnanswered); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(ctx.Stdout, "recorded restate %s\n", c.Ask)
+	return err
 }
 
 type AnswerCmd struct {

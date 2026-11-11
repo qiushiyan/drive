@@ -27,11 +27,15 @@ const (
 	KindRefused    = "refused" // an action drive would not take, and why
 	KindFailure    = "failure" // an action that went wrong in the session
 	KindGrant      = "grant"   // authority the owner handed over
-	KindAsk        = "ask"     // a question put to the owner
+	KindAsk        = "ask"     // a question put to the owner; Ref the open ask it replaces, recorded moot in the same write
 	KindAnswer     = "answer"
-	KindNote       = "note"
-	KindGoal       = "goal" // what a session sets out to do, for the owner; the latest per label stands
-	KindSeen       = "seen" // a driver read the batch, which is how a run that changes nothing is heard
+	// KindRestate is what an open ask (Ref) waits on now, in IfUnanswered,
+	// once its session closed or its change merged and it still holds
+	// something.
+	KindRestate = "restate"
+	KindNote    = "note"
+	KindGoal    = "goal" // what a session sets out to do, for the owner; the latest per label stands
+	KindSeen    = "seen" // a driver read the batch, which is how a run that changes nothing is heard
 	// KindCleanup is what became of a branch a closed session left: Outcome
 	// removed, unmerged, left (Reason says why), unread (it could not be
 	// judged, Reason says why) or none (it left nothing).
@@ -139,7 +143,7 @@ func Acted(e Event) bool {
 func Heard(e Event) bool {
 	switch e.Kind {
 	case KindSeen, KindSendIntent, KindSend, KindRespond, KindPark, KindClose, KindOpenIntent, KindOpen, KindAdopt,
-		KindRefused, KindAsk, KindAnswer, KindGrant, KindGoal, KindCleanup, KindFree:
+		KindRefused, KindAsk, KindAnswer, KindRestate, KindGrant, KindGoal, KindCleanup, KindFree:
 		return true
 	case KindNote:
 		return e.ID != "" // drive's own notes have no id
@@ -173,7 +177,7 @@ type Event struct {
 	Call    string `json:"call,omitempty"` // the tool call a respond answered
 
 	ID             string `json:"id,omitempty"`     // G1, A1, N1
-	Ref            string `json:"ref,omitempty"`    // the ask an answer answers; the session an open resumed
+	Ref            string `json:"ref,omitempty"`    // the ask an answer answers or a restate restates, or an ask replaces; the session an open resumed
 	Source         string `json:"source,omitempty"` // the owner's words, and where they were said
 	Scope          string `json:"scope,omitempty"`
 	Question       string `json:"question,omitempty"`
@@ -660,10 +664,21 @@ func Waiting(evs []Event) []Waiter {
 	return out
 }
 
-// Ask is a question put to the owner, with its answer once given.
+// Ask is a question put to the owner, with its answer once given. Its
+// IfUnanswered is what it waits on as it stands: the latest restatement's.
 type Ask struct {
 	Event
-	Answer *Event
+	Answer   *Event
+	Restated *Event // the latest restatement, nil while it stands as asked
+}
+
+// Stood is when the ask last stood as written: asked, or restated. What
+// happened to its session after that is what may have overtaken it.
+func (a *Ask) Stood() time.Time {
+	if a.Restated != nil {
+		return a.Restated.At
+	}
+	return a.At
 }
 
 // Records derives the owner's grants, the asks with their answers, and notes.
@@ -681,6 +696,11 @@ func Records(evs []Event) (grants []Event, asks []*Ask, notes []Event) {
 			if a := byID[e.Ref]; a != nil {
 				ans := e
 				a.Answer = &ans
+			}
+		case KindRestate:
+			if a := byID[e.Ref]; a != nil {
+				r := e
+				a.Restated, a.IfUnanswered = &r, e.IfUnanswered
 			}
 		case KindNote:
 			notes = append(notes, e)

@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/qiushiyan/drive/internal/batch"
+	"github.com/qiushiyan/drive/internal/progress"
 )
 
 // Grant records authority the owner handed over, in their words and with
@@ -23,15 +24,72 @@ func (d *Driver) Grant(source, scope string) (string, error) {
 	})
 }
 
-// Ask records a question put to the owner.
-func (d *Driver) Ask(session, question, recommendation, ifUnanswered string) (string, error) {
+// Ask records a question put to the owner. One that replaces an open ask
+// records that ask moot, replaced by this one, in the same write, so the
+// owner is never left two questions where one stands.
+func (d *Driver) Ask(session, question, recommendation, ifUnanswered, replaces string) (string, error) {
 	if question == "" || ifUnanswered == "" {
 		return "", &Refused{Reason: "an ask needs --question and --if-unanswered (what happens while nobody answers)"}
 	}
-	return d.record(func(evs []batch.Event) batch.Event {
-		return batch.Event{Kind: batch.KindAsk, ID: batch.NextID(evs, batch.KindAsk, "A"), Session: session,
+	b, err := d.Batch()
+	if err != nil {
+		return "", err
+	}
+	var id string
+	err = b.Locked(func(evs []batch.Event) error {
+		id = batch.NextID(evs, batch.KindAsk, "A")
+		ask := batch.Event{At: d.now(), Kind: batch.KindAsk, ID: id, Session: session, Ref: replaces,
 			Question: question, Recommendation: recommendation, IfUnanswered: ifUnanswered}
+		if replaces == "" {
+			return b.Append(ask)
+		}
+		if refused := d.stillOpen(b, evs, replaces); refused != nil {
+			refused.Next = "record it without --replaces, or name the open ask it replaces; " + d.run("status") + " lists the open asks"
+			return refused
+		}
+		return b.Append(ask, batch.Event{At: d.now(), Kind: batch.KindAnswer, Ref: replaces, Took: "moot", Source: "replaced by " + id})
 	})
+	return id, err
+}
+
+// Restate records what an open ask waits on now, once its session closed or
+// its change merged and the ask still holds something, such as a production
+// write or a message: status and the owner's page then read it as standing
+// again from now, in these words.
+func (d *Driver) Restate(ask, ifUnanswered string) error {
+	if strings.TrimSpace(ifUnanswered) == "" {
+		return &Refused{Reason: "a restate needs --if-unanswered: what the ask waits on now, as the owner reads it"}
+	}
+	b, err := d.Batch()
+	if err != nil {
+		return err
+	}
+	return b.Locked(func(evs []batch.Event) error {
+		if refused := d.stillOpen(b, evs, ask); refused != nil {
+			return refused
+		}
+		return b.Append(batch.Event{At: d.now(), Kind: batch.KindRestate, Ref: ask, IfUnanswered: ifUnanswered})
+	})
+}
+
+// stillOpen refuses a record about an ask that is not open: one never asked,
+// or one already answered, which waits on nothing and is replaced by nothing.
+func (d *Driver) stillOpen(b *batch.Batch, evs []batch.Event, ask string) *Refused {
+	_, asks, _ := batch.Records(evs)
+	for _, a := range asks {
+		if a.ID != ask {
+			continue
+		}
+		if a.Answer == nil {
+			return nil
+		}
+		at := a.Answer.At.In(b.Zone()).Format("15:04")
+		if a.Answer.Took == "moot" {
+			return &Refused{Reason: fmt.Sprintf("%s was recorded moot at %s (%s), so it is no longer open", ask, at, clip(a.Answer.Source, 120))}
+		}
+		return &Refused{Reason: fmt.Sprintf("%s was answered at %s (%s), so it is no longer open", ask, at, a.Answer.Took)}
+	}
+	return &Refused{Reason: fmt.Sprintf("no ask %s in batch %s", ask, b.Meta.Name), Next: d.run("status") + " lists the open asks"}
 }
 
 var tookWords = map[string]bool{"recommended": true, "amended": true, "delegated": true, "moot": true}
@@ -276,4 +334,66 @@ func (d *Driver) Log(since time.Time) (*batch.Batch, []batch.Event, error) {
 		}
 	}
 	return b, out, nil
+}
+
+// Overtaken is what happened to an open ask's session after the ask last
+// stood, as asked or restated: the session closed, or its newest pull
+// request merged. Either is a reason to judge the ask again and never an
+// answer, since an ask outlives both while it still holds a production write
+// or a message, and only its driver knows whether the owner answered it in
+// chat meanwhile.
+type Overtaken struct {
+	Closed   time.Time       // when its session closed; zero unless after the ask stood
+	PR       *progress.PRRef // its newest pull request, when that merged after the ask stood
+	MergedAt time.Time
+	// Next is what a driver runs about it, as status says: record it moot,
+	// or restate what it still waits on.
+	Next string
+}
+
+// None says nothing overtook the ask.
+func (o Overtaken) None() bool { return o.Closed.IsZero() && o.PR == nil }
+
+// overtakenOf is what overtook a, read from its session's member and, when
+// read, its newest pull request and that pull request's state.
+func overtakenOf(a *batch.Ask, m *batch.Member, ref *progress.PRRef, pr *progress.PR) Overtaken {
+	var o Overtaken
+	stood := a.Stood()
+	if m != nil && m.Closed && m.ClosedAt.After(stood) {
+		o.Closed = m.ClosedAt
+	}
+	if ref != nil && pr != nil && pr.State == "MERGED" && pr.MergedAt.After(stood) {
+		o.PR, o.MergedAt = ref, pr.MergedAt
+	}
+	return o
+}
+
+// rejudge is what a driver runs about an ask something overtook: an answer
+// the owner gave meanwhile is theirs, one that waits on nothing now is moot,
+// and one that still holds something is restated.
+func (d *Driver) rejudge(ask string) string {
+	return fmt.Sprintf("record any answer the owner gave meanwhile; if it waits on nothing now, %s; if it still holds something, such as a production write or a message, %s",
+		d.run("record", "answer", ask, "--took", "moot", "--source", "…"), d.run("record", "restate", ask, "--if-unanswered", "…"))
+}
+
+// stoodWord is how an ask came to stand as it does: asked, or restated.
+func stoodWord(a *batch.Ask) string {
+	if a.Restated != nil {
+		return "restated"
+	}
+	return "asked"
+}
+
+// overtakenWords is what overtook an ask about session, for a driver or the
+// owner to read: "S1 closed at 02:00 and #11154 merged at 01:30". at prints
+// a time.
+func overtakenWords(o Overtaken, session string, at func(time.Time) string) string {
+	var parts []string
+	if !o.Closed.IsZero() {
+		parts = append(parts, session+" closed "+at(o.Closed))
+	}
+	if o.PR != nil {
+		parts = append(parts, fmt.Sprintf("#%d merged %s", o.PR.Number, at(o.MergedAt)))
+	}
+	return strings.Join(parts, " and ")
 }

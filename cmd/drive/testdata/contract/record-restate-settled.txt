@@ -1,0 +1,5 @@
+$ drive record restate A1 --if-unanswered it waits
+exit 1
+--- stdout
+--- stderr
+drive: error: A1 was recorded moot at 02:00 (replaced by A2), so it is no longer open

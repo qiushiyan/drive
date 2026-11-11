@@ -22,6 +22,9 @@ Commands:
                                happens unanswered.
   answer --source=SOURCE --took=TOOK <ask> [<line> ...]
                                Record the owner's answer to an ask.
+  restate --if-unanswered=IF-UNANSWERED <ask>
+                               Record what an open ask waits on now, once its session closed or its
+                               change merged.
   note <text> ...              Record a note, such as the plan, for the run after a reset to read.
   goal <session> <text> ...    Record what a session sets out to do, in plain terms for the owner.
 

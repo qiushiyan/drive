@@ -11,6 +11,8 @@ Flags:
                              What you recommend.
       --if-unanswered=IF-UNANSWERED
                              What happens while nobody answers (required).
+      --replaces=ASK         The open ask this question replaces, such as A4, recorded moot in the
+                             same write.
 
 Inherited flags:
   -h, --help                 Show context-sensitive help.

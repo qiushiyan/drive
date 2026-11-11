@@ -1,0 +1,6 @@
+$ drive record ask S1 --question Again? --if-unanswered it waits --replaces A1
+exit 1
+--- stdout
+--- stderr
+drive: error: A1 was recorded moot at 02:00 (replaced by A2), so it is no longer open
+next: record it without --replaces, or name the open ask it replaces; drive --batch b8 status lists the open asks

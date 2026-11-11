@@ -146,10 +146,10 @@ func pageBatch(t *testing.T) (*rig, *pageProgress) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := r.d.Ask("P", "Merge before the baseline?", "wait for it", "P stays parked"); err != nil {
+	if _, err := r.d.Ask("P", "Merge before the baseline?", "wait for it", "P stays parked", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.d.Ask("", "Release tonight?", "", "nothing releases"); err != nil {
+	if _, err := r.d.Ask("", "Release tonight?", "", "nothing releases", ""); err != nil {
 		t.Fatal(err)
 	}
 	return r, prog
@@ -507,7 +507,7 @@ func TestThePageShowsEveryDriversBatch(t *testing.T) {
 	r, _ := pageBatch(t)
 	it := newDriverBatch(t, r, "itell-2026-10-28", "itell")
 	adopted(t, r, "P")
-	if _, err := r.d.Ask("P", "Take the payment milestone first?", "yes", "it waits"); err != nil {
+	if _, err := r.d.Ask("P", "Take the payment milestone first?", "yes", "it waits", ""); err != nil {
 		t.Fatal(err)
 	}
 	r.d.DriverName = ""
@@ -915,7 +915,7 @@ func TestEveryLinkOnThePageLandsInItsBatch(t *testing.T) {
 	r, _ := pageBatch(t)
 	newDriverBatch(t, r, "itell-2026-10-28", "itell")
 	adopted(t, r, "P")
-	if _, err := r.d.Ask("P", "Take the payment milestone first?", "yes", "it waits"); err != nil {
+	if _, err := r.d.Ask("P", "Take the payment milestone first?", "yes", "it waits", ""); err != nil {
 		t.Fatal(err)
 	}
 	r.d.DriverName = ""

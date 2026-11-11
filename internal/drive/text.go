@@ -312,7 +312,15 @@ func (st *Status) Text(now time.Time) string {
 		b.WriteString(l + "\n")
 	}
 	for _, q := range st.Asks {
-		fmt.Fprintf(&b, "open ask %s for %s, %s: %s — unanswered: %s\n", q.ID, orDash(q.Session), ago(now.Sub(q.At)), q.Question, q.IfUnanswered)
+		asked := ago(now.Sub(q.At))
+		if q.Restated != nil {
+			asked += ", restated " + ago(now.Sub(q.Restated.At))
+		}
+		fmt.Fprintf(&b, "open ask %s for %s, %s: %s — unanswered: %s\n", q.ID, orDash(q.Session), asked, q.Question, q.IfUnanswered)
+		if o, ok := st.Overtaken[q.ID]; ok {
+			at := func(t time.Time) string { return "at " + clock(t, st.Zone, now) }
+			fmt.Fprintf(&b, "  since %s was %s: %s; %s\n", q.ID, stoodWord(q), overtakenWords(o, q.Session, at), o.Next)
+		}
 	}
 	return b.String()
 }
@@ -464,7 +472,13 @@ func describe(e batch.Event, zone *time.Location) string {
 	case batch.KindGrant:
 		return e.ID + " " + e.Scope + " — " + e.Source
 	case batch.KindAsk:
-		return e.ID + " " + e.Question + " (recommends: " + e.Recommendation + "; unanswered: " + e.IfUnanswered + ")"
+		replaces := ""
+		if e.Ref != "" {
+			replaces = "; replaces " + e.Ref
+		}
+		return e.ID + " " + e.Question + " (recommends: " + e.Recommendation + "; unanswered: " + e.IfUnanswered + replaces + ")"
+	case batch.KindRestate:
+		return e.Ref + " unanswered: " + e.IfUnanswered
 	case batch.KindAnswer:
 		ex := ""
 		if e.Explained {

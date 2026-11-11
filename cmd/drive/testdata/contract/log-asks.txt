@@ -1,0 +1,13 @@
+$ drive log
+exit 0
+--- stdout
+02:00  batch                 started
+02:00  adopt        S1       block a00001, account acct@example.com, $ROOT/work
+02:00  send-intent  S1       recap
+02:00  send         S1       arrived: recap (the notice attached)
+02:00  ask          S1       A1 Finish the reply before web search? (recommends: yes; unanswered: the merge waits)
+02:00  ask          S1       A2 Stop the reply at once for web search? (recommends: yes; unanswered: the merge waits; replaces A1)
+02:00  answer                A1 moot — replaced by A2
+03:00  close        S1       
+03:01  restate               A2 unanswered: The repair script is built; the production run waits for your word.
+--- stderr

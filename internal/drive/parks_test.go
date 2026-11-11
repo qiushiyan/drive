@@ -78,7 +78,7 @@ func TestAParkRefusalLeadsWithTheWaitTheDriverChecksItself(t *testing.T) {
 		t.Fatalf("what is missing is named in the same order: %s", reason)
 	}
 	// The same ways under status's table, for a park an answered ask left.
-	id, err := r.d.Ask("S3", "Fold the fix into this branch?", "no", "S3 stays parked")
+	id, err := r.d.Ask("S3", "Fold the fix into this branch?", "no", "S3 stays parked", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestAParkRefusalLeadsWithTheWaitTheDriverChecksItself(t *testing.T) {
 func TestAParkEndsOnAnAskOrATime(t *testing.T) {
 	r := newRig(t, "webhook")
 	adopted(t, r, "S5")
-	if _, err := r.d.Ask("S5", "Start the build without the two prompt PRs?", "yes", "S5 stays parked"); err != nil {
+	if _, err := r.d.Ask("S5", "Start the build without the two prompt PRs?", "yes", "S5 stays parked", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.d.Park(r.view("S5"), "waits for your call on the prompt PRs", time.Time{}); err != nil {
@@ -184,7 +184,7 @@ func TestAnAnswerWithNoStepLeavesAParkToSettle(t *testing.T) {
 	r := newRig(t, "webhook")
 	l := hook(t, r)
 	adopted(t, r, "S6")
-	id, err := r.d.Ask("S6", "Re-trigger the stuck Codex review?", "yes", "the review stays stuck")
+	id, err := r.d.Ask("S6", "Re-trigger the stuck Codex review?", "yes", "the review stays stuck", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestParksWithTheSameNeedShareALine(t *testing.T) {
 	l := hook(t, r)
 	for _, label := range []string{"O1", "S6", "S8"} {
 		adopted(t, r, label)
-		id, err := r.d.Ask(label, "Leave "+label+" as it is?", "yes", label+" stays parked")
+		id, err := r.d.Ask(label, "Leave "+label+" as it is?", "yes", label+" stays parked", "")
 		if err != nil {
 			t.Fatal(err)
 		}

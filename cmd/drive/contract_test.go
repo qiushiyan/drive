@@ -396,6 +396,33 @@ func TestContractCloseCleanup(t *testing.T) {
 	c.run("close-cleanup", "close", view(t, out), "--cleanup")
 }
 
+// An ask that replaces another records it moot in the same write, an ask
+// whose session closed after it gets a "since" line with what to run, and
+// a restatement stands it again from then.
+func TestContractAsksOvertaken(t *testing.T) {
+	c := newContract(t)
+	s := c.w.Add("S1")
+	s.Busy("land it")
+	s.Done("Merged. The production repair waits for the owner.")
+	cli(c.app, "batch", "new", "b8")
+	_, out, _ := cli(c.app, "read", s.Block[len(s.Block)-6:])
+	cli(c.app, "send", view(t, out), "--as", "S1", "recap")
+	cli(c.app, "record", "ask", "S1", "--question", "Finish the reply before web search?", "--recommendation", "yes", "--if-unanswered", "the merge waits")
+	c.run("record-ask-replaces", "record", "ask", "S1", "--question", "Stop the reply at once for web search?", "--recommendation", "yes", "--if-unanswered", "the merge waits", "--replaces", "A1")
+	c.run("record-ask-replaces-settled", "record", "ask", "S1", "--question", "Again?", "--if-unanswered", "it waits", "--replaces", "A1")
+	c.run("record-ask-replaces-unknown", "record", "ask", "S1", "--question", "Again?", "--if-unanswered", "it waits", "--replaces", "A7")
+	c.w.Clock.Sleep(time.Hour)
+	_, out, _ = cli(c.app, "read", "S1")
+	cli(c.app, "close", view(t, out))
+	c.run("status-ask-overtaken", "status", "--quick")
+	c.run("status-ask-overtaken-json", "status", "--quick", "--json")
+	c.w.Clock.Sleep(time.Minute)
+	c.run("record-restate", "record", "restate", "A2", "--if-unanswered", "The repair script is built; the production run waits for your word.")
+	c.run("record-restate-settled", "record", "restate", "A1", "--if-unanswered", "it waits")
+	c.run("status-ask-restated", "status", "--quick")
+	c.run("log-asks", "log")
+}
+
 // A snippet whose one line starts a skill that runs only when typed, sent
 // with words after it, as the skill's planlab page teaches the closeout: the
 // line is typed and the words attached.

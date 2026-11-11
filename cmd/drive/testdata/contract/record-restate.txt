@@ -1,0 +1,5 @@
+$ drive record restate A2 --if-unanswered The repair script is built; the production run waits for your word.
+exit 0
+--- stdout
+recorded restate A2
+--- stderr

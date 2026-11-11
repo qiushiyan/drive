@@ -71,8 +71,9 @@ type Card struct {
 	Labels  []progress.Label // every stage, with its newest step's time
 	Branch  string
 	PRs     []PRView
-	Asks    []string // the open asks that name it
-	Unread  string   // what of it could not be read
+	PR      *progress.PRRef // the newest it opened or named, whose merge may overtake an ask about it
+	Asks    []string        // the open asks that name it
+	Unread  string          // what of it could not be read
 	// History is what the record holds of it for its owner, oldest first:
 	// its opens, the steps sent, prompts answered, parks and close, the
 	// asks put about it and their answers, the driver's notes on it, and
@@ -135,8 +136,8 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 		if batch.Acted(e) {
 			ov.Acted = &e
 		}
-		if e.Kind == batch.KindAnswer {
-			// An answer names its ask; the ask names the session.
+		if e.Kind == batch.KindAnswer || e.Kind == batch.KindRestate {
+			// An answer or a restate names its ask; the ask names the session.
 			for _, a := range asks {
 				if a.ID == e.Ref {
 					e.Session = a.Session
@@ -179,7 +180,7 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 			}
 		}
 		if r := c.Row; r != nil {
-			c.Stage, c.StageAt, c.Labels, c.Branch, c.PRs = r.Stage, r.StageAt, r.Labels, r.Branch, views(r.PRs)
+			c.Stage, c.StageAt, c.Labels, c.Branch, c.PRs, c.PR = r.Stage, r.StageAt, r.Labels, r.Branch, views(r.PRs), r.PRRef
 			switch {
 			case r.Error != "":
 				c.Unread = r.Error
@@ -194,7 +195,7 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 				if s, err := d.Progress.Steps(m.SID); err != nil {
 					cards[i].Unread = "its stage and pull requests (" + firstLine(err.Error()) + ")"
 				} else {
-					cards[i].Stage, cards[i].StageAt, cards[i].Labels, cards[i].Branch, cards[i].PRs = s.Stage, s.StageAt, s.Labels, s.Branch, views(s.PRs)
+					cards[i].Stage, cards[i].StageAt, cards[i].Labels, cards[i].Branch, cards[i].PRs, cards[i].PR = s.Stage, s.StageAt, s.Labels, s.Branch, views(s.PRs), s.PR
 				}
 			})
 		}
@@ -230,7 +231,7 @@ func forOwner(e batch.Event) bool {
 		return e.SID != "" // the open that started its Claude Code, not the block opening
 	case batch.KindSend:
 		return e.Outcome != ""
-	case batch.KindAdopt, batch.KindRespond, batch.KindPark, batch.KindClose, batch.KindAsk, batch.KindAnswer,
+	case batch.KindAdopt, batch.KindRespond, batch.KindPark, batch.KindClose, batch.KindAsk, batch.KindAnswer, batch.KindRestate,
 		batch.KindNote, batch.KindWake, batch.KindFailure, batch.KindGoal:
 		return true
 	}

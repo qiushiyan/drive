@@ -1,0 +1,6 @@
+$ drive record ask S1 --question Again? --if-unanswered it waits --replaces A7
+exit 1
+--- stdout
+--- stderr
+drive: error: no ask A7 in batch b8
+next: record it without --replaces, or name the open ask it replaces; drive --batch b8 status lists the open asks

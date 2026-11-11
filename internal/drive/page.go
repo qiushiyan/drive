@@ -161,6 +161,7 @@ type askView struct {
 	Question       string
 	Recommendation string
 	IfUnanswered   string
+	Since          []string // what happened to its session after it was asked or restated
 }
 
 // waitView is a session waiting on its driver, as All lists it beside
@@ -298,17 +299,50 @@ func askOf(ov *Overview, a *batch.Ask, now time.Time) askView {
 	name := ov.Batch.Name
 	av := askView{ID: a.ID, Anchor: name + "/ask-" + a.ID, Batch: name, Session: a.Session, Asked: "asked " + when(a.At, now, ov.Zone),
 		Question: a.Question, Recommendation: a.Recommendation, IfUnanswered: a.IfUnanswered}
+	if a.Restated != nil {
+		av.Asked += ", restated " + when(a.Restated.At, now, ov.Zone)
+	}
 	if a.Session != "" {
 		av.Card = href(Anchor(name, a.Session))
 		for _, g := range ov.Groups {
 			for _, c := range g.Cards {
 				if c.Member.Label == a.Session {
 					av.Goal = c.Member.Goal
+					av.Since = sinceTheAsk(ov, a, c, now)
 				}
 			}
 		}
 	}
 	return av
+}
+
+// sinceTheAsk is what the record and the read show happened to an ask's
+// session after the ask was asked or restated: its close, and its newest
+// pull request's merge. The ask stays in the words it was written in, so
+// the owner can tell one that still waits on something from one that does
+// not.
+func sinceTheAsk(ov *Overview, a *batch.Ask, c Card, now time.Time) []string {
+	var pr *progress.PR
+	if c.PR != nil {
+		for _, p := range c.PRs {
+			if keyOf(p.PRRef) == keyOf(*c.PR) {
+				pr = p.PR
+			}
+		}
+	}
+	o := overtakenOf(a, c.Member, c.PR, pr)
+	if o.None() {
+		return nil
+	}
+	at := func(t time.Time) string { return when(t, now, ov.Zone) }
+	var out []string
+	if !o.Closed.IsZero() {
+		out = append(out, "Since it was "+stoodWord(a)+": "+a.Session+" closed "+at(o.Closed)+".")
+	}
+	if o.PR != nil {
+		out = append(out, "Since it was "+stoodWord(a)+": "+prName(*o.PR)+" merged "+at(o.MergedAt)+".")
+	}
+	return out
 }
 
 func batchOf(ov *Overview, title string, now time.Time) batchView {
@@ -786,6 +820,11 @@ func entryOf(e batch.Event, asks map[string]*batch.Event, now time.Time, zone *t
 		v.Kind, v.Head = "done", "Closed"
 	case batch.KindAsk:
 		v.Kind, v.Head, v.Text = "you", "Asked "+e.ID+":", e.Question
+		if e.Ref != "" {
+			v.Head = "Asked " + e.ID + ", replacing " + e.Ref + ":"
+		}
+	case batch.KindRestate:
+		v.Kind, v.Head, v.Text = "you", e.Ref+" still waits:", e.IfUnanswered
 	case batch.KindAnswer:
 		head := answerHead(e)
 		v.Kind, v.Head, v.Text = "you", strings.ToUpper(head[:1])+head[1:], e.Source

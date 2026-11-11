@@ -1,0 +1,31 @@
+Usage: drive record restate --if-unanswered=IF-UNANSWERED <ask> [flags]
+
+Record what an open ask waits on now, once its session closed or its change merged.
+
+Status gives an open ask a "since" line once its session closed or its newest
+pull request merged after it was asked. One that still holds something, such
+as a production write or a message, is restated: status drops the line, and
+the owner's page shows the ask as waiting on these words from now. One that
+holds nothing is recorded moot with record answer instead.
+
+Arguments:
+  <ask>                The open ask, such as A3.
+
+Flags:
+      --if-unanswered=IF-UNANSWERED
+                       What happens while nobody answers, as it stands now (required).
+
+Inherited flags:
+  -h, --help           Show context-sensitive help.
+      --batch=NAME     Act in this batch, as drive prints its name, instead of the driver's current
+                       one. It may stand anywhere on the line.
+      --driver=NAME    Act in the batch this driver drives now; a chat driver's name is its
+                       webhook's. It may stand anywhere on the line.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; next: relaunches it on another account, or says to tell the
+       owner

@@ -1,0 +1,31 @@
+$ drive status --quick --json
+exit 0
+--- stdout
+{
+  "batch": {
+    "name": "b8",
+    "started": "2026-10-23T01:00:00Z",
+    "wake": "none"
+  },
+  "sessions": [],
+  "closed": 1,
+  "others": [],
+  "holds": [],
+  "open_asks": [
+    {
+      "id": "A2",
+      "session": "S1",
+      "at": "2026-10-23T01:00:03Z",
+      "question": "Stop the reply at once for web search?",
+      "recommendation": "yes",
+      "if_unanswered": "the merge waits",
+      "overtaken": {
+        "closed_at": "2026-10-23T02:00:03Z",
+        "next": "record any answer the owner gave meanwhile; if it waits on nothing now, drive --batch b8 record answer A2 --took moot --source '…'; if it still holds something, such as a production write or a message, drive --batch b8 record restate A2 --if-unanswered '…'"
+      }
+    }
+  ],
+  "grants": [],
+  "in_flight": []
+}
+--- stderr

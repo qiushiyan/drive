@@ -76,12 +76,23 @@ type prDoc struct {
 }
 
 type askDoc struct {
-	ID             string    `json:"id"`
-	Session        string    `json:"session,omitempty"`
-	At             time.Time `json:"at"`
-	Question       string    `json:"question"`
-	Recommendation string    `json:"recommendation,omitempty"`
-	IfUnanswered   string    `json:"if_unanswered"`
+	ID             string        `json:"id"`
+	Session        string        `json:"session,omitempty"`
+	At             time.Time     `json:"at"`
+	Question       string        `json:"question"`
+	Recommendation string        `json:"recommendation,omitempty"`
+	IfUnanswered   string        `json:"if_unanswered"`
+	RestatedAt     time.Time     `json:"restated_at,omitzero"`
+	Overtaken      *overtakenDoc `json:"overtaken,omitempty"`
+}
+
+// overtakenDoc is what happened to an open ask's session after it last stood.
+type overtakenDoc struct {
+	ClosedAt time.Time `json:"closed_at,omitzero"`
+	PR       int       `json:"pr,omitempty"`
+	Repo     string    `json:"repo,omitempty"`
+	MergedAt time.Time `json:"merged_at,omitzero"`
+	Next     string    `json:"next"`
 }
 
 type grantDoc struct {
@@ -123,7 +134,17 @@ func (st *Status) JSON() any {
 		doc.Batch = &batchDoc{Name: m.Name, Driver: batch.DriverOf(*m), Started: m.Started, Wake: m.Wake, Webhook: m.Webhook, RexSession: m.RexSession, TZ: m.TZ}
 	}
 	for _, q := range st.Asks {
-		doc.OpenAsks = append(doc.OpenAsks, askDoc{ID: q.ID, Session: q.Session, At: q.At, Question: q.Question, Recommendation: q.Recommendation, IfUnanswered: q.IfUnanswered})
+		a := askDoc{ID: q.ID, Session: q.Session, At: q.At, Question: q.Question, Recommendation: q.Recommendation, IfUnanswered: q.IfUnanswered}
+		if q.Restated != nil {
+			a.RestatedAt = q.Restated.At
+		}
+		if o, ok := st.Overtaken[q.ID]; ok {
+			a.Overtaken = &overtakenDoc{ClosedAt: o.Closed, MergedAt: o.MergedAt, Next: o.Next}
+			if o.PR != nil {
+				a.Overtaken.PR, a.Overtaken.Repo = o.PR.Number, o.PR.Repo
+			}
+		}
+		doc.OpenAsks = append(doc.OpenAsks, a)
 	}
 	for _, g := range st.Grants {
 		doc.Grants = append(doc.Grants, grantDoc{ID: g.ID, At: g.At, Scope: g.Scope, Source: g.Source})

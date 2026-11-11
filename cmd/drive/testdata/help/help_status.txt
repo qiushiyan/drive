@@ -43,6 +43,9 @@ Columns:
   line with what to run; the watchdog wakes you about each park once.
   "left by" lines name what a closed session left that stays, and why; each is a fact
   to know, not a question for the owner. Run without --quick.
+  An open ask's "since" line says its session closed, or its newest pull request merged
+  (read without --quick), after the ask was asked or restated, with what to run: an ask
+  outlives both only while it still holds something, and you judge which.
 
 JSON:
   batch       name, driver (left out for a driver of no name), started, wake, webhook,
@@ -59,7 +62,10 @@ JSON:
               session that is gone, the open that brings it back), jobs (started, command)
   closed      the batch's sessions closed since
   holds       a line per hold, as the table prints it
-  open_asks   id, session, at, question, recommendation, if_unanswered
+  open_asks   id, session, at, question, recommendation, if_unanswered (as restated last),
+              restated_at (left out until it is), overtaken (the "since" line, left out when
+              there is none: closed_at, pr, repo, merged_at, each left out when it did not
+              happen, and next)
   grants      id, at, scope, source
   in_flight   actions admitted with no outcome yet: kind, session, at, text, driver_pid (left
               out once that driver has gone)

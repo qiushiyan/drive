@@ -1,0 +1,6 @@
+$ drive record ask S1 --question Stop the reply at once for web search? --recommendation yes --if-unanswered the merge waits --replaces A1
+exit 0
+--- stdout
+recorded ask A2
+recorded A1 moot, replaced by A2
+--- stderr

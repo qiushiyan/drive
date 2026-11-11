@@ -3,6 +3,7 @@ package drive
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -240,18 +241,22 @@ type Wake struct {
 
 // Status is the batch at a glance.
 type Status struct {
-	Batch    *batch.Meta
-	Dir      string // the batch's directory
-	Zone     *time.Location
-	Rows     []Row
-	Others   []Row // Claude sessions in Rex outside the batch
-	Closed   int   // sessions of the batch closed since
-	Holds    []string
-	Asks     []*batch.Ask
-	Grants   []batch.Event
-	InFlight []InFlight
-	NoGoal   string // which open sessions have no goal recorded, and how to record one
-	Unheard  string // that the batch's driver is not answering its wakes, and what is held for it
+	Batch  *batch.Meta
+	Dir    string // the batch's directory
+	Zone   *time.Location
+	Rows   []Row
+	Others []Row // Claude sessions in Rex outside the batch
+	Closed int   // sessions of the batch closed since
+	Holds  []string
+	Asks   []*batch.Ask
+	// Overtaken is, by ask, what happened to an open ask's session after
+	// the ask last stood: its close, and its newest pull request's merge
+	// when progress was read.
+	Overtaken map[string]Overtaken
+	Grants    []batch.Event
+	InFlight  []InFlight
+	NoGoal    string // which open sessions have no goal recorded, and how to record one
+	Unheard   string // that the batch's driver is not answering its wakes, and what is held for it
 	// TimersHeld are the timers due while the driver is not answering, each
 	// still on the books.
 	TimersHeld []string
@@ -359,9 +364,23 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 	}
 	grants, asks, _ := batch.Records(evs)
 	out.Grants = grants
+	out.Overtaken = map[string]Overtaken{}
 	for _, a := range asks {
-		if a.Answer == nil {
-			out.Asks = append(out.Asks, a)
+		if a.Answer != nil {
+			continue
+		}
+		out.Asks = append(out.Asks, a)
+		if a.Session == "" {
+			continue
+		}
+		var ref *progress.PRRef
+		var pr *progress.PR
+		if i := slices.IndexFunc(out.Rows, func(r Row) bool { return r.Label == a.Session }); i >= 0 {
+			ref, pr = out.Rows[i].PRRef, out.Rows[i].PR
+		}
+		if o := overtakenOf(a, batch.Find(members, a.Session), ref, pr); !o.None() {
+			o.Next = d.rejudge(a.ID)
+			out.Overtaken[a.ID] = o
 		}
 	}
 	out.InFlight = d.inFlight(evs, members)

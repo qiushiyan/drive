@@ -925,12 +925,12 @@ func TestRecordsAndMetrics(t *testing.T) {
 	if err != nil || g != "G1" {
 		t.Fatalf("grant: %s %v", g, err)
 	}
-	a, _ := r.d.Ask("T1", "Blind-judge the gate pages?", "a fresh Fable session judges them", "T1 waits before merge")
+	a, _ := r.d.Ask("T1", "Blind-judge the gate pages?", "a fresh Fable session judges them", "T1 waits before merge", "")
 	r.w.Clock.Sleep(13 * time.Minute)
 	if _, err := r.d.Answer(a, `"ask a fresh Fable session"`, "delegated", true); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = r.d.Ask("T1", "Phase C boxes?", "no", "nothing waits")
+	_, _ = r.d.Ask("T1", "Phase C boxes?", "no", "nothing waits", "")
 
 	// T1's first wake is handled by re-arming its watch, which wakes the
 	// driver again; its last wake has nothing after it. Its /compact arrives

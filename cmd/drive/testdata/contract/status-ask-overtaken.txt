@@ -1,0 +1,8 @@
+$ drive status --quick
+exit 0
+--- stdout
+batch b8 · wakes: none · Rex session - · times Local (BST, UTC+01:00)
+no open sessions in this batch (1 closed)
+open ask A2 for S1, 1h00m: Stop the reply at once for web search? — unanswered: the merge waits
+  since A2 was asked: S1 closed at 03:00; record any answer the owner gave meanwhile; if it waits on nothing now, drive --batch b8 record answer A2 --took moot --source '…'; if it still holds something, such as a production write or a message, drive --batch b8 record restate A2 --if-unanswered '…'
+--- stderr

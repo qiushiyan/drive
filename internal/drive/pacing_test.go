@@ -974,7 +974,7 @@ func TestTheWatchdogPostsOnlyWhatNeedsADriver(t *testing.T) {
 		t.Fatalf("a parked batch costs nothing: %+v", reports[0])
 	}
 	// An open ask gets rechecked, every six hours at most, since no session wakes for it.
-	if _, err := r.d.Ask("S1", "Take the lab host down?", "yes", "it keeps running"); err != nil {
+	if _, err := r.d.Ask("S1", "Take the lab host down?", "yes", "it keeps running", ""); err != nil {
 		t.Fatal(err)
 	}
 	if reports, _ = r.d.DueAll(); l.count() != 0 {
@@ -1055,7 +1055,7 @@ func TestAFailedNoticeIsNotTold(t *testing.T) {
 func TestAnAnswerCanCarryItsStep(t *testing.T) {
 	r := newRig(t, "webhook")
 	c := adopted(t, r, "T1")
-	id, err := r.d.Ask("T1", "Count run 5 as a pass?", "yes", "T1 stays parked")
+	id, err := r.d.Ask("T1", "Count run 5 as a pass?", "yes", "T1 stays parked", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1089,7 +1089,7 @@ func TestAnAnswerCanCarryItsStep(t *testing.T) {
 func TestTheAnswerIsOnRecordBeforeTheStepIsTyped(t *testing.T) {
 	r := newRig(t, "webhook")
 	c := adopted(t, r, "T1")
-	id, _ := r.d.Ask("T1", "Go on?", "yes", "it waits")
+	id, _ := r.d.Ask("T1", "Go on?", "yes", "it waits", "")
 	gate := make(chan struct{})
 	c.Edit(func(c *testkit.Claude) { c.TypeGate = gate })
 	done := make(chan error, 1)
@@ -1120,7 +1120,7 @@ func TestTheAnswerIsOnRecordBeforeTheStepIsTyped(t *testing.T) {
 func TestARetryOfAnAnswerSaysWhatBecameOfItsStep(t *testing.T) {
 	r := newRig(t, "webhook")
 	c := adopted(t, r, "T1")
-	id, _ := r.d.Ask("T1", "Go on?", "yes", "it waits")
+	id, _ := r.d.Ask("T1", "Go on?", "yes", "it waits", "")
 	gate := make(chan struct{})
 	c.Edit(func(c *testkit.Claude) { c.TypeGate = gate })
 	done := make(chan error, 1)
@@ -1148,7 +1148,7 @@ func TestARetryOfAnAnswerSaysWhatBecameOfItsStep(t *testing.T) {
 		t.Fatalf("settled, it says how it went: %v", err)
 	}
 	// An answer recorded with no step says only that.
-	alone, _ := r.d.Ask("T1", "Again?", "no", "it waits")
+	alone, _ := r.d.Ask("T1", "Again?", "no", "it waits", "")
 	if _, err := r.d.Answer(alone, "no", "recommended", false); err != nil {
 		t.Fatal(err)
 	}
@@ -1165,7 +1165,7 @@ func TestARetryOfAnAnswerSaysWhatBecameOfItsStep(t *testing.T) {
 func TestARefusedStepRecordsNoAnswer(t *testing.T) {
 	r := newRig(t, "webhook")
 	c := adopted(t, r, "T1")
-	id, _ := r.d.Ask("T1", "Go on?", "yes", "it waits")
+	id, _ := r.d.Ask("T1", "Go on?", "yes", "it waits", "")
 	c.Busy("still at work")
 	_, got, err := r.d.AnswerAndSend(id, "Qiushi in chat: yes, go on", "recommended", true, drive.Step{Line: "go on"}, drive.SendOptions{})
 	if !isRefused(err) || got != "" {
@@ -1179,13 +1179,13 @@ func TestARefusedStepRecordsNoAnswer(t *testing.T) {
 	if msg := err.Error(); !strings.Contains(msg, "T1 is working") || !strings.Contains(msg, "A1 is not recorded") || !strings.Contains(msg, record) {
 		t.Fatalf("the refusal says the answer waits, and how to record it:\n%s", msg)
 	}
-	batchAsk, _ := r.d.Ask("", "Release tonight?", "no", "it waits")
+	batchAsk, _ := r.d.Ask("", "Release tonight?", "no", "it waits", "")
 	_, _, err = r.d.AnswerAndSend(batchAsk, "no, not tonight", "recommended", false, drive.Step{Line: "go on"}, drive.SendOptions{})
 	if !isRefused(err) || !strings.Contains(err.Error(), "names no session") || !strings.Contains(err.Error(), "'--source=no, not tonight'") {
 		t.Fatalf("an ask about the batch has no session to send to, and its answer keeps the owner's words: %v", err)
 	}
 	// A session that cannot be read refuses the same way.
-	gone, _ := r.d.Ask("T1", "Close it?", "yes", "it waits")
+	gone, _ := r.d.Ask("T1", "Close it?", "yes", "it waits", "")
 	r.w.Close(c.Block)
 	_, _, err = r.d.AnswerAndSend(gone, "yes", "recommended", false, drive.Step{Line: "go on"}, drive.SendOptions{})
 	if !isRefused(err) || !strings.Contains(err.Error(), gone+" is not recorded") || !strings.Contains(err.Error(), "record answer "+gone+" --took recommended --source=yes") {

@@ -1,0 +1,7 @@
+$ drive status --quick
+exit 0
+--- stdout
+batch b8 · wakes: none · Rex session - · times Local (BST, UTC+01:00)
+no open sessions in this batch (1 closed)
+open ask A2 for S1, 1h01m, restated <1m: Stop the reply at once for web search? — unanswered: The repair script is built; the production run waits for your word.
+--- stderr
