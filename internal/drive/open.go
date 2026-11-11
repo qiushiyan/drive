@@ -69,6 +69,10 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		}
 	}
 	slug := opt.Brief
+	if n != nil && n.opens != "" && slug != "" {
+		return nil, &Refused{Reason: fmt.Sprintf("the start note %s opens on a line, not a brief, so --brief %s would drop its line", n.path, slug),
+			Next: "open it from the note alone, or have the note's writer make its opening brief " + slug}
+	}
 	if n != nil && n.brief != "" {
 		if slug != "" && slug != n.brief {
 			return nil, &Refused{Reason: fmt.Sprintf("--brief %s and the start note's brief %s differ", slug, n.brief),
@@ -92,7 +96,10 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	}
 	var goal string
 	if opt.Goal != nil {
-		if goal, err = goalText(*opt.Goal); err != nil {
+		if goal, err = goalText(*opt.Goal); err != nil && noteGoal {
+			return nil, &Refused{Reason: fmt.Sprintf("the start note %s's goal: is not one short paragraph: %v", n.path, err),
+				Next: "a blank line ends the note's head, so have its writer put one before the note's text, or give --goal"}
+		} else if err != nil {
 			return nil, err
 		}
 		opt.Goal = &goal // as recorded, which a next: carries

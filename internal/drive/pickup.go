@@ -141,9 +141,9 @@ func readNote(path string, goalGiven bool) (*note, error) {
 		case head && key != "" && t != "" && !strings.HasPrefix(t, "#"):
 			n.set(key, t) // a value wrapped onto the next line
 			continue
-		case head && t == "":
-			key = ""
-		case head && !strings.HasPrefix(t, "#"):
+		case head && (t == "" || strings.HasPrefix(t, "#")):
+			key = "" // a blank line or a heading ends a wrapped value
+		case head:
 			head = false // the head is over at the first line of the note's own text
 		}
 		kept = append(kept, l)

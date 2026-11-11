@@ -311,7 +311,7 @@ func (d *Driver) plan(dir, config string, step Step, notice, queue bool) (*plan,
 			switch found := skill.Found(d.Cfg.Home, config, dir, name); {
 			case p.typedOnly || !queue && found:
 				p.command, p.body = typedHead(first, p.body)
-			case !found && !strings.Contains(name, ":") && p.asFile == "":
+			case !found && !strings.ContainsAny(name, ":/") && !strings.Contains(strings.Fields(first)[0][1:], "/") && p.asFile == "":
 				// A plugin's skill is not looked for, so only a plain name is said to be missing.
 				p.asFile = fmt.Sprintf("its first line names /%s, a skill this session does not have", name)
 			}

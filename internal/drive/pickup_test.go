@@ -404,3 +404,40 @@ func TestALongSkillLineIsCutOnlyAtItsDash(t *testing.T) {
 		t.Fatalf("a line naming no skill says so: %+v %v", sent, err)
 	}
 }
+
+// Round 2's regressions: a heading ends a wrapped head value, a goal that
+// swallowed the note's text is refused naming the note, --brief beside a
+// note that opens on a line is refused rather than dropping the line, and a
+// path at a step's head is not taken for a missing skill.
+func TestTheNoteHeadStopsWhereTheNoteBegins(t *testing.T) {
+	r := newRig(t, "none")
+	modelSkill(t, r, "pl-loopy-debug")
+	dir := filepath.Join(r.w.Root, "plain")
+	_ = os.MkdirAll(dir, 0o755)
+	headed := writeNote(t, r, "headed", "opens: /pl-loopy-debug 37439cd4 — titles\ngoal: No migration mistitles a page.\n## Evidence\n- 11 customer pages are mistitled.\n")
+	o, err := r.d.Open("headed", drive.Step{}, drive.OpenOptions{Dir: dir, From: headed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evs := r.events(batch.KindOpenIntent); evs[0].Goal != "No migration mistitles a page." {
+		t.Fatalf("a heading ends the goal: %q", evs[0].Goal)
+	}
+	if _, attached := firstPrompt(t, r, o.Block); !strings.Contains(attached, "## Evidence\n- 11 customer pages are mistitled.") {
+		t.Fatalf("the heading and its text stay the note's: %q", attached)
+	}
+	runon := writeNote(t, r, "runon", "opens: /pl-loopy-debug 37439cd4 — titles\ngoal: g\n"+strings.Repeat("evidence without a blank line before it ", 20)+"\n")
+	if _, err := r.d.Open("runon", drive.Step{}, drive.OpenOptions{Dir: dir, From: runon}); !isRefused(err) || !strings.Contains(err.Error(), runon) || !strings.Contains(nextOf(err), "blank line") {
+		t.Fatalf("a goal that ran into the note is refused naming the note: %v", err)
+	}
+	r.d.Pickups = &pickups{}
+	if _, err := r.d.Open("both", drive.Step{}, drive.OpenOptions{Dir: dir, From: headed, Brief: "b"}); !isRefused(err) || !strings.Contains(err.Error(), "opens on a line, not a brief") {
+		t.Fatalf("--brief beside a note's line is refused: %v", err)
+	}
+	adopted(t, r, "T1")
+	f := filepath.Join(r.w.Root, "path.md")
+	_ = os.WriteFile(f, []byte("/Users/someone/dev/app/x.ts is where the fix goes.\n\nFix it there.\n"), 0o644)
+	sent, err := r.d.Send(r.view("T1"), drive.Step{File: f}, drive.SendOptions{})
+	if err != nil || strings.Contains(sent.Text(), "does not have") {
+		t.Fatalf("a path is not a missing skill: %+v %v", sent, err)
+	}
+}
