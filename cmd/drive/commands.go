@@ -330,8 +330,9 @@ on: its park stands until its next step, and so does what was sent to it.
 With --from or --brief, drive composes the first step: the line that starts
 the session, typed as the owner would, then a line or file given beside it,
 then the note's text, then a brief's Brief:, Drift: and Pickup gate: lines.
-A session that opens on a line in the project's main checkout is told to
-work in a worktree of its own.`
+A brief's session opens in its worktree; one that opens on a line in the
+project's main checkout is told to work in a worktree of its own. So what
+you give beside the flag is only where the first turn stops.`
 }
 
 func (c *OpenCmd) HelpSections() []clikit.Section {

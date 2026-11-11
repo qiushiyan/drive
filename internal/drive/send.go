@@ -313,7 +313,7 @@ func (d *Driver) plan(dir, config string, step Step, notice, queue bool) (*plan,
 				p.command, p.body = typedHead(first, p.body)
 			case !found && !strings.Contains(name, ":") && p.asFile == "":
 				// A plugin's skill is not looked for, so only a plain name is said to be missing.
-				p.asFile = fmt.Sprintf("its first line names /%s, which no skill of the session's is called", name)
+				p.asFile = fmt.Sprintf("its first line names /%s, a skill this session does not have", name)
 			}
 		}
 	}

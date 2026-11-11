@@ -400,7 +400,7 @@ func TestALongSkillLineIsCutOnlyAtItsDash(t *testing.T) {
 	}
 	_ = os.WriteFile(f, []byte("/emil-prototype the reply card\n\nThe checklist variant.\n"), 0o644)
 	sent, err = r.d.Send(r.view("T1"), drive.Step{File: f}, drive.SendOptions{})
-	if err != nil || !strings.Contains(sent.Text(), "sent as a file since its first line names /emil-prototype, which no skill of the session's is called") {
+	if err != nil || !strings.Contains(sent.Text(), "sent as a file since its first line names /emil-prototype, a skill this session does not have") {
 		t.Fatalf("a line naming no skill says so: %+v %v", sent, err)
 	}
 }

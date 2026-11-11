@@ -159,7 +159,7 @@ func readNote(path string, goalGiven bool) (*note, error) {
 	switch {
 	case n.opens == "" && n.brief == "":
 		return nil, &Refused{Reason: fmt.Sprintf("the start note %s says nothing about how the session opens", path),
-			Next: "have the session that wrote it add, as its first line, opens: brief <slug> when a brief carries the work, or opens: <the line the owner would type to start it>"}
+			Next: "have the session that wrote it add, at its head, opens: brief <slug> when a brief carries the work, or opens: <the line the owner would type to start it>"}
 	case n.goal == "" && !goalGiven:
 		return nil, &Refused{Reason: fmt.Sprintf("the start note %s has no goal: line", path),
 			Next: "have the session that wrote it add one under its opens: line, or give the open --goal"}
