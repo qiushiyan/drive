@@ -43,9 +43,9 @@ Columns:
   line with what to run; the watchdog wakes you about each park once.
   "left by" lines name what a closed session left that stays, and why; each is a fact
   to know, not a question for the owner. Run without --quick.
-  An open ask's "since" line says its session closed, or its newest pull request merged
-  (read without --quick), after the ask was asked or restated, with what to run: an ask
-  outlives both only while it still holds something, and you judge which.
+  An open ask's "since" line names what happened after it was asked or restated: its
+  session closed, or its newest pull request merged (seen without --quick). Whether the
+  ask still holds something is yours to judge; the line gives the command for each.
 
 JSON:
   batch       name, driver (left out for a driver of no name), started, wake, webhook,

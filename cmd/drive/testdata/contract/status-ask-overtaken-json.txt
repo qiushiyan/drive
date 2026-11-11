@@ -21,7 +21,7 @@ exit 0
       "if_unanswered": "the merge waits",
       "overtaken": {
         "closed_at": "2026-10-23T02:00:03Z",
-        "next": "record any answer the owner gave meanwhile; if it waits on nothing now, drive --batch b8 record answer A2 --took moot --source '…'; if it still holds something, such as a production write or a message, drive --batch b8 record restate A2 --if-unanswered '…'"
+        "next": "if the owner answered it meanwhile, record their answer; if it waits on nothing now, drive --batch b8 record answer A2 --took moot --source '…'; if it still holds something, such as a production write or a message, drive --batch b8 record restate A2 --if-unanswered '…'"
       }
     }
   ],

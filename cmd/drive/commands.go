@@ -80,9 +80,9 @@ and the watchdog wakes you about it once.
 line with what to run; the watchdog wakes you about each park once.
 "left by" lines name what a closed session left that stays, and why; each is a fact
 to know, not a question for the owner. Run without --quick.
-An open ask's "since" line says its session closed, or its newest pull request merged
-(read without --quick), after the ask was asked or restated, with what to run: an ask
-outlives both only while it still holds something, and you judge which.`},
+An open ask's "since" line names what happened after it was asked or restated: its
+session closed, or its newest pull request merged (seen without --quick). Whether the
+ask still holds something is yours to judge; the line gives the command for each.`},
 		{Title: "JSON", Body: `
 batch       name, driver (left out for a driver of no name), started, wake, webhook,
             rex_session, tz; null with no current batch
@@ -676,11 +676,10 @@ type RestateCmd struct {
 
 func (c *RestateCmd) Help() string {
 	return `
-Status gives an open ask a "since" line once its session closed or its newest
-pull request merged after it was asked. One that still holds something, such
-as a production write or a message, is restated: status drops the line, and
-the owner's page shows the ask as waiting on these words from now. One that
-holds nothing is recorded moot with record answer instead.`
+When status gives an ask a "since" line and the ask still holds something,
+such as a production write or a message, restate it: say what it waits on
+now, as the owner reads it on the page. One that holds nothing is moot
+instead (record answer --took moot).`
 }
 
 func (c *RestateCmd) Run(ctx *kong.Context, d *drive.Driver) error {

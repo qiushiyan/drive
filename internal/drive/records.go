@@ -372,7 +372,7 @@ func overtakenOf(a *batch.Ask, m *batch.Member, ref *progress.PRRef, pr *progres
 // the owner gave meanwhile is theirs, one that waits on nothing now is moot,
 // and one that still holds something is restated.
 func (d *Driver) rejudge(ask string) string {
-	return fmt.Sprintf("record any answer the owner gave meanwhile; if it waits on nothing now, %s; if it still holds something, such as a production write or a message, %s",
+	return fmt.Sprintf("if the owner answered it meanwhile, record their answer; if it waits on nothing now, %s; if it still holds something, such as a production write or a message, %s",
 		d.run("record", "answer", ask, "--took", "moot", "--source", "…"), d.run("record", "restate", ask, "--if-unanswered", "…"))
 }
 

@@ -2,11 +2,10 @@ Usage: drive record restate --if-unanswered=IF-UNANSWERED <ask> [flags]
 
 Record what an open ask waits on now, once its session closed or its change merged.
 
-Status gives an open ask a "since" line once its session closed or its newest
-pull request merged after it was asked. One that still holds something, such
-as a production write or a message, is restated: status drops the line, and
-the owner's page shows the ask as waiting on these words from now. One that
-holds nothing is recorded moot with record answer instead.
+When status gives an ask a "since" line and the ask still holds something,
+such as a production write or a message, restate it: say what it waits on
+now, as the owner reads it on the page. One that holds nothing is moot
+instead (record answer --took moot).
 
 Arguments:
   <ask>                The open ask, such as A3.
