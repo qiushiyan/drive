@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/drive"
@@ -196,7 +197,7 @@ func TestASkillOnAStepsFirstLineIsTyped(t *testing.T) {
 	if !strings.HasPrefix(sent.Typed, "/pl-loopy-onboarding ux @") || len(sent.Typed) > 500 {
 		t.Fatalf("a line too long is cut at its dash: %q", sent.Typed)
 	}
-	if rest, _ := os.ReadFile(sent.Path); !strings.HasPrefix(string(rest), goal+"\n\nStop at the end of onboarding.") {
+	if rest, _ := os.ReadFile(sent.Path); !strings.HasPrefix(string(rest), "The typed line goes on: "+goal+"\n\nStop at the end of onboarding.") {
 		t.Fatalf("the cut words open the attachment: %q", rest)
 	}
 	c.Busy("onboarding")
@@ -223,5 +224,183 @@ func TestBriefCLIReadsStartsDocument(t *testing.T) {
 	}
 	if _, err := (drive.BriefCLI{}).Start(t.TempDir(), "stale"); err == nil || !strings.Contains(err.Error(), "start: refused — fix the brief") {
 		t.Fatalf("a refusal carries brief's words: %v", err)
+	}
+}
+
+// writeNote writes a start note named label.md under the rig's notes folder.
+func writeNote(t *testing.T, r *rig, label, text string) string {
+	t.Helper()
+	dir := filepath.Join(r.w.Root, "notes")
+	_ = os.MkdirAll(dir, 0o755)
+	p := filepath.Join(dir, label+".md")
+	if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// A note's head is read as its writer meant it: a value wrapped onto the
+// next line runs on, a goal: in the note's own text stays there, the note
+// lacking a goal is refused unless the open gives one, and --goal beats the
+// note's. Outside a main checkout no worktree sentence is added.
+func TestANoteHeadIsReadWhole(t *testing.T) {
+	r := newRig(t, "none")
+	modelSkill(t, r, "pl-loopy-debug")
+	dir := filepath.Join(r.w.Root, "plain") // no repository, so no main checkout
+	_ = os.MkdirAll(dir, 0o755)
+	wrapped := writeNote(t, r, "wrapped", "opens: /pl-loopy-debug 37439cd4 — the migration titled skill pages\n  with their description\ngoal: No migration titles a skill page\n  with anything but its name.\n\nThe evidence.\ngoal: a heading in the note's own text\n")
+	o, err := r.d.Open("wrapped", drive.Step{}, drive.OpenOptions{Dir: dir, From: wrapped})
+	if err != nil {
+		t.Fatal(err)
+	}
+	typed, attached := firstPrompt(t, r, o.Block)
+	if !strings.HasPrefix(typed, "/pl-loopy-debug 37439cd4 — the migration titled skill pages with their description @") {
+		t.Fatalf("a wrapped opens: runs on: %q", typed)
+	}
+	if evs := r.events(batch.KindOpenIntent); evs[0].Goal != "No migration titles a skill page with anything but its name." {
+		t.Fatalf("a wrapped goal: runs on: %q", evs[0].Goal)
+	}
+	if !strings.Contains(attached, "goal: a heading in the note's own text") || strings.Contains(attached, "shared") || !strings.Contains(attached, "(The start note ends here.)") {
+		t.Fatalf("a later goal: is the note's text, no worktree sentence outside a main checkout, and the note's end is marked: %q", attached)
+	}
+	bare := writeNote(t, r, "nogoal", "opens: /pl-loopy-debug 37439cd4 — titles\n\nThe evidence.\n")
+	if _, err := r.d.Open("nogoal", drive.Step{}, drive.OpenOptions{Dir: dir, From: bare}); !isRefused(err) || !strings.Contains(err.Error(), "no goal: line") {
+		t.Fatalf("a note with no goal is refused: %v", err)
+	}
+	mine := "Mine, as the owner said it."
+	if _, err := r.d.Open("nogoal", drive.Step{}, drive.OpenOptions{Dir: dir, From: bare, Goal: &mine}); err != nil {
+		t.Fatal(err)
+	}
+	if evs := r.events(batch.KindOpenIntent); evs[len(evs)-1].Goal != mine {
+		t.Fatalf("--goal is the goal: %q", evs[len(evs)-1].Goal)
+	}
+	if _, err := r.d.Open("own", drive.Step{}, drive.OpenOptions{Dir: dir, From: wrapped, Goal: &mine}); err != nil {
+		t.Fatal(err)
+	}
+	if evs := r.events(batch.KindOpenIntent); evs[len(evs)-1].Goal != mine {
+		t.Fatalf("--goal beats the note's goal: %q", evs[len(evs)-1].Goal)
+	}
+}
+
+// What is not a usable note is refused with what to do instead: a brief
+// handed over as a note opens with --brief, a note naming two briefs names
+// one, and --brief beside a note naming another brief is a contradiction;
+// beside the same brief it is the note's own open.
+func TestANoteThatCannotOpenSaysWhatWould(t *testing.T) {
+	r := newRig(t, "none")
+	modelSkill(t, r, "pl-loopy-onboarding")
+	wt := filepath.Join(r.w.Root, "wt")
+	_ = os.MkdirAll(wt, 0o755)
+	r.d.Pickups = &pickups{placed: map[string]drive.Pickup{"closing-reads": {Dir: wt, Pointer: pointer, Slug: "closing-reads"}}}
+	dir := filepath.Join(r.w.Root, "main")
+	brief := writeNote(t, r, "sandbox-glob-folders-only", "---\ngoal: folders only\nanchored: 2026-11-11\npickup: design\n---\n\n## At pickup\n")
+	if _, err := r.d.Open("glob", drive.Step{}, drive.OpenOptions{Dir: dir, From: brief}); !isRefused(err) || !strings.Contains(nextOf(err), "--brief sandbox-glob-folders-only") {
+		t.Fatalf("a brief as a note says to open it with --brief: %v", err)
+	}
+	two := writeNote(t, r, "two", "opens: brief closing-reads thread-titles\ngoal: g\n")
+	if _, err := r.d.Open("two", drive.Step{}, drive.OpenOptions{Dir: dir, From: two}); !isRefused(err) || !strings.Contains(err.Error(), "a brief is one slug") {
+		t.Fatalf("a note naming two briefs is refused: %v", err)
+	}
+	note := writeNote(t, r, "closing-reads", "opens: brief closing-reads\ngoal: g\n")
+	if _, err := r.d.Open("other", drive.Step{}, drive.OpenOptions{Dir: dir, From: note, Brief: "thread-titles"}); !isRefused(err) || !strings.Contains(err.Error(), "differ") {
+		t.Fatalf("--brief naming another brief than the note's is refused: %v", err)
+	}
+	if blocks, _ := r.w.Blocks(""); len(blocks) != 0 {
+		t.Fatalf("nothing opened: %d", len(blocks))
+	}
+	o, err := r.d.Open("closing-reads", drive.Step{}, drive.OpenOptions{Dir: dir, From: note, Brief: "closing-reads"})
+	if err != nil || o.Placed == nil {
+		t.Fatalf("--brief beside its own note's brief opens it: %+v %v", o, err)
+	}
+}
+
+// The open's result says where brief placed the session and how, and each
+// gate brief proceeds past; a brief's refusal is on record as the open's
+// failure.
+func TestABriefsOpenSaysWhereItPlacedTheSession(t *testing.T) {
+	r := newRig(t, "none")
+	modelSkill(t, r, "pl-loopy-onboarding")
+	wt := filepath.Join(r.w.Root, "wt")
+	_ = os.MkdirAll(wt, 0o755)
+	r.d.Pickups = &pickups{
+		placed:  map[string]drive.Pickup{"closing-reads": {Dir: wt, Pointer: pointer, Slug: "closing-reads", Placement: "resumed", Gates: []string{"#11167 lands first: open"}}},
+		refused: map[string]string{"stale": "start: refused — fix the brief (`brief check stale`), then start again"},
+	}
+	dir := filepath.Join(r.w.Root, "main")
+	o, err := r.d.Open("closing-reads", drive.Step{}, drive.OpenOptions{Dir: dir, Brief: "closing-reads"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := o.Text()
+	if !strings.Contains(text, "brief closing-reads placed it in "+wt+", on the worktree it already had, where another session may be working\n") ||
+		!strings.Contains(text, "gated on #11167 lands first: open") {
+		t.Fatalf("the result names the place, how, and the gate: %s", text)
+	}
+	if _, err := r.d.Open("stale", drive.Step{}, drive.OpenOptions{Dir: dir, Brief: "stale"}); err == nil {
+		t.Fatal("a brief brief refuses opens nothing")
+	}
+	var failed bool
+	for _, e := range r.events(batch.KindFailure) {
+		failed = failed || e.Session == "stale" && strings.Contains(e.Reason, "brief check stale")
+	}
+	if !failed {
+		t.Fatalf("brief's refusal is on record as the open's failure: %+v", r.events(batch.KindFailure))
+	}
+}
+
+// An open from a note whose Claude Code never starts is asked for again
+// whole, the note and what the driver added on it, and the log names the
+// note.
+func TestANotesOpenThatNeverStartsIsAskedForAgainWhole(t *testing.T) {
+	r := newRig(t, "none")
+	modelSkill(t, r, "pl-loopy-debug")
+	r.w.NoStart = map[string]bool{"titles": true}
+	dir := filepath.Join(r.w.Root, "work")
+	note := writeNote(t, r, "titles", "opens: /pl-loopy-debug 37439cd4 — titles\ngoal: g\n")
+	again := "drive --batch b1 open titles --dir " + dir + " --from " + note + " 'Build nothing yet.'"
+	_, err := r.d.Open("titles", drive.Step{Line: "Build nothing yet."}, drive.OpenOptions{Dir: dir, From: note})
+	var failed *drive.Failed
+	if !errors.As(err, &failed) || !strings.HasSuffix(failed.Next, again) {
+		t.Fatalf("the failed open is asked for again with its note: %v", err)
+	}
+	st, err := r.d.Status(false)
+	if err != nil || len(st.Rows) != 1 || !strings.HasSuffix(st.Rows[0].Next, again) {
+		t.Fatalf("status asks for it again whole: %+v %v", st.Rows, err)
+	}
+	b, evs, err := r.d.Log(time.Time{})
+	if lg := drive.LogText(b, evs, r.w.Clock.Now()); err != nil || !strings.Contains(lg, "from "+note[:40]) {
+		t.Fatalf("the log names the note: %v\n%s", err, lg)
+	}
+}
+
+// A skill's line that neither fits beside the mention nor cuts at a dash
+// stays whole in the file when the model may start the skill, its words
+// still the skill's; a pointer line past 500 bytes is cut at its dash; a
+// line naming no skill the session has goes as a file and says why.
+func TestALongSkillLineIsCutOnlyAtItsDash(t *testing.T) {
+	r := newRig(t, "none")
+	modelSkill(t, r, "review")
+	modelSkill(t, r, "pl-loopy-onboarding")
+	adopted(t, r, "T1")
+	long := "/review fable full review, then " + strings.TrimSpace(strings.Repeat("take the branch to a ready PR ", 14))
+	f := filepath.Join(r.w.Root, "review.md")
+	_ = os.WriteFile(f, []byte(long+"\n\nFix what you confirm.\n"), 0o644)
+	sent, err := r.d.Send(r.view("T1"), drive.Step{File: f}, drive.SendOptions{})
+	if err != nil || !strings.HasPrefix(sent.Typed, "@") {
+		t.Fatalf("a long line with no dash stays in the file: %+v %v", sent, err)
+	}
+	if rest, _ := os.ReadFile(sent.Path); !strings.Contains(string(rest), long+"\n\nFix what you confirm.") {
+		t.Fatalf("whole: %q", rest)
+	}
+	goal := strings.TrimSpace(strings.Repeat("planners keep their place ", 20))
+	_ = os.WriteFile(f, []byte("/pl-loopy-onboarding tool-design ux — "+goal+"\n\nBrief: /b.md\n"), 0o644)
+	sent, err = r.d.Send(r.view("T1"), drive.Step{File: f}, drive.SendOptions{})
+	if err != nil || !strings.HasPrefix(sent.Typed, "/pl-loopy-onboarding tool-design ux @") {
+		t.Fatalf("a pointer line past 500 bytes is cut at its dash: %+v %v", sent, err)
+	}
+	_ = os.WriteFile(f, []byte("/emil-prototype the reply card\n\nThe checklist variant.\n"), 0o644)
+	sent, err = r.d.Send(r.view("T1"), drive.Step{File: f}, drive.SendOptions{})
+	if err != nil || !strings.Contains(sent.Text(), "sent as a file since its first line names /emil-prototype, which no skill of the session's is called") {
+		t.Fatalf("a line naming no skill says so: %+v %v", sent, err)
 	}
 }

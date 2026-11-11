@@ -314,8 +314,8 @@ type OpenCmd struct {
 	Effort  *string `enum:"low,medium,high,xhigh,max" placeholder:"LEVEL" help:"Run it at this effort level, for this session only; without it the owner's settings decide."`
 	Hold    string  `placeholder:"NAME" help:"Name what its first turn uses that only one session may use at a time, as send's --hold does."`
 	Goal    *string `placeholder:"TEXT" help:"What the session sets out to do, in plain terms for the owner: one short paragraph, at most 600 bytes."`
-	From    string  `type:"existingfile" xor:"opening" placeholder:"NOTE" help:"Open from this start note: its opens: line says how the session starts (a brief, or the line to type), its goal: line is the goal, and the rest goes with the first step. --dir is the project's checkout."`
-	Brief   string  `xor:"opening" placeholder:"SLUG" help:"Pick this brief up: brief places its worktree, where the session opens, and its pointer is the first step. --dir is the project's checkout."`
+	From    string  `type:"existingfile" placeholder:"NOTE" help:"Open from this start note: its opens: line says how the session starts (a brief, or the line to type), its goal: line is the goal, and the rest goes with the first step. --dir is the project's checkout."`
+	Brief   string  `placeholder:"SLUG" help:"Pick this brief up: brief places its worktree, where the session opens, and its pointer is the first step. --dir is the project's checkout."`
 }
 
 func (c *OpenCmd) Help() string {
@@ -341,12 +341,7 @@ drive open closing-reads --dir ~/dev/planlab/main --from ~/dev/.handoffs/planlab
 drive open sonnet-failover --dir ~/dev/planlab/main --brief model-failover-sonnet-5-5-first --goal 'Fail over to Sonnet first.'`})
 }
 
-func (c *OpenCmd) Validate() error {
-	if (c.From != "" || c.Brief != "") && (c.Snippet != "" || c.Resume != "") {
-		return errors.New("--from and --brief compose the first step: give a line or --file beside them, not --snippet or --resume")
-	}
-	return c.atMostOne()
-}
+func (c *OpenCmd) Validate() error { return c.atMostOne() }
 
 func (c *OpenCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	opt := drive.OpenOptions{Dir: c.Dir, Resume: c.Resume, Account: c.Account, Model: c.Model, Hold: c.Hold, Goal: c.Goal, From: c.From, Brief: c.Brief}

@@ -227,8 +227,9 @@ func (b *Batch) SaveSend(session string, body []byte) (string, error) {
 }
 
 // SaveOpening writes the first step an open composed, from a start note or a
-// brief, to a new file under openings/: the step as asked for, which the
-// open's record names so the open can be asked for again whole.
+// brief, to a new file under openings/, which the open then sends as a file
+// step. The open's record keeps the note or brief, not this file, so an open
+// asked for again composes its step afresh.
 func (b *Batch) SaveOpening(session string, body []byte) (string, error) {
 	return b.save("openings", session, body)
 }

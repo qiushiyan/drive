@@ -51,7 +51,6 @@ Inherited flags:
 
 Constraints:
   At most one of --file, --snippet.
-  At most one of --from, --brief.
 
 Steps:
   A step is one of:

@@ -47,14 +47,23 @@ func (s *Sent) Text() string {
 
 // Text is what an open prints: the block it opened, then its first step.
 func (o *Opened) Text() string {
-	s := fmt.Sprintf("opened %s in block %s on account %s (session %s)\n", o.Label, rex.Short(o.Block), o.Account, o.Session)
+	var s strings.Builder
+	s.WriteString(fmt.Sprintf("opened %s in block %s on account %s (session %s)\n", o.Label, rex.Short(o.Block), o.Account, o.Session))
+	if pk := o.Placed; pk != nil {
+		how := map[string]string{"created": "a new branch", "checked-out": "its existing branch checked out", "tracking": "its remote branch checked out",
+			"resumed": "the worktree it already had, where another session may be working", "review": "the checkout of the branch it reviews"}[pk.Placement]
+		s.WriteString(fmt.Sprintf("brief %s placed it in %s, on %s\n", pk.Slug, pk.Dir, cmp.Or(how, pk.Placement)))
+		for _, g := range pk.Gates {
+			s.WriteString(fmt.Sprintf("brief %s is gated on %s; brief proceeds anyway, so check the gate holds before the session builds\n", pk.Slug, g))
+		}
+	}
 	if o.Parked != "" {
-		s += fmt.Sprintf("%s stays parked, so no wake comes until a step is sent to it: %s\n", o.Label, o.Parked)
+		s.WriteString(fmt.Sprintf("%s stays parked, so no wake comes until a step is sent to it: %s\n", o.Label, o.Parked))
 	}
 	if o.Sent != nil && o.Sent.Outcome != "" {
-		s += o.Sent.Text()
+		s.WriteString(o.Sent.Text())
 	}
-	return s
+	return s.String()
 }
 
 // Text is the line a respond prints.

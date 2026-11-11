@@ -2,6 +2,7 @@ package drive
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,6 +33,10 @@ type Pickup struct {
 	Pointer   string // its first prompt: the skill and goal, then the Brief:, Drift: and Pickup gate: lines
 	Branch    string
 	Placement string // created, checked-out, tracking, resumed or review
+	Slug      string
+	// Gates are the brief's gates on world state, each with its live state
+	// ("#11167 lands first: open"): advisory, as brief prints them.
+	Gates []string
 }
 
 // BriefCLI picks briefs up with brief's own start, in the form it gives a
@@ -68,11 +73,24 @@ func (c BriefCLI) Start(dir, slug string) (Pickup, error) {
 		}
 		return Pickup{}, errors.New(tail(msg, 600))
 	}
-	var doc struct{ Dir, Pointer, Branch, Placement string }
+	var doc struct {
+		Dir, Pointer, Branch, Placement, Slug string
+		BlockedBy                             []struct {
+			Gate string
+			Live []string
+		} `json:"blocked_by"`
+	}
 	if err := json.Unmarshal(out, &doc); err != nil || doc.Dir == "" || doc.Pointer == "" {
 		return Pickup{}, fmt.Errorf("brief start %s --json printed no placement (%q); is brief older than its --json?", slug, clip(string(out), 120))
 	}
-	return Pickup(doc), nil
+	pk := Pickup{Dir: doc.Dir, Pointer: doc.Pointer, Branch: doc.Branch, Placement: doc.Placement, Slug: cmp.Or(doc.Slug, slug)}
+	for _, g := range doc.BlockedBy {
+		if len(g.Live) > 0 {
+			g.Gate += ": " + strings.Join(g.Live, ", ")
+		}
+		pk.Gates = append(pk.Gates, g.Gate)
+	}
+	return pk, nil
 }
 
 // A start note is what a planning session writes for one session of a
@@ -93,44 +111,80 @@ type note struct {
 
 var noteHead = regexp.MustCompile(`^(opens|goal):\s*(.*)$`)
 
-// readNote reads the start note at path, refusing one whose head names no
-// opening, so an open never guesses where a session starts.
-func readNote(path string) (*note, error) {
+// readNote reads the start note at path. The head is its first lines after
+// any title, each key's value running on over lines a writer wrapped until
+// the next key or a blank line. A note that names no opening, or no goal
+// when the open gives none, is refused, so an open never guesses where a
+// session starts or what it is for; so is a brief handed over as a note.
+func readNote(path string, goalGiven bool) (*note, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &Refused{Reason: fmt.Sprintf("cannot read the start note %s: %v", path, err)}
 	}
+	text := string(data)
+	if isBrief(text) {
+		slug := strings.TrimSuffix(filepath.Base(path), ".md")
+		return nil, &Refused{Reason: fmt.Sprintf("%s is a brief, not a start note", path),
+			Next: "open it with --brief " + slug + " in place of --from, from the project's checkout"}
+	}
 	n := &note{path: path}
-	lines := strings.Split(string(data), "\n")
 	var kept []string
+	key := "" // the head key whose value a wrapped line goes on with
 	head := true
-	for _, l := range lines {
+	for l := range strings.SplitSeq(text, "\n") {
 		t := strings.TrimSpace(l)
-		if m := noteHead.FindStringSubmatch(t); head && m != nil {
-			if m[1] == "opens" {
-				n.opens = strings.TrimSpace(m[2])
-			} else {
-				n.goal = strings.TrimSpace(m[2])
-			}
+		switch m := noteHead.FindStringSubmatch(t); {
+		case head && m != nil:
+			key = m[1]
+			n.set(key, m[2])
 			continue
-		}
-		if head && t != "" && !strings.HasPrefix(t, "#") {
+		case head && key != "" && t != "" && !strings.HasPrefix(t, "#"):
+			n.set(key, t) // a value wrapped onto the next line
+			continue
+		case head && t == "":
+			key = ""
+		case head && !strings.HasPrefix(t, "#"):
 			head = false // the head is over at the first line of the note's own text
 		}
 		kept = append(kept, l)
 	}
-	n.body = strings.TrimSpace(strings.Join(kept, "\n"))
+	n.body = strings.TrimSpace(regexp.MustCompile(`\n{3,}`).ReplaceAllString(strings.Join(kept, "\n"), "\n\n"))
 	if slug, ok := strings.CutPrefix(n.opens, "brief "); ok {
 		n.brief, n.opens = strings.TrimSpace(slug), ""
 		if n.brief == "" || strings.ContainsAny(n.brief, " \t") {
-			return nil, &Refused{Reason: fmt.Sprintf("the start note %s opens on %q: a brief is one slug, as in opens: brief sandbox-grep-end-anchor", path, "brief "+n.brief)}
+			return nil, &Refused{Reason: fmt.Sprintf("the start note %s opens on %q: a brief is one slug, as in opens: brief sandbox-grep-end-anchor", path, "brief "+n.brief),
+				Next: "have the session that wrote the note name one brief there, and any other as reading in its text"}
 		}
 	}
-	if n.opens == "" && n.brief == "" {
+	switch {
+	case n.opens == "" && n.brief == "":
 		return nil, &Refused{Reason: fmt.Sprintf("the start note %s says nothing about how the session opens", path),
-			Next: "have the session that wrote it add, as the note's first line, opens: brief <slug> when a brief carries the work, or opens: <the line the owner would type to start it>"}
+			Next: "have the session that wrote it add, as its first line, opens: brief <slug> when a brief carries the work, or opens: <the line the owner would type to start it>"}
+	case n.goal == "" && !goalGiven:
+		return nil, &Refused{Reason: fmt.Sprintf("the start note %s has no goal: line", path),
+			Next: "have the session that wrote it add one under its opens: line, or give the open --goal"}
 	}
 	return n, nil
+}
+
+// set adds a head line's words to key's value.
+func (n *note) set(key, words string) {
+	v := &n.opens
+	if key == "goal" {
+		v = &n.goal
+	}
+	*v = strings.TrimSpace(*v + " " + strings.TrimSpace(words))
+}
+
+// isBrief says whether text is a brief rather than a start note: a brief's
+// head is fenced, and names the gate its pickup runs.
+func isBrief(text string) bool {
+	head, ok := strings.CutPrefix(strings.TrimLeft(text, "\n"), "---\n")
+	if !ok {
+		return false
+	}
+	head, _, _ = strings.Cut(head, "\n---")
+	return regexp.MustCompile(`(?m)^pickup:`).MatchString(head)
 }
 
 // sharedCheckout is the sentence a session opening in a project's main
@@ -160,7 +214,7 @@ func opening(first, pointerLines, added string, shared bool, n *note) string {
 		parts = append(parts, sharedCheckout)
 	}
 	if n != nil && n.body != "" {
-		parts = append(parts, "The start note for this session, from "+n.path+":\n\n"+n.body)
+		parts = append(parts, "The start note for this session, from "+n.path+":\n\n"+n.body+"\n\n(The start note ends here.)")
 	}
 	parts = append(parts, pointerLines)
 	var kept []string

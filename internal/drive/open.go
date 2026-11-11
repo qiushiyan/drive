@@ -37,9 +37,10 @@ type Opened struct {
 	Label   string
 	Block   string
 	Account string
-	Session string // its session id
-	Sent    *Sent  // the first step, when one was given
-	Parked  string // why, for a parked label whose own conversation was resumed with no step
+	Session string  // its session id
+	Sent    *Sent   // the first step, when one was given
+	Placed  *Pickup // the brief brief placed for it, when it picked one up
+	Parked  string  // why, for a parked label whose own conversation was resumed with no step
 }
 
 // Open starts a session in a new block under label and sends it its first
@@ -58,12 +59,13 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	// An open from a note or a brief composes its first step once the brief
 	// is placed; what the driver gave goes in it after the opening line.
 	var n *note
+	noteGoal := false // the goal is the note's, which an open asked for again reads afresh
 	if opt.From != "" {
-		if n, err = readNote(opt.From); err != nil {
+		if n, err = readNote(opt.From, opt.Goal != nil); err != nil {
 			return nil, err
 		}
 		if opt.Goal == nil && n.goal != "" {
-			opt.Goal = &n.goal
+			opt.Goal, noteGoal = &n.goal, true
 		}
 	}
 	slug := opt.Brief
@@ -118,7 +120,11 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 			err = &Failed{What: fmt.Sprintf("opened %s in block %s, but its first step was not sent: %s", label, rex.Short(block), r.Reason), Next: r.Next}
 		}
 	}()
-	whole := d.openCommand(label, opt, step) // the open as it was asked for, its step on it
+	asked := opt
+	if noteGoal {
+		asked.Goal = nil
+	}
+	whole := d.openCommand(label, asked, step) // the open as it was asked for, its step on it
 	if !step.empty() && !composed {
 		// The account is the launcher's choice, so skills are read from the default one.
 		if _, err := d.plan(opt.Dir, filepath.Join(d.Cfg.Home, ".claude"), step, !d.readNotice(b, opt.Resume), false); err != nil {
@@ -155,6 +161,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	}
 
 	dir := opt.Dir
+	var placed *Pickup
 	if composed {
 		// Placement is an effect, so it runs once the open is on record and
 		// before a block opens: brief refuses before it places anything.
@@ -163,11 +170,11 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 			pk, err := d.Pickups.Start(opt.Dir, slug)
 			if err != nil {
 				f := &Failed{What: fmt.Sprintf("brief did not pick %s up for %s, so no block opened: %s", slug, label, err),
-					Next: "fix what brief says, or have whoever named the brief open the session by its line instead; then open it again: " + whole}
+					Next: "a mend brief prints is the owner's to run, so tell them what it asks, or have the note's writer change its opens: line; then open it again: " + whole}
 				_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindFailure, Session: label, Intent: intent, Reason: f.What})
 				return nil, f
 			}
-			dir = pk.Dir
+			dir, placed = pk.Dir, &pk
 			first, lines, _ = strings.Cut(strings.TrimRight(pk.Pointer, "\n"), "\n\n")
 		} else {
 			first, shared = n.opens, mainCheckout(opt.Dir)
@@ -207,7 +214,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		SID: s.ID, Account: s.Account, Dir: s.Dir, Model: opt.Model, Effort: opt.Effort, Ref: opt.Resume}); err != nil {
 		return nil, d.unrecorded(label, block, err)
 	}
-	out = &Opened{Label: label, Block: block, Account: s.Account, Session: s.ID}
+	out = &Opened{Label: label, Block: block, Account: s.Account, Session: s.ID, Placed: placed}
 	if evs, err := b.Events(); err == nil && step.empty() {
 		if m := batch.Find(batch.Members(evs), label); m != nil {
 			out.Parked = m.Parked // a parked label's own conversation, brought back
@@ -278,12 +285,25 @@ func openStep(e batch.Event) (step Step, whole bool) {
 // openWords is an open-intent's first step in a few words, for a line of
 // status or the log.
 func openWords(e batch.Event) string {
-	if step, whole := openStep(e); whole && !step.empty() {
-		return stepSummary(step)
-	} else if whole {
-		return "no step"
+	from := ""
+	switch {
+	case e.From != "":
+		from = "from " + e.From
+	case e.Brief != "":
+		from = "brief " + e.Brief
 	}
-	return e.Text
+	step, whole := openStep(e)
+	switch {
+	case !whole:
+		return e.Text
+	case from != "" && !step.empty():
+		return from + ", then " + stepSummary(step)
+	case from != "":
+		return from
+	case !step.empty():
+		return stepSummary(step)
+	}
+	return "no step"
 }
 
 // placeBlock is the block an open runs in: the label's own, when its own

@@ -237,10 +237,14 @@ type plan struct {
 }
 
 // file is what the step's file holds: the notice, the end of a skill's
-// line that did not fit, then the step's text.
+// line that did not fit, said to be that, then the step's text.
 func (p *plan) file() string {
 	var parts []string
-	for _, s := range []string{p.head, p.cont, p.body} {
+	cont := p.cont
+	if cont != "" {
+		cont = "The typed line goes on: " + cont
+	}
+	for _, s := range []string{p.head, cont, p.body} {
 		if s = strings.Trim(s, "\n"); s != "" {
 			parts = append(parts, s)
 		}
@@ -304,8 +308,12 @@ func (d *Driver) plan(dir, config string, step Step, notice, queue bool) (*plan,
 			// words after it; claude-steps knows it by the skill, and by the
 			// snippet's opening where the line typed holds it.
 			p.typedOnly = skill.TypedOnly(d.Cfg.Home, config, dir, name)
-			if p.typedOnly || !queue && skill.Found(d.Cfg.Home, config, dir, name) {
+			switch found := skill.Found(d.Cfg.Home, config, dir, name); {
+			case p.typedOnly || !queue && found:
 				p.command, p.body = typedHead(first, p.body)
+			case !found && !strings.Contains(name, ":") && p.asFile == "":
+				// A plugin's skill is not looked for, so only a plain name is said to be missing.
+				p.asFile = fmt.Sprintf("its first line names /%s, which no skill of the session's is called", name)
 			}
 		}
 	}
@@ -332,9 +340,16 @@ func (d *Driver) plan(dir, config string, step Step, notice, queue bool) (*plan,
 // press; a leading ! or #, which switch its input box to a shell command or
 // a memory.
 func untypable(line string) string {
-	switch {
-	case strings.Contains(line, "\n") || len(line) > maxLine:
+	if strings.Contains(line, "\n") || len(line) > maxLine {
 		return "Claude Code keeps only the end of a line this long"
+	}
+	return garbled(line)
+}
+
+// garbled says why typing would turn one line into something else, whatever
+// its length: a control character, a leading ! or #.
+func garbled(line string) string {
+	switch {
 	case strings.IndexFunc(line, unicode.IsControl) >= 0:
 		return fmt.Sprintf("a control character (%q) typed into Claude Code is a key press", line[strings.IndexFunc(line, unicode.IsControl):][:1])
 	case line[0] == '!' || line[0] == '#':
@@ -345,12 +360,13 @@ func untypable(line string) string {
 
 // typedHead splits a file step whose first line, first, starts a skill:
 // the line to type and the rest. A first line that typing would garble is
-// typed as the command alone, its words going with the rest; one too long
-// to sit beside the rest's mention is cut when it is saved (fitHead).
+// typed as the command alone, its words going with the rest; how much of a
+// long one fits beside the rest's mention is decided when it is saved
+// (fitHead).
 func typedHead(first, body string) (command, rest string) {
 	_, after, _ := strings.Cut(strings.TrimLeft(body, "\n\t "), first)
 	rest = strings.TrimLeft(after, "\n")
-	if len(first) <= maxLine && untypable(first) == "" {
+	if garbled(first) == "" {
 		return first, rest
 	}
 	command = "/" + skill.Command(first)
@@ -360,17 +376,22 @@ func typedHead(first, body string) (command, rest string) {
 
 // fitHead cuts a skill's line to room bytes, so it fits beside the
 // mention of the file that carries the rest: at the dash a brief's pointer
-// puts between the skill's words and the goal, else to the command alone.
-// The cut words open the file.
-func fitHead(command string, room int) (head, cont string) {
+// puts between the skill's words and the goal. Past that, a typed-only
+// skill is typed as the command alone, since it starts only when typed; any
+// other skill's line stays whole in the file (ok false), where its words
+// keep the skill's arguments and claude-steps reads a snippet's opening.
+func fitHead(command string, room int, typedOnly bool) (head, cont string, ok bool) {
 	if len(command) <= room {
-		return command, ""
+		return command, "", true
 	}
 	if i := strings.Index(command, " — "); i > 0 && i <= room {
-		return command[:i], strings.TrimSpace(command[i+len(" — "):])
+		return command[:i], strings.TrimSpace(command[i+len(" — "):]), true
+	}
+	if !typedOnly {
+		return "", "", false
 	}
 	name := "/" + skill.Command(command)
-	return name, strings.TrimSpace(command[strings.Index(command, name)+len(name):])
+	return name, strings.TrimSpace(command[strings.Index(command, name)+len(name):]), true
 }
 
 func firstLine(s string) string {
@@ -437,8 +458,13 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 					View: view, Text: noticeLine, Mode: "notice", Notice: true})
 			}
 		}
-		if p.command != "" && p.file() != "" {
-			p.command, p.cont = fitHead(p.command, maxLine-len(" @")-b.SendPathRoom(o.Label))
+		if p.command != "" && (p.file() != "" || len(p.command) > maxLine) {
+			head, cont, ok := fitHead(p.command, maxLine-len(" @")-b.SendPathRoom(o.Label), p.typedOnly)
+			if ok {
+				p.command, p.cont = head, cont
+			} else {
+				p.body, p.command = p.command+"\n\n"+p.body, ""
+			}
 		}
 		switch {
 		case p.command != "" && p.file() == "":
