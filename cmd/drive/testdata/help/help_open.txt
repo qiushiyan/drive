@@ -9,6 +9,12 @@ open without it, such as a relaunch, keeps the goal LABEL already has.
 Resuming LABEL's own session, as the next: for a gone one does, carries it
 on: its park stands until its next step, and so does what was sent to it.
 
+With --from or --brief, drive composes the first step: the line that starts
+the session, typed as the owner would, then a line or file given beside it,
+then the note's text, then a brief's Brief:, Drift: and Pickup gate: lines.
+A session that opens on a line in the project's main checkout is told to
+work in a worktree of its own.
+
 Arguments:
   <label>               The label the new session gets in the batch and on its Rex block: a name for
                         its work, such as search-repairs.
@@ -30,6 +36,11 @@ Flags:
                         send's --hold does.
       --goal=TEXT       What the session sets out to do, in plain terms for the owner: one short
                         paragraph, at most 600 bytes.
+      --from=NOTE       Open from this start note: its opens: line says how the session starts (a
+                        brief, or the line to type), its goal: line is the goal, and the rest goes
+                        with the first step. --dir is the project's checkout.
+      --brief=SLUG      Pick this brief up: brief places its worktree, where the session opens, and
+                        its pointer is the first step. --dir is the project's checkout.
 
 Inherited flags:
   -h, --help            Show context-sensitive help.
@@ -40,6 +51,7 @@ Inherited flags:
 
 Constraints:
   At most one of --file, --snippet.
+  At most one of --from, --brief.
 
 Steps:
   A step is one of:
@@ -52,14 +64,17 @@ Steps:
                             queued mid-turn, a line asks the session to read the copy
     --snippet KEY 'TEXT'    the owner's snippet for the session's directory, with the
                             step's words, TEXT, where the owner would type after it
-  A file or a snippet whose first line starts a skill that runs only when typed is
-  typed as that line with the rest attached, never queued.
+  A file or a snippet whose first line starts a skill the session has is typed
+  as that line with the rest attached, so its prompt opens with the skill; one
+  that runs only when typed is never queued.
   Text that starts with a dash goes after --, which ends the flags.
   The first step a session gets in a batch carries the owner's notice: at the head
   of its file, or attached after its line.
 
 Examples:
   drive open sr-9531 --effort xhigh --goal 'Review #9531 before it merges.' '/strategic-review 9531'
+  drive open closing-reads --dir ~/dev/planlab/main --from ~/dev/.handoffs/planlab-main/_batches/2026-11-12/closing-reads.md 'This turn is onboarding only.'
+  drive open sonnet-failover --dir ~/dev/planlab/main --brief model-failover-sonnet-5-5-first --goal 'Fail over to Sonnet first.'
 
 Exit codes:
   0    success

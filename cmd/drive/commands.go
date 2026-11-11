@@ -264,8 +264,9 @@ A step is one of:
                           queued mid-turn, a line asks the session to read the copy
   --snippet KEY 'TEXT'    the owner's snippet for the session's directory, with the
                           step's words, TEXT, where the owner would type after it
-A file or a snippet whose first line starts a skill that runs only when typed is
-typed as that line with the rest attached, never queued.
+A file or a snippet whose first line starts a skill the session has is typed
+as that line with the rest attached, so its prompt opens with the skill; one
+that runs only when typed is never queued.
 Text that starts with a dash goes after --, which ends the flags.
 The first step a session gets in a batch carries the owner's notice: at the head
 of its file, or attached after its line.`}}
@@ -313,6 +314,8 @@ type OpenCmd struct {
 	Effort  *string `enum:"low,medium,high,xhigh,max" placeholder:"LEVEL" help:"Run it at this effort level, for this session only; without it the owner's settings decide."`
 	Hold    string  `placeholder:"NAME" help:"Name what its first turn uses that only one session may use at a time, as send's --hold does."`
 	Goal    *string `placeholder:"TEXT" help:"What the session sets out to do, in plain terms for the owner: one short paragraph, at most 600 bytes."`
+	From    string  `type:"existingfile" xor:"opening" placeholder:"NOTE" help:"Open from this start note: its opens: line says how the session starts (a brief, or the line to type), its goal: line is the goal, and the rest goes with the first step. --dir is the project's checkout."`
+	Brief   string  `xor:"opening" placeholder:"SLUG" help:"Pick this brief up: brief places its worktree, where the session opens, and its pointer is the first step. --dir is the project's checkout."`
 }
 
 func (c *OpenCmd) Help() string {
@@ -322,18 +325,31 @@ again if it no longer runs, and joins the batch under LABEL; the step, if
 given, is its first. --goal is what the owner reads the session is for; an
 open without it, such as a relaunch, keeps the goal LABEL already has.
 Resuming LABEL's own session, as the next: for a gone one does, carries it
-on: its park stands until its next step, and so does what was sent to it.`
+on: its park stands until its next step, and so does what was sent to it.
+
+With --from or --brief, drive composes the first step: the line that starts
+the session, typed as the owner would, then a line or file given beside it,
+then the note's text, then a brief's Brief:, Drift: and Pickup gate: lines.
+A session that opens on a line in the project's main checkout is told to
+work in a worktree of its own.`
 }
 
 func (c *OpenCmd) HelpSections() []clikit.Section {
 	return append(slices.Clone(stepSections), clikit.Section{Title: "Examples", Body: `
-drive open sr-9531 --effort xhigh --goal 'Review #9531 before it merges.' '/strategic-review 9531'`})
+drive open sr-9531 --effort xhigh --goal 'Review #9531 before it merges.' '/strategic-review 9531'
+drive open closing-reads --dir ~/dev/planlab/main --from ~/dev/.handoffs/planlab-main/_batches/2026-11-12/closing-reads.md 'This turn is onboarding only.'
+drive open sonnet-failover --dir ~/dev/planlab/main --brief model-failover-sonnet-5-5-first --goal 'Fail over to Sonnet first.'`})
 }
 
-func (c *OpenCmd) Validate() error { return c.atMostOne() }
+func (c *OpenCmd) Validate() error {
+	if (c.From != "" || c.Brief != "") && (c.Snippet != "" || c.Resume != "") {
+		return errors.New("--from and --brief compose the first step: give a line or --file beside them, not --snippet or --resume")
+	}
+	return c.atMostOne()
+}
 
 func (c *OpenCmd) Run(ctx *kong.Context, d *drive.Driver) error {
-	opt := drive.OpenOptions{Dir: c.Dir, Resume: c.Resume, Account: c.Account, Model: c.Model, Hold: c.Hold, Goal: c.Goal}
+	opt := drive.OpenOptions{Dir: c.Dir, Resume: c.Resume, Account: c.Account, Model: c.Model, Hold: c.Hold, Goal: c.Goal, From: c.From, Brief: c.Brief}
 	if c.Effort != nil {
 		opt.Effort = *c.Effort
 	}

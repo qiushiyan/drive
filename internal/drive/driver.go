@@ -29,6 +29,7 @@ type Driver struct {
 	Store    batch.Store
 	Cfg      config.Config
 	Progress progress.Source
+	Pickups  Pickups // brief, which places a brief's worktree for an open
 	Watches  Watches
 	Sampler  Sampler // the machine's, which KeepSampler runs while a batch is live
 	Self     string  // this executable, which a watch runs

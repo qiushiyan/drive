@@ -101,7 +101,7 @@ func machine(cfg config.Config) *drive.Driver {
 	self, _ := os.Executable()
 	return &drive.Driver{
 		Term: rex.CLI{}, Host: session.Machine{Home: cfg.Home}, Store: batch.Store{Dir: cfg.StateDir},
-		Cfg: cfg, Progress: progress.Tools{}, Watches: drive.Detached{Dir: filepath.Join(cfg.StateDir, "watches")}, Self: self,
+		Cfg: cfg, Progress: progress.Tools{}, Pickups: drive.BriefCLI{Home: cfg.Home}, Watches: drive.Detached{Dir: filepath.Join(cfg.StateDir, "watches")}, Self: self,
 		Sampler: drive.DetachedSampler{Pidfile: filepath.Join(cfg.StateDir, "sampler.pid"), Log: filepath.Join(cfg.StateDir, "sampler.log"), Dir: cfg.Home},
 	}
 }

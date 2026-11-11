@@ -111,6 +111,7 @@ func (d *Driver) openAgain(b *batch.Batch, m *batch.Member) (why, next string) {
 	if e := m.Opening; e != nil {
 		opt.Dir, opt.Resume, opt.Model = cmp.Or(e.Dir, opt.Dir), cmp.Or(e.Ref, opt.Resume), cmp.Or(e.Model, opt.Model)
 		opt.Account, opt.Hold, opt.Effort = e.Account, e.Hold, cmp.Or(e.Effort, opt.Effort)
+		opt.From, opt.Brief = e.From, e.Brief
 		if step, whole = openStep(*e); !whole {
 			kept = e.Text
 		}

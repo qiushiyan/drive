@@ -186,7 +186,9 @@ type Event struct {
 	Took           string `json:"took,omitempty"` // recommended, amended, delegated, moot
 	Explained      bool   `json:"explained,omitempty"`
 	Note           string `json:"note,omitempty"`
-	Goal           string `json:"goal,omitempty"` // on a goal, or an open-intent that sets one
+	Goal           string `json:"goal,omitempty"`  // on a goal, or an open-intent that sets one
+	From           string `json:"from,omitempty"`  // on an open-intent: the start note the session opens from
+	Brief          string `json:"brief,omitempty"` // on an open-intent: the brief the session picks up
 	HTTP           int    `json:"http,omitempty"`
 	Try            int    `json:"try,omitempty"`
 	// Via, on a posting or wake, is the session whose wake carried this one:

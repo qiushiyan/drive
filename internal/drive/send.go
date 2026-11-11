@@ -106,7 +106,7 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 	if err := d.ready(o, opt, step); err != nil {
 		return nil, err
 	}
-	p, err := d.plan(o.Session.Dir, o.Session.Config, step, o.Member == nil || !o.Member.Noticed && !o.Member.Resumed)
+	p, err := d.plan(o.Session.Dir, o.Session.Config, step, o.Member == nil || !o.Member.Noticed && !o.Member.Resumed, opt.Queue)
 	if err != nil {
 		return nil, err
 	}
@@ -214,32 +214,52 @@ func newIntent() string {
 type plan struct {
 	step   Step
 	notice bool   // the notice goes ahead of the step
-	alone  bool   // in a turn of its own, ahead of a typed step
-	ride   bool   // or as an @-mention after the typed step, when it fits
-	text   []byte // the notice, when it goes alone
-	typed  string // what is typed for the step; a file step's pointer once saved
-	// command is a typed-only skill's line from the head of a file step or
-	// of a snippet, typed with the rest attached, as the skill starts only
-	// when typed.
-	command string
-	asFile  string // why a line goes as a file
-	line    string // the step's own line, when the notice rides it
-	body    string // a file step's text, the notice ahead of it when it rides along
-	path    string
-	key     string
-	from    string
+	head   string // the notice, at the head of the file a step attaches
+	// cont is the end of a skill's line that did not fit beside the
+	// mention, at the head of the step's own text in the file.
+	cont  string
+	alone bool   // in a turn of its own, ahead of a typed step
+	ride  bool   // or as an @-mention after the typed step, when it fits
+	text  []byte // the notice, when it goes alone
+	typed string // what is typed for the step; a file step's pointer once saved
+	// command is a skill's line from the head of a file step or of a
+	// snippet, typed with the rest attached, so the session's prompt opens
+	// with the skill as the owner's would; typedOnly when the skill starts
+	// only when typed.
+	command   string
+	typedOnly bool
+	asFile    string // why a line goes as a file
+	line      string // the step's own line, when the notice rides it
+	body      string // a file step's text, the notice ahead of it when it rides along
+	path      string
+	key       string
+	from      string
+}
+
+// file is what the step's file holds: the notice, the end of a skill's
+// line that did not fit, then the step's text.
+func (p *plan) file() string {
+	var parts []string
+	for _, s := range []string{p.head, p.cont, p.body} {
+		if s = strings.Trim(s, "\n"); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func (p *plan) mode() string {
-	if p.body != "" {
+	if p.file() != "" {
 		return "file"
 	}
 	return "typed"
 }
 
 // plan turns a step into what will be typed, for a session working in dir
-// on the account whose configuration is config.
-func (d *Driver) plan(dir, config string, step Step, notice bool) (*plan, error) {
+// on the account whose configuration is config. A queued step keeps a skill
+// the model can start in its file, since a mention typed mid-turn attaches
+// nothing.
+func (d *Driver) plan(dir, config string, step Step, notice, queue bool) (*plan, error) {
 	p := &plan{step: step, notice: notice}
 	switch {
 	case step.Line != "":
@@ -276,13 +296,17 @@ func (d *Driver) plan(dir, config string, step Step, notice bool) (*plan, error)
 	}
 	if p.body != "" {
 		first := firstLine(p.body)
-		if name := skill.Command(first); name != "" && skill.TypedOnly(d.Cfg.Home, config, dir, name) {
-			// The skill's line is typed, and the rest attached to it: a
-			// session told to run the skill from a file refuses. A snippet
-			// goes the same way under its key, as planlab's closeout does
-			// with words after it; claude-steps knows it by the skill, and by
-			// the snippet's opening where the line typed holds it.
-			p.command, p.body = typedHead(first, p.body)
+		if name := skill.Command(first); name != "" {
+			// The skill's line is typed, and the rest attached to it, so the
+			// prompt opens with the skill as the owner's would; a session told
+			// to run a typed-only skill from a file refuses. A snippet goes
+			// the same way under its key, as planlab's closeout does with
+			// words after it; claude-steps knows it by the skill, and by the
+			// snippet's opening where the line typed holds it.
+			p.typedOnly = skill.TypedOnly(d.Cfg.Home, config, dir, name)
+			if p.typedOnly || !queue && skill.Found(d.Cfg.Home, config, dir, name) {
+				p.command, p.body = typedHead(first, p.body)
+			}
 		}
 	}
 	if notice {
@@ -292,7 +316,7 @@ func (d *Driver) plan(dir, config string, step Step, notice bool) (*plan, error)
 				Next: "restore it, or set notice in ~/.config/drive/config.toml"}
 		}
 		if p.body != "" || p.command != "" {
-			p.body = strings.TrimRight(strings.TrimRight(string(text), "\n")+"\n\n"+p.body, "\n")
+			p.head = string(text)
 		} else {
 			name := skill.Command(p.typed)
 			p.alone, p.text = true, text
@@ -319,19 +343,34 @@ func untypable(line string) string {
 	return ""
 }
 
-// typedHead splits a file step whose first line, first, starts a typed-only
-// skill: the line typed, which leaves room for the rest's @-mention, and
-// the rest. A first line too long, or that typing would garble, is typed as
-// the command alone, its words going with the rest.
+// typedHead splits a file step whose first line, first, starts a skill:
+// the line to type and the rest. A first line that typing would garble is
+// typed as the command alone, its words going with the rest; one too long
+// to sit beside the rest's mention is cut when it is saved (fitHead).
 func typedHead(first, body string) (command, rest string) {
 	_, after, _ := strings.Cut(strings.TrimLeft(body, "\n\t "), first)
 	rest = strings.TrimLeft(after, "\n")
-	if len(first) <= maxLine/2 && untypable(first) == "" {
+	if len(first) <= maxLine && untypable(first) == "" {
 		return first, rest
 	}
 	command = "/" + skill.Command(first)
 	args := strings.TrimSpace(first[strings.Index(first, command)+len(command):])
 	return command, strings.TrimSpace(args + "\n\n" + rest)
+}
+
+// fitHead cuts a skill's line to room bytes, so it fits beside the
+// mention of the file that carries the rest: at the dash a brief's pointer
+// puts between the skill's words and the goal, else to the command alone.
+// The cut words open the file.
+func fitHead(command string, room int) (head, cont string) {
+	if len(command) <= room {
+		return command, ""
+	}
+	if i := strings.Index(command, " — "); i > 0 && i <= room {
+		return command[:i], strings.TrimSpace(command[i+len(" — "):])
+	}
+	name := "/" + skill.Command(command)
+	return name, strings.TrimSpace(command[strings.Index(command, name)+len(name):])
 }
 
 func firstLine(s string) string {
@@ -398,17 +437,20 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 					View: view, Text: noticeLine, Mode: "notice", Notice: true})
 			}
 		}
+		if p.command != "" && p.file() != "" {
+			p.command, p.cont = fitHead(p.command, maxLine-len(" @")-b.SendPathRoom(o.Label))
+		}
 		switch {
-		case p.command != "" && p.body == "":
+		case p.command != "" && p.file() == "":
 			p.typed = p.command // the file held only the skill's line
 		case p.command != "":
-			path, err := b.SaveSend(o.Label, []byte(strings.TrimRight(p.body, "\n")+"\n"))
+			path, err := b.SaveSend(o.Label, []byte(p.file()+"\n"))
 			if err != nil {
 				return err
 			}
 			p.path, p.typed = path, p.command+" "+pointer(path, false)
-		case p.body != "":
-			path, err := b.SaveSend(o.Label, []byte(strings.TrimRight(p.body, "\n")+"\n"))
+		case p.file() != "":
+			path, err := b.SaveSend(o.Label, []byte(p.file()+"\n"))
 			if err != nil {
 				return err
 			}

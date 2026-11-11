@@ -223,7 +223,24 @@ func (b *Batch) Locked(fn func(evs []Event) error) error {
 // SaveSend writes a step's text to a new file under sends/, never
 // overwriting one: what a session was told stays as it was.
 func (b *Batch) SaveSend(session string, body []byte) (string, error) {
-	dir := filepath.Join(b.Dir, "sends")
+	return b.save("sends", session, body)
+}
+
+// SaveOpening writes the first step an open composed, from a start note or a
+// brief, to a new file under openings/: the step as asked for, which the
+// open's record names so the open can be asked for again whole.
+func (b *Batch) SaveOpening(session string, body []byte) (string, error) {
+	return b.save("openings", session, body)
+}
+
+// SendPathRoom is the most bytes the path of a file SaveSend writes for
+// session takes, so a line that mentions it can be sized before it exists.
+func (b *Batch) SendPathRoom(session string) int {
+	return len(filepath.Join(b.Dir, "sends", safe(session)+"-999.md"))
+}
+
+func (b *Batch) save(sub, session string, body []byte) (string, error) {
+	dir := filepath.Join(b.Dir, sub)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}

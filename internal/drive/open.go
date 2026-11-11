@@ -24,6 +24,12 @@ type OpenOptions struct {
 	Effort  string // such as "xhigh", for this session only; "" leaves it to the owner's settings
 	Hold    string
 	Goal    *string // what the session sets out to do, for the owner; nil leaves the label's goal as it was
+	// From is a start note the session opens from: its head says how it
+	// opens, a brief or a line, and its goal.
+	From string
+	// Brief is a brief the session picks up: brief places its worktree,
+	// where the session opens, and composes its first prompt.
+	Brief string
 }
 
 // Opened reports a new session.
@@ -48,6 +54,39 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	}
 	if label == "" || strings.ContainsAny(label, " @/") {
 		return nil, &Refused{Reason: fmt.Sprintf("label %q: use a short name for its work, without spaces, '@' or '/', such as search-repairs", label)}
+	}
+	// An open from a note or a brief composes its first step once the brief
+	// is placed; what the driver gave goes in it after the opening line.
+	var n *note
+	if opt.From != "" {
+		if n, err = readNote(opt.From); err != nil {
+			return nil, err
+		}
+		if opt.Goal == nil && n.goal != "" {
+			opt.Goal = &n.goal
+		}
+	}
+	slug := opt.Brief
+	if n != nil && n.brief != "" {
+		if slug != "" && slug != n.brief {
+			return nil, &Refused{Reason: fmt.Sprintf("--brief %s and the start note's brief %s differ", slug, n.brief),
+				Next: "open it from the note alone, which names its brief"}
+		}
+		slug = n.brief
+	}
+	composed := n != nil || slug != ""
+	var added string
+	if composed {
+		if opt.Resume != "" {
+			return nil, &Refused{Reason: "a resumed session already has its first prompt, so it takes no start note or brief",
+				Next: "resume it with a step of its own, or open it fresh"}
+		}
+		if slug != "" && d.Pickups == nil {
+			return nil, &Refused{Reason: "this drive has no brief to pick " + slug + " up with"}
+		}
+		if added, err = addedText(step); err != nil {
+			return nil, err
+		}
 	}
 	var goal string
 	if opt.Goal != nil {
@@ -80,9 +119,9 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		}
 	}()
 	whole := d.openCommand(label, opt, step) // the open as it was asked for, its step on it
-	if !step.empty() {
+	if !step.empty() && !composed {
 		// The account is the launcher's choice, so skills are read from the default one.
-		if _, err := d.plan(opt.Dir, filepath.Join(d.Cfg.Home, ".claude"), step, !d.readNotice(b, opt.Resume)); err != nil {
+		if _, err := d.plan(opt.Dir, filepath.Join(d.Cfg.Home, ".claude"), step, !d.readNotice(b, opt.Resume), false); err != nil {
 			return nil, err
 		}
 	}
@@ -115,7 +154,33 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return nil, unsent(err, whole)
 	}
 
-	block, err = d.placeBlock(own, opt, rex.Open{Session: b.Meta.RexSession, Dir: opt.Dir, Label: label, Command: d.launch(opt)})
+	dir := opt.Dir
+	if composed {
+		// Placement is an effect, so it runs once the open is on record and
+		// before a block opens: brief refuses before it places anything.
+		first, lines, shared := "", "", false
+		if slug != "" {
+			pk, err := d.Pickups.Start(opt.Dir, slug)
+			if err != nil {
+				f := &Failed{What: fmt.Sprintf("brief did not pick %s up for %s, so no block opened: %s", slug, label, err),
+					Next: "fix what brief says, or have whoever named the brief open the session by its line instead; then open it again: " + whole}
+				_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindFailure, Session: label, Intent: intent, Reason: f.What})
+				return nil, f
+			}
+			dir = pk.Dir
+			first, lines, _ = strings.Cut(strings.TrimRight(pk.Pointer, "\n"), "\n\n")
+		} else {
+			first, shared = n.opens, mainCheckout(opt.Dir)
+		}
+		path, err := b.SaveOpening(label, []byte(opening(first, lines, added, shared, n)))
+		if err != nil {
+			f := &Failed{What: fmt.Sprintf("could not save %s's first step: %v", label, err), Next: "open it again: " + whole}
+			_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindFailure, Session: label, Intent: intent, Reason: f.What})
+			return nil, f
+		}
+		step = Step{File: path}
+	}
+	block, err = d.placeBlock(own, opt, rex.Open{Session: b.Meta.RexSession, Dir: dir, Label: label, Command: d.launch(opt)})
 	if err != nil {
 		f := &Failed{What: fmt.Sprintf("Rex did not open a block for %s: %v", label, err),
 			Next: d.run("status") + " lists the blocks; if none opened for it, try it again: " + whole}
@@ -126,7 +191,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		return nil, f
 	}
 	// On record at once: a driver that ends while Claude Code starts leaves the block known.
-	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindOpen, Session: label, Intent: intent, Block: block, Dir: opt.Dir, Model: opt.Model, Effort: opt.Effort, Ref: opt.Resume, Outcome: "starting"}); err != nil {
+	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindOpen, Session: label, Intent: intent, Block: block, Dir: dir, Model: opt.Model, Effort: opt.Effort, Ref: opt.Resume, Outcome: "starting"}); err != nil {
 		return nil, d.unrecorded(label, block, err)
 	}
 	s, err := d.awaitSession(block, 90*time.Second)
@@ -166,7 +231,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	f, _ := s.Frontier()
 	a.o = &Observation{in: b, Label: label, Session: s, Frontier: f, View: turn.ViewOf(label, s.ID, f)}
 	// A resumed session read the notice in the conversation it resumes.
-	p, err := d.plan(s.Dir, s.Config, step, !d.readNotice(b, opt.Resume))
+	p, err := d.plan(s.Dir, s.Config, step, !d.readNotice(b, opt.Resume), false)
 	if err != nil {
 		return out, err
 	}
@@ -182,7 +247,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 // not.
 func openIntent(at time.Time, label, intent string, step Step, opt OpenOptions, goal string) batch.Event {
 	e := batch.Event{At: at, Kind: batch.KindOpenIntent, Session: label, Intent: intent, Dir: opt.Dir, Account: opt.Account,
-		Model: opt.Model, Effort: opt.Effort, Ref: opt.Resume, Hold: opt.Hold, Goal: goal, Mode: "none"}
+		Model: opt.Model, Effort: opt.Effort, Ref: opt.Resume, Hold: opt.Hold, Goal: goal, Mode: "none", From: opt.From, Brief: opt.Brief}
 	switch {
 	case step.Key != "":
 		e.Mode, e.Key, e.Text = "snippet", step.Key, step.Text
