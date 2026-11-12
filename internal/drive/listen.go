@@ -9,6 +9,7 @@ import (
 
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/rex"
+	"github.com/qiushiyan/drive/internal/session"
 	"github.com/qiushiyan/drive/internal/turn"
 )
 
@@ -79,6 +80,12 @@ func (d *Driver) Listen() (*Taken, error) {
 			Next: "leave it running: it ends with the next wake, and prints it"}
 	}
 	defer d.Watches.Retire(name)
+	if evs, err := b.Events(); err == nil && len(batch.Untaken(evs)) == 0 {
+		// The driver acted on what it took, or found nothing to do: starting
+		// the listener again is its trace. One started while wakes wait has
+		// read none of them yet, so it is heard only by what it runs next.
+		d.Seen()
+	}
 	for {
 		if ended := d.endedWhy(b); ended != "" {
 			return &Taken{Batch: b.Meta.Name, At: d.now(), Zone: b.Zone(), Ended: ended}, nil
@@ -232,8 +239,12 @@ func (t *Taken) Text() string {
 // doorbellLine is what the watchdog types into a session driver's block when
 // wakes wait and no listener runs.
 func (d *Driver) doorbellLine(b *batch.Batch) string {
-	return fmt.Sprintf("[drive] Wakes wait for you in batch %s and no listener runs: start one in the background (%s), then act on what it prints.", b.Meta.Name, d.run("listen"))
+	return fmt.Sprintf(doorbellHead+" Wakes wait for you in batch %s and no listener runs: start one in the background (%s), then act on what it prints.", b.Meta.Name, d.run("listen"))
 }
+
+// doorbellHead opens the doorbell's line, which tells drive's own unsent
+// line from one someone typed.
+const doorbellHead = "[drive]"
 
 // doorbellAfter is how long a wake waits untaken before the doorbell rings:
 // a driver's turn that ends starts its listener within a minute.
@@ -284,6 +295,17 @@ func (d *Driver) Doorbell(b *batch.Batch) (string, error) {
 		return "", nil // the driver is not there to ring
 	case o.Session.ID != reg.SID:
 		return "", nil // another conversation runs in its block now
+	case o.Input == turn.InputTyped && strings.HasPrefix(strings.TrimSpace(o.Typed), doorbellHead):
+		// A ring whose Enter was lost left its own line in the box.
+		a.o = o
+		if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindTold, Outcome: batch.NoticeDoorbell, Block: reg.Block}); err != nil {
+			return "", err
+		}
+		if err := a.press("enter"); err != nil {
+			_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindTold, Outcome: batch.NoticeDoorbell, Block: reg.Block, Reason: clip(firstLine(err.Error()), 200)})
+			return "", err
+		}
+		return "pressed Enter on the line a ring left unsent", nil
 	case !ringable(o):
 		return "", nil // it works, waits on someone, or shows something other than an empty box
 	}
@@ -326,7 +348,7 @@ func (d *Driver) listenerLine(b *batch.Batch, evs []batch.Event, zone *time.Loca
 		return ""
 	}
 	untaken := batch.Untaken(evs)
-	if stalled && (len(untaken) == 0 || d.now().Sub(untaken[0].At) < doorbellAfter) {
+	if stalled && (len(untaken) == 0 || d.now().Sub(untaken[0].At) < doorbellAfter || d.driverWorking(evs)) {
 		return ""
 	}
 	if len(untaken) > 0 {
@@ -345,4 +367,19 @@ func joinLines(lines ...string) string {
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+// driverWorking says the session batch's driver is mid-turn, which starts
+// its listener when the turn ends: wakes waiting meanwhile are no stall.
+func (d *Driver) driverWorking(evs []batch.Event) bool {
+	reg, ok := batch.Driving(evs)
+	if !ok || reg.Block == "" {
+		return false
+	}
+	s, err := session.Locate(d.Term, d.Host, reg.Block)
+	if err != nil || s.ID != reg.SID {
+		return false
+	}
+	f, err := s.Frontier()
+	return err == nil && turnState(s, f) == Working
 }

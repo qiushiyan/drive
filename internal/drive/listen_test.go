@@ -348,7 +348,7 @@ func TestTheDoorbellRingsADriverWhoseTurnDiedAndNotOneALimitHolds(t *testing.T) 
 // The owner's page raises its alert only for wakes that waited past the
 // doorbell's delay: between a wake and its listener is every healthy turn.
 func TestThePageAlertsOnlyOnWakesThatWaitedPastTheDoorbell(t *testing.T) {
-	r, _ := sessionRig(t)
+	r, drv := sessionRig(t)
 	c := adopted(t, r, "T1")
 	ov := func() string {
 		t.Helper()
@@ -372,6 +372,65 @@ func TestThePageAlertsOnlyOnWakesThatWaitedPastTheDoorbell(t *testing.T) {
 	if got := ov(); !strings.Contains(got, "no listener runs") {
 		t.Fatalf("a wake that waited past the doorbell's delay is: %q", got)
 	}
+	drv.Busy("a long wake turn")
+	if got := ov(); got != "" {
+		t.Fatalf("a driver mid-turn starts its listener when the turn ends: %q", got)
+	}
+}
+
+// A ring whose Enter was lost leaves its own line in the driver's box; the
+// next run presses Enter on it rather than reading it as someone's typing.
+func TestARingWhoseEnterWasLostIsPressedAgain(t *testing.T) {
+	r, drv, _ := waitingWake(t)
+	r.w.KeyFails = 1 // the line is typed; the Enter after it fails
+	if _, err := r.d.Doorbell(r.b); err == nil {
+		t.Fatal("a ring whose Enter failed says so")
+	}
+	failed := r.events(batch.KindTold)
+	if len(failed) != 2 || failed[1].Reason == "" {
+		t.Fatalf("the failure is on record: %+v", failed)
+	}
+	got, err := r.d.Doorbell(r.b)
+	if err != nil || !strings.Contains(got, "pressed Enter") {
+		t.Fatalf("the unsent ring is sent: %q %v", got, err)
+	}
+	if keys := strings.Join(drv.Keys, " "); !strings.HasSuffix(keys, "enter") {
+		t.Fatalf("keys: %s", keys)
+	}
+}
+
+// A listener started with nothing waiting is the driver's trace: it acted on
+// what it took, or found nothing to do. One started while wakes wait has read
+// none of them.
+func TestAListenerStartedWithNothingWaitingIsHeard(t *testing.T) {
+	r, _ := sessionRig(t)
+	c := adopted(t, r, "T1")
+	done(c, "start", "Built it.")
+	if _, err := r.d.Notify(watchOf(c), "T1", time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	r.w.Clock.Sleep(2 * time.Minute)
+	before := len(r.events(batch.KindSeen))
+	done := make(chan error, 1)
+	go func() { _, err := r.d.Listen(); done <- err }()
+	for range 2000 {
+		if len(r.events(batch.KindSeen)) > before {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if len(r.events(batch.KindSeen)) == before {
+		t.Fatal("the listener started with nothing waiting leaves the driver's trace")
+	}
+	if err := r.d.Ring("", "end the listener"); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 }
 
 // A session driving a batch under the name claude is never ended by
@@ -386,7 +445,8 @@ func TestABatchNewNeverEndsALiveSessionDriversBatch(t *testing.T) {
 	second := *r.d
 	second.Caller = drive.Caller{SID: other.SID, Block: other.Block}
 	_, err = second.StartBatch(drive.BatchOptions{Name: "night-2", Wake: batch.WakeSession, Driver: "claude"})
-	if !isRefused(err) || !strings.Contains(err.Error(), "driven by another Claude Code session") || !strings.Contains(err.Error(), "batch use night") {
+	if !isRefused(err) || !strings.Contains(err.Error(), "driven by another Claude Code session") || !strings.Contains(err.Error(), "batch use night") ||
+		!strings.Contains(err.Error(), "end it first (drive --batch night batch end)") {
 		t.Fatalf("another session's batch new is refused while the driver runs: %v", err)
 	}
 	if live, _ := r.d.Store.Live(); !slicesHasBatch(live, st.Batch.Meta.Name) {

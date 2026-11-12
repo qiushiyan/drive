@@ -129,7 +129,8 @@ func (d *Driver) StartBatch(opt BatchOptions) (*Started, error) {
 					named := opt
 					named.Driver = "NAME"
 					return nil, &Refused{Reason: fmt.Sprintf("driver %s's batch %s is driven by another Claude Code session (%s, block %s), and a new batch would end it", m.Driver, cur.Meta.Name, reg.SID, rex.Short(reg.Block)),
-						Next: fmt.Sprintf("name a driver of your own: %s; or, if this session takes %s over, %s", d.batchCommand(named), cur.Meta.Name, d.runIn("", "batch", "use", cur.Meta.Name))}
+						Next: fmt.Sprintf("if %s's drive is over, end it first (%s), then run this again; to drive beside it, name a driver of your own: %s; if this session takes %s over: %s",
+							cur.Meta.Name, d.runIn(cur.Meta.Name, "batch", "end"), d.batchCommand(named), cur.Meta.Name, d.runIn("", "batch", "use", cur.Meta.Name))}
 				}
 			}
 		}
