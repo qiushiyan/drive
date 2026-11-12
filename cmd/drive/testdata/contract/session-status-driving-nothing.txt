@@ -1,0 +1,6 @@
+$ drive status --quick
+exit 1
+--- stdout
+--- stderr
+drive: error: this Claude Code session drives no batch, and named drivers drive batches here: session-driver drives 2026-10-27
+next: to drive, start your own batch, which makes this session its driver: `drive batch new NAME`; to read another's, name it: drive --batch 2026-10-27 status --quick

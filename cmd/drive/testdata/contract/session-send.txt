@@ -1,0 +1,5 @@
+$ drive send a00002@46ab799f --as T1 go on
+exit 0
+--- stdout
+arrived T1: go on, notice attached; wake armed
+--- stderr

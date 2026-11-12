@@ -1,0 +1,10 @@
+$ drive --batch night notify T1
+exit 0
+--- stdout
+2026-10-23T01:03:03Z woke the driver for T1 (done)
+T1 (a00002): its turn ended
+--- reply (end) ---
+ok
+view: T1@fde4aea7
+next: decide from its reply: drive --batch night send T1@fde4aea7 '…'; drive --batch night park T1@fde4aea7 --until WHEN '…' (when it waits on a decision that only the owner can make, record its ask and leave out --until); or drive --batch night close T1@fde4aea7
+--- stderr

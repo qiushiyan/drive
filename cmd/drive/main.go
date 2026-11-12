@@ -102,15 +102,21 @@ type wiring func(config.Config) *drive.Driver
 
 func machine(cfg config.Config) *drive.Driver {
 	self, _ := os.Executable()
-	caller := drive.Caller{SID: os.Getenv("CLAUDE_CODE_SESSION_ID"), Block: os.Getenv("REX_BLOCK"), Config: os.Getenv("CLAUDE_CONFIG_DIR")}
-	if caller.SID != "" && caller.Config == "" {
-		caller.Config = filepath.Join(cfg.Home, ".claude")
-	}
-	return &drive.Driver{Caller: caller,
+	return &drive.Driver{Caller: callerFrom(os.Getenv, cfg.Home),
 		Term: rex.CLI{}, Host: session.Machine{Home: cfg.Home}, Store: batch.Store{Dir: cfg.StateDir},
 		Cfg: cfg, Progress: progress.Tools{}, Pickups: drive.BriefCLI{Home: cfg.Home}, Watches: drive.Detached{Dir: filepath.Join(cfg.StateDir, "watches")}, Self: self,
 		Sampler: drive.DetachedSampler{Pidfile: filepath.Join(cfg.StateDir, "sampler.pid"), Log: filepath.Join(cfg.StateDir, "sampler.log"), Dir: cfg.Home},
 	}
+}
+
+// callerFrom is the Claude Code session a command runs in, as its
+// environment names it: a session batch's driver is known by it.
+func callerFrom(getenv func(string) string, home string) drive.Caller {
+	c := drive.Caller{SID: getenv("CLAUDE_CODE_SESSION_ID"), Block: getenv("REX_BLOCK"), Config: getenv("CLAUDE_CONFIG_DIR")}
+	if c.SID != "" && c.Config == "" {
+		c.Config = filepath.Join(home, ".claude")
+	}
+	return c
 }
 
 var app = clikit.App{

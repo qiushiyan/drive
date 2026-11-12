@@ -62,6 +62,33 @@ func fake(w *testkit.World) clikit.App {
 	return a
 }
 
+// fakeAs is fake run from inside a Claude Code session, as the caller's
+// environment names it. The watches persist across commands, as a
+// machine's do.
+func fakeAs(w *testkit.World, caller drive.Caller) clikit.App {
+	a := app
+	gwt := gwtWorld{removed: map[string]bool{}}
+	watches := &testkit.Watches{}
+	a.Options = append(slices.Clone(app.Options), kong.Bind(wiring(func(cfg config.Config) *drive.Driver {
+		return &drive.Driver{Term: w, Host: w, Store: batch.Store{Dir: cfg.StateDir}, Cfg: cfg, Progress: gwt,
+			Watches: watches, Self: "/bin/drive", Now: w.Clock.Now, Sleep: w.Clock.Sleep, Caller: caller}
+	})))
+	return a
+}
+
+// A command run inside a Claude Code session in Rex knows that session from
+// its environment, and one run anywhere else knows none.
+func TestTheCallerIsTheClaudeCodeSessionTheEnvironmentNames(t *testing.T) {
+	env := map[string]string{"CLAUDE_CODE_SESSION_ID": "s-1", "REX_BLOCK": "block:b-1"}
+	got := callerFrom(func(k string) string { return env[k] }, "/home/q")
+	if got != (drive.Caller{SID: "s-1", Block: "block:b-1", Config: "/home/q/.claude"}) {
+		t.Fatalf("the primary account's directory when none is named: %+v", got)
+	}
+	if got := callerFrom(func(string) string { return "" }, "/home/q"); got != (drive.Caller{}) {
+		t.Fatalf("a shell outside Claude Code names no session: %+v", got)
+	}
+}
+
 // cli runs drive as main does, returning its exit status and output.
 func cli(a clikit.App, args ...string) (int, string, string) {
 	r := clikittest.Run(a, upgrade(args)...)

@@ -330,7 +330,7 @@ func (d *Driver) Status(withProgress bool) (*Status, error) {
 	hearing := batch.Hearings(evs, d.now())
 	out.Rows, out.Others, out.Closed = d.rows(b, evs, members, blocks, holds, hearing, out.Zone, withProgress)
 	if b != nil && b.Meta.Wakes() {
-		out.Unheard = joinLines(unheardLine(hearing, out.Zone), d.listenerLine(b, evs, out.Zone))
+		out.Unheard = joinLines(unheardLine(hearing, out.Zone), d.listenerLine(b, evs, out.Zone, false))
 		out.TimersHeld = d.timersHeld(b, evs)
 	}
 	if withProgress && b != nil {

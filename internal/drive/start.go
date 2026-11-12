@@ -11,6 +11,7 @@ import (
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/config"
 	"github.com/qiushiyan/drive/internal/rex"
+	"github.com/qiushiyan/drive/internal/session"
 )
 
 // Started reports a batch that started.
@@ -119,6 +120,20 @@ func (d *Driver) StartBatch(opt BatchOptions) (*Started, error) {
 		return nil, &Refused{Reason: "a batch a Claude Code session drives is started from that session, in its Rex block",
 			Next: "run it from the driver's own session in Rex: " + again}
 	}
+	if m.Wake == batch.WakeSession {
+		// A new batch replaces its driver's last, so one Claude Code session
+		// never ends the batch another drives under the same name.
+		if cur, err := d.Store.Current(m.Driver); err == nil && cur.Meta.Wake == batch.WakeSession {
+			if evs, err := cur.Events(); err == nil {
+				if reg, ok := batch.Driving(evs); ok && reg.SID != d.Caller.SID && d.drivesStill(reg) {
+					named := opt
+					named.Driver = "NAME"
+					return nil, &Refused{Reason: fmt.Sprintf("driver %s's batch %s is driven by another Claude Code session (%s, block %s), and a new batch would end it", m.Driver, cur.Meta.Name, reg.SID, rex.Short(reg.Block)),
+						Next: fmt.Sprintf("name a driver of your own: %s; or, if this session takes %s over, %s", d.batchCommand(named), cur.Meta.Name, d.runIn("", "batch", "use", cur.Meta.Name))}
+				}
+			}
+		}
+	}
 	if m.RexSession != "" {
 		// Recorded by its label: an id, as $REX_SESSION gives it, names only
 		// the session that holds it, and a batch's sessions reopen under the
@@ -205,6 +220,13 @@ func (d *Driver) UseBatch(name string) (*batch.Batch, error) {
 		}
 	}
 	return b, nil
+}
+
+// drivesStill says the Claude Code session a registration names still runs
+// in its block; one that ended, or whose tab runs other work, drives nothing.
+func (d *Driver) drivesStill(reg batch.Event) bool {
+	s, err := session.Locate(d.Term, d.Host, reg.Block)
+	return err == nil && s.ID == reg.SID
 }
 
 // register is the record that the Claude Code session this command runs in

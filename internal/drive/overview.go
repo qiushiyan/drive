@@ -114,7 +114,7 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 	members := batch.Members(evs)
 	hearing := batch.Hearings(evs, d.now())
 	if ov.Wakes {
-		ov.Unheard = joinLines(unheardLine(hearing, ov.Zone), d.listenerLine(b, evs, ov.Zone))
+		ov.Unheard = joinLines(unheardLine(hearing, ov.Zone), d.listenerLine(b, evs, ov.Zone, true))
 	}
 	ov.Leftovers = append(d.timersHeld(b, evs), d.leftoverLines(b)...)
 	grants, asks, notes := batch.Records(evs)

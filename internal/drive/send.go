@@ -117,9 +117,9 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 	return a.send(p, opt, v.String())
 }
 
-// wakes says whether the driver is a chat bot brought back by the session's
-// wake, which cannot hold a command open, and if so whether the session's
-// wake is armed. A Claude Code driver waits for a turn itself.
+// wakes says whether drive brings the driver back by the session's wake, a
+// chat bot's post or a Claude Code driver's listener, and if so whether the
+// session's wake is armed. A driver that waits itself runs drive wait.
 func (d *Driver) wakes(o *Observation) (webhook, armed bool) {
 	if o.in == nil || !o.in.Meta.Wakes() {
 		return false, false

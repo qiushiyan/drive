@@ -461,9 +461,9 @@ func (d *Driver) carried(b *batch.Batch, evs []batch.Event, e *Ending) []Carried
 			continue
 		}
 		jobs := d.Host.Shells(o.Session.Status.PID)
-		next := d.run("read", m.Label) // the post carries no reply of its
-		if n := d.nextFor(o, t.State, jobs); n != "" {
-			next = "read its reply first (" + next + "); then " + n
+		next := d.readFirst(o, t.State) // the post carries no reply of its
+		if asks := openAsksOn(b, m.Label); asks != "" {
+			next = asks + "; " + next
 		}
 		plan := factsOf(o, t, m, o.Session.Since(), WakeQuiet).plan()
 		out = append(out, Carried{Label: m.Label, Block: m.Block, State: t.State, View: view, Next: next, Jobs: len(jobs), post: posting{why: plan.why, due: plan.at}})
@@ -670,7 +670,9 @@ func (d *Driver) leave(b *batch.Batch, label string, e *Ending, note string, p p
 				Outcome: string(c.State), View: c.View, Via: e.Label, Jobs: c.Jobs, Why: c.post.why})
 		}
 	}
-	return b.Append(rows...)
+	// Under the batch's lock, which a listener takes wakes under, so none
+	// lands between its read and its taking and is cleared unprinted.
+	return b.Locked(func([]batch.Event) error { return b.Append(rows...) })
 }
 
 // briefLine heads every wake: a routine's prompt, not the bot's persona,

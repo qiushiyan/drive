@@ -1,0 +1,7 @@
+$ drive batch new night --tz Europe/London
+exit 0
+--- stdout
+batch night started, driver claude's current batch ($HOME/state/batches/night)
+this Claude Code session (sid-1, block a00001) drives it: each wake waits in the batch for its listener
+next: keep one listener running, in the background: drive --batch night listen
+--- stderr

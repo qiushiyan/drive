@@ -26,10 +26,24 @@ type action struct {
 	touched bool          // the action typed or pressed into the session
 }
 
+// driverHere names the live session batch whose driver runs in block now,
+// read from the block only when it is on record as a driver's.
+func (d *Driver) driverHere(block string) *batch.Batch {
+	in := d.driverBlock(block, "")
+	if in == nil {
+		return nil
+	}
+	s, err := session.Locate(d.Term, d.Host, block)
+	if err != nil {
+		return in // unreadable: the record stands
+	}
+	return d.driverBlock(block, s.ID)
+}
+
 // take owns block, which b calls label, for an action described by what,
 // unless another live batch drives it.
 func (d *Driver) take(b *batch.Batch, label, block, what string) (*action, error) {
-	if in := d.driverBlock(block); in != nil {
+	if in := d.driverHere(block); in != nil {
 		return nil, d.refuse(b, label, &Refused{Reason: fmt.Sprintf("block %s is the Claude Code session that drives batch %s, and drive types nothing into a driver", rex.Short(block), in.Meta.Name),
 			Next: "act on the sessions it drives instead: " + d.runIn(in.Meta.Name, "status")})
 	}

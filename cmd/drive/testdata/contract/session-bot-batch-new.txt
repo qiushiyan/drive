@@ -1,0 +1,5 @@
+$ drive batch new 2026-10-27 --webhook session-driver --tz Europe/London
+exit 0
+--- stdout
+batch 2026-10-27 started, driver session-driver's current batch ($HOME/state/batches/2026-10-27)
+--- stderr

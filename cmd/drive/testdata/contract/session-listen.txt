@@ -1,0 +1,8 @@
+$ drive listen
+exit 0
+--- stdout
+batch night, taken 02:03:
+- timer done: veto
+- T1: done at T1@fde4aea7; next: read its reply first (drive --batch night read T1)
+next: act on each, then listen again, in the background: drive --batch night listen
+--- stderr

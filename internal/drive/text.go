@@ -476,6 +476,15 @@ func describe(e batch.Event, zone *time.Location) string {
 			return what + ", left for the listener"
 		}
 		return fmt.Sprintf("%s, posted (http %d, try %d)", what, e.HTTP, e.Try)
+	case batch.KindTold:
+		what := "told the driver: " + e.Outcome
+		if e.Outcome == batch.NoticeDoorbell {
+			what = "rang the driver in block " + rex.Short(e.Block) + ": wakes waited and no listener ran"
+		}
+		if e.Reason != "" {
+			what += ", and it failed: " + e.Reason
+		}
+		return what
 	case batch.KindTaken:
 		return "the listener took the wakes left for it"
 	case batch.KindDriver:

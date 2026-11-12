@@ -236,8 +236,12 @@ func (d *Driver) noBatchOf(driver string, cause error) *Refused {
 		return &Refused{Reason: fmt.Sprintf("no batch has ever had driver %s", driver), cause: cause,
 			Next: "the drivers and their batches: " + d.runIn("", "batch", "list")}
 	}
+	start := fmt.Sprintf("`drive batch new NAME --webhook %s`", driver)
+	if b, err := d.Store.Get(last); err == nil && b.Meta.Wake == batch.WakeSession {
+		start = fmt.Sprintf("`drive batch new NAME --driver %s`, from the Claude Code session that drives it", driver)
+	}
 	return &Refused{Reason: fmt.Sprintf("driver %s drives no batch now; its last, %s, ended", driver, last), cause: cause,
-		Next: fmt.Sprintf("read it: %s; or start its next: `drive batch new NAME --webhook %s`", d.runIn(last, "status"), driver)}
+		Next: fmt.Sprintf("read it: %s; or start its next: %s", d.runIn(last, "status"), start)}
 }
 
 // nameYourself refuses a command that named no driver on a machine where
@@ -256,10 +260,18 @@ func (d *Driver) nameYourself(named []*batch.Batch, unnamed *batch.Batch) *Refus
 	r := &Refused{Reason: "this command names no driver, and named drivers drive batches here: " + strings.Join(drives, ", "),
 		Next: "run it as the driver you are: " + strings.Join(runs, "; ")}
 	if d.Caller.SID != "" && d.Caller.Block != "" {
-		// A Claude Code session is none of the chat drivers, and a read of
-		// theirs would count as their run hearing its wake.
+		// A Claude Code session is none of the chat drivers, so it reads their
+		// batches by name, which leaves no trace of their hearing.
+		var reads []string
+		for _, b := range named {
+			reads = append(reads, d.runIn(b.Meta.Name, lineWords(d.Line)...))
+		}
 		r.Reason = "this Claude Code session drives no batch, and named drivers drive batches here: " + strings.Join(drives, ", ")
-		r.Next = "start your own, which makes this session its driver: `drive batch new NAME`"
+		r.Next = "to drive, start your own batch, which makes this session its driver: `drive batch new NAME`; to read another's, name it: " + strings.Join(reads, "; ")
+		if in := d.driverBlock(d.Caller.Block, ""); in != nil {
+			r.Reason = fmt.Sprintf("this block drives batch %s under another conversation than this one", in.Meta.Name)
+			r.Next = "if this session drives it now: " + d.runIn("", "batch", "use", in.Meta.Name)
+		}
 	}
 	return r
 }
@@ -295,8 +307,10 @@ func (d *Driver) drives(b *batch.Batch, evs []batch.Event) bool {
 }
 
 // driverBlock names the live session batch whose driver runs in block, nil
-// when none does: drive never types into a driver.
-func (d *Driver) driverBlock(block string) *batch.Batch {
+// when none does: drive never types into a driver. A sid other than "" must
+// also be the registered conversation, since a batch outlives its drive and
+// its driver's tab can be reused for other work.
+func (d *Driver) driverBlock(block, sid string) *batch.Batch {
 	live, err := d.Store.Live()
 	if err != nil {
 		return nil
@@ -306,7 +320,7 @@ func (d *Driver) driverBlock(block string) *batch.Batch {
 			continue
 		}
 		if evs, err := b.Events(); err == nil {
-			if reg, ok := batch.Driving(evs); ok && reg.Block != "" && reg.Block == block {
+			if reg, ok := batch.Driving(evs); ok && reg.Block != "" && reg.Block == block && (sid == "" || sid == reg.SID) {
 				return b
 			}
 		}

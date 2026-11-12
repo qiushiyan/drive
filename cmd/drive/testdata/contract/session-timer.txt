@@ -1,0 +1,5 @@
+$ drive timer 1 veto
+exit 0
+--- stdout
+timer armed: the driver is woken in 1s (veto)
+--- stderr

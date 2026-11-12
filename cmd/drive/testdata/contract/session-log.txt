@@ -1,0 +1,16 @@
+$ drive log
+exit 0
+--- stdout
+02:00  batch                 started
+02:00  driver                Claude Code session sid-1 in block a00001 drives this batch
+02:00  adopt        T1       block a00002, account acct@example.com, $ROOT/work
+02:00  send-intent  T1       go on
+02:00  send         T1       arrived: go on (the notice attached)
+02:00  watch        T1       
+02:00  watch                 timer veto
+02:00  posting               timer, due 02:00
+02:00  wake                  timer veto, left for the listener
+02:03  posting      T1       turn-ended, due 02:01, held by gap
+02:03  wake         T1       done, left for the listener
+02:03  taken                 the listener took the wakes left for it
+--- stderr

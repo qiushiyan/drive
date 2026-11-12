@@ -397,7 +397,8 @@ one listener at a time.`
 }
 
 func (c *ListenCmd) Run(ctx *kong.Context, d *drive.Driver) error {
-	d.Seen() // the driver's run, which starts its listener once it acted
+	// No Seen: a driver hears a wake by a command after it took it, never by
+	// starting the listener that takes it.
 	t, err := d.Listen()
 	if err != nil {
 		return err

@@ -13,6 +13,7 @@ import (
 
 	"github.com/qiushiyan/clikit"
 
+	"github.com/qiushiyan/drive/internal/drive"
 	"github.com/qiushiyan/drive/internal/testkit"
 )
 
@@ -551,4 +552,31 @@ func seenIn(t *testing.T, c *contract) int {
 		t.Fatal(err)
 	}
 	return strings.Count(string(data), `"kind":"seen"`)
+}
+
+// What a Claude Code driver reads: a session driving nothing beside a chat
+// driver is told to start its own batch, its batch new registers it, and its
+// listener prints what a timer and a woken session left for it.
+func TestContractSessionDriver(t *testing.T) {
+	c := newContract(t)
+	write(t, filepath.Join(c.home, "config", "webhooks", "session-driver"), "URL=http://127.0.0.1:9/unused\nAUTH=Bearer x\n")
+	c.run("session-bot-batch-new", "batch", "new", "2026-10-27", "--webhook", "session-driver", "--tz", "Europe/London")
+	drv := c.w.Add("driver")
+	drv.Busy("drive windows 1 and 2")
+	drv.Done("plan posted")
+	t1 := c.w.Add("T1")
+	t1.Busy("onboard")
+	t1.Done("analysis: the pool drains in two steps")
+	c.app = fakeAs(c.w, drive.Caller{SID: drv.SID, Block: drv.Block, Config: drv.Config})
+
+	c.run("session-status-driving-nothing", "status", "--quick")
+	c.run("session-batch-new", "batch", "new", "night", "--tz", "Europe/London")
+	v := view(t, c.run("session-read-block", "read", t1.Block[len(t1.Block)-6:]))
+	c.run("session-send", "send", v, "--as", "T1", "go on")
+	c.run("session-timer", "timer", "1", "veto")
+	c.run("session-ring", "--batch", "night", "ring", "1", "--", "veto")
+	c.run("session-notify", "--batch", "night", "notify", "T1")
+	c.run("session-status-unheard", "status", "--quick")
+	c.run("session-listen", "listen")
+	c.run("session-log", "log")
 }

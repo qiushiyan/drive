@@ -1,0 +1,5 @@
+$ drive --batch night ring 1 -- veto
+exit 0
+--- stdout
+timer done: veto
+--- stderr

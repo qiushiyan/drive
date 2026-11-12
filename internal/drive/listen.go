@@ -155,16 +155,25 @@ func (d *Driver) sessionNow(b *batch.Batch, members []*batch.Member, label strin
 	if !t.Over {
 		return fmt.Sprintf("%s: working again at %s, its wake comes when that turn ends", label, o.View)
 	}
-	jobs := d.Host.Shells(o.Session.Status.PID)
-	next := "read its reply first (" + d.run("read", label) + ")"
-	if n := d.nextFor(o, t.State, jobs); n != "" {
-		next += "; then " + n
-	}
 	line := fmt.Sprintf("%s: %s at %s", label, t.State, o.View)
 	if asks := openAsksOn(o.in, label); asks != "" {
 		line += "; " + asks
 	}
-	return line + "; next: " + next
+	line += "; next: " + d.readFirst(o, t.State)
+	if w := strings.TrimSpace(d.waiterLines(b, label)); w != "" {
+		line += "\n  " + strings.ReplaceAll(w, "\n", "\n  ")
+	}
+	return line
+}
+
+// readFirst is what to run about a woken session whose reply the message
+// does not carry: read it, then what its ending decides.
+func (d *Driver) readFirst(o *Observation, state State) string {
+	next := d.run("read", o.Label)
+	if n := d.nextFor(o, state, d.Host.Shells(o.Session.Status.PID)); n != "" {
+		return "read its reply first (" + next + "); then " + n
+	}
+	return "read its reply first (" + next + ")"
 }
 
 // openAsksOn names the asks still open on a session, "" when none is: what
@@ -256,8 +265,11 @@ func (d *Driver) Doorbell(b *batch.Batch) (string, error) {
 		if batch.Heard(e) {
 			break // the driver ran since the last ring
 		}
-		if e.Kind == batch.KindTold && e.Outcome == batch.NoticeDoorbell && d.now().Sub(e.At) < repostAfter {
+		if e.Kind == batch.KindTold && e.Outcome == batch.NoticeDoorbell && e.Reason == "" && d.now().Sub(e.At) < repostAfter {
 			return "", nil
+		}
+		if e.Kind == batch.KindTold && e.Outcome == batch.NoticeDoorbell && e.Reason != "" {
+			break // the last ring failed: try again
 		}
 	}
 	release, err := d.Store.Own(reg.Block, b.Meta.Name, "ringing the driver's doorbell")
@@ -272,30 +284,52 @@ func (d *Driver) Doorbell(b *batch.Batch) (string, error) {
 		return "", nil // the driver is not there to ring
 	case o.Session.ID != reg.SID:
 		return "", nil // another conversation runs in its block now
-	case o.State() != Done && o.State() != Idle:
-		return "", nil // it is working, or a prompt or a limit holds it: it listens once its turn ends
-	case o.Input == turn.InputTyped:
-		return "", nil // the owner may be typing to it
+	case !ringable(o):
+		return "", nil // it works, waits on someone, or shows something other than an empty box
 	}
 	a.o = o
 	line := d.doorbellLine(b)
+	// On record before the typing, as the driver can answer before it returns.
 	if err := b.Append(batch.Event{At: d.now(), Kind: batch.KindTold, Outcome: batch.NoticeDoorbell, Block: reg.Block}); err != nil {
 		return "", err
 	}
 	if _, err := a.deliver(line); err != nil {
+		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindTold, Outcome: batch.NoticeDoorbell, Block: reg.Block, Reason: clip(firstLine(err.Error()), 200)})
 		return "", err
 	}
 	return line, nil
 }
 
+// ringable says the driver's session can take a typed line: its turn is
+// over, on no prompt, with an empty box. A turn an API error or an interrupt
+// ended is the ordinary way a wake turn dies without starting its listener,
+// a Rex restart's interrupt among them; a rejected login or a usage limit
+// moves only once someone acts on it.
+func ringable(o *Observation) bool {
+	state := o.State()
+	switch {
+	case state == Working || state.blocked():
+		return false
+	case o.Frontier.Error != nil && o.Frontier.Error.Limit:
+		return false
+	}
+	return o.Input == turn.InputEmpty || o.Input == turn.InputSuggestion // typing lands in whatever the screen shows
+}
+
 // listenerLine says a session batch's driver has no listener running, and
 // how long wakes have waited for one; "" for any other batch, or while one
 // runs.
-func (d *Driver) listenerLine(b *batch.Batch, evs []batch.Event, zone *time.Location) string {
+// stalled keeps only wakes that waited past the doorbell's delay, as the
+// owner's page says nothing of a driver between its wake and its listener.
+func (d *Driver) listenerLine(b *batch.Batch, evs []batch.Event, zone *time.Location, stalled bool) string {
 	if b.Meta.Wake != batch.WakeSession || d.Watches == nil || d.Watches.Alive(listenName(b)) {
 		return ""
 	}
-	if untaken := batch.Untaken(evs); len(untaken) > 0 {
+	untaken := batch.Untaken(evs)
+	if stalled && (len(untaken) == 0 || d.now().Sub(untaken[0].At) < doorbellAfter) {
+		return ""
+	}
+	if len(untaken) > 0 {
 		return fmt.Sprintf("no listener runs, and %d wakes have waited for the driver since %s: start one, in the background: %s",
 			len(untaken), untaken[0].At.In(zone).Format("15:04"), d.run("listen"))
 	}
