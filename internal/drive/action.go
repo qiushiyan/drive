@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/qiushiyan/drive/internal/batch"
+	"github.com/qiushiyan/drive/internal/rex"
 	"github.com/qiushiyan/drive/internal/session"
 	"github.com/qiushiyan/drive/internal/turn"
 )
@@ -28,6 +29,10 @@ type action struct {
 // take owns block, which b calls label, for an action described by what,
 // unless another live batch drives it.
 func (d *Driver) take(b *batch.Batch, label, block, what string) (*action, error) {
+	if in := d.driverBlock(block); in != nil {
+		return nil, d.refuse(b, label, &Refused{Reason: fmt.Sprintf("block %s is the Claude Code session that drives batch %s, and drive types nothing into a driver", rex.Short(block), in.Meta.Name),
+			Next: "act on the sessions it drives instead: " + d.runIn(in.Meta.Name, "status")})
+	}
 	release, err := d.own(b, label, block, what)
 	if err != nil {
 		return nil, d.refuse(b, label, err)
@@ -175,7 +180,7 @@ func (a *action) finish(err *error) (watched bool) {
 		label = a.o.Label
 	}
 	*err = a.d.refuse(a.b, label, *err)
-	if !a.touched || a.b == nil || a.b.Meta.Wake != "webhook" {
+	if !a.touched || a.b == nil || !a.b.Meta.Wakes() {
 		return false
 	}
 	evs, werr := a.b.Events()

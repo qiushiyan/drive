@@ -46,9 +46,22 @@ type Driver struct {
 	// Line is the command as the driver ran it, without --batch or
 	// --driver, for a refusal that has it run again for one driver.
 	Line []string
+	// Caller is the Claude Code session the command runs in, when it runs in
+	// one: a session batch's driver is known by it, and a chat driver's
+	// shell runs in none.
+	Caller Caller
 
 	bound    *batch.Batch // the batch Batch resolved, for the selection in boundFor
 	boundFor string
+}
+
+// Caller is a Claude Code session a command runs in, as its environment
+// names it: the session, the Rex block it runs in, and its account's
+// configuration directory.
+type Caller struct {
+	SID    string
+	Block  string
+	Config string
 }
 
 // Refused is an action drive would not take in the state the session is in.
@@ -187,6 +200,9 @@ func (d *Driver) resolve() (*batch.Batch, error) {
 	if err != nil {
 		return nil, &Refused{Reason: err.Error(), cause: err}
 	}
+	if b := drivenBy(live, d.Caller.SID); b != nil {
+		return b, nil // a session batch's driver is known by where its command ran
+	}
 	var unnamed *batch.Batch
 	var named []*batch.Batch
 	for _, b := range live {
@@ -237,8 +253,65 @@ func (d *Driver) nameYourself(named []*batch.Batch, unnamed *batch.Batch) *Refus
 		drives = append(drives, fmt.Sprintf("a driver of no name drives %s", unnamed.Meta.Name))
 		runs = append(runs, d.runIn(unnamed.Meta.Name, lineWords(d.Line)...))
 	}
-	return &Refused{Reason: "this command names no driver, and named drivers drive batches here: " + strings.Join(drives, ", "),
+	r := &Refused{Reason: "this command names no driver, and named drivers drive batches here: " + strings.Join(drives, ", "),
 		Next: "run it as the driver you are: " + strings.Join(runs, "; ")}
+	if d.Caller.SID != "" && d.Caller.Block != "" {
+		// A Claude Code session is none of the chat drivers, and a read of
+		// theirs would count as their run hearing its wake.
+		r.Reason = "this Claude Code session drives no batch, and named drivers drive batches here: " + strings.Join(drives, ", ")
+		r.Next = "start your own, which makes this session its driver: `drive batch new NAME`"
+	}
+	return r
+}
+
+// drivenBy is the live session batch the Claude Code session sid drives, nil
+// when it drives none.
+func drivenBy(live []*batch.Batch, sid string) *batch.Batch {
+	if sid == "" {
+		return nil
+	}
+	for _, b := range live {
+		if b.Meta.Wake != batch.WakeSession {
+			continue
+		}
+		if evs, err := b.Events(); err == nil {
+			if reg, ok := batch.Driving(evs); ok && reg.SID == sid {
+				return b
+			}
+		}
+	}
+	return nil
+}
+
+// drives says the command runs as b's driver, as far as its environment
+// tells: a session batch's driver is the Claude Code session it registered,
+// and a chat driver's shell runs in no Claude Code session.
+func (d *Driver) drives(b *batch.Batch, evs []batch.Event) bool {
+	if b.Meta.Wake == batch.WakeSession {
+		reg, ok := batch.Driving(evs)
+		return ok && d.Caller.SID != "" && reg.SID == d.Caller.SID
+	}
+	return d.Caller.SID == ""
+}
+
+// driverBlock names the live session batch whose driver runs in block, nil
+// when none does: drive never types into a driver.
+func (d *Driver) driverBlock(block string) *batch.Batch {
+	live, err := d.Store.Live()
+	if err != nil {
+		return nil
+	}
+	for _, b := range live {
+		if b.Meta.Wake != batch.WakeSession {
+			continue
+		}
+		if evs, err := b.Events(); err == nil {
+			if reg, ok := batch.Driving(evs); ok && reg.Block != "" && reg.Block == block {
+				return b
+			}
+		}
+	}
+	return nil
 }
 
 func lineWords(line []string) []any {

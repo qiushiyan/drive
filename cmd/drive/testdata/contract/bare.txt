@@ -2,6 +2,6 @@ $ drive
 exit 2
 --- stdout
 --- stderr
-drive: error: expected one of "status", "read", "wait", "send", "open", ...
+drive: error: expected one of "status", "read", "wait", "listen", "send", ...
 Usage: drive <command> [flags]
 Run "drive --help" for details.

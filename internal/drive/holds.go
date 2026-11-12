@@ -30,7 +30,7 @@ func (h *holdRefused) Unwrap() error { return &h.Refused }
 // open or a session outside the batch; retry is the refused command.
 func (d *Driver) holdNext(b *batch.Batch, h heldBy, label, view, retry string, open bool) string {
 	var next string
-	if b.Meta.Wake != "webhook" {
+	if !b.Meta.Wakes() {
 		wait := fmt.Sprintf("wait for %s's turn to end (%s)", h.Session, d.run("wait", h.Session))
 		switch h.kind {
 		case holdPrompt:
@@ -354,7 +354,7 @@ func (d *Driver) unfreed(b *batch.Batch, members []*batch.Member, h heldBy, agai
 	r := &Refused{Reason: fmt.Sprintf("%s stays held by %s since %s, %s: a hold is freed only once its holder's turn has ended",
 		h.Name, h.Session, h.Since.In(b.Zone()).Format("15:04"), h.why())}
 	ends := fmt.Sprintf("%s's wake comes when its turn ends", h.Session)
-	if b.Meta.Wake != "webhook" {
+	if !b.Meta.Wakes() {
 		ends = fmt.Sprintf("wait for %s's turn to end (%s)", h.Session, d.run("wait", h.Session))
 	}
 	switch h.kind {

@@ -24,8 +24,10 @@ apart:
   drive --driver itell status          # the batch driver itell drives now
   drive --batch 2026-10-27 read search # one batch by name, as next: prints it
 
-A command that names neither acts in the batch of the driver with no name,
-and is refused while any named driver drives one.
+A Claude Code session that started its batch from Rex (batch new) names
+neither: its commands act in that batch. Any other command that names
+neither acts in the batch of the driver with no name, and is refused while
+any named driver drives one.
 
 A refusal or failure that leaves something to do ends with a next: line: a
 command that runs as written on the session as it stands, naming the batch
@@ -44,6 +46,8 @@ Commands:
   read <session>                      Print a session's newest reply, where it stands, its view, and
                                       next: where its state decides it.
   wait <session>                      Block until a session's turn ends, then print how it ended.
+  listen                              Block until wakes wait for this Claude Code driver, then print
+                                      where each woken session stands.
   send <view> [<line> ...]            Send a session its next step, decided on a view.
   open <label> [<line> ...]           Open a new Claude Code session in Rex, in the batch, with an
                                       optional first step.

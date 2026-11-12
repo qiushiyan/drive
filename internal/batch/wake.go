@@ -46,6 +46,7 @@ type Post struct {
 	Began   time.Time
 	Ended   time.Time // zero while it has no result
 	HTTP    int       // the webhook's answer; 0 while it has none, or when it failed
+	Inbox   bool      // left for a session driver's listener, which delivers it
 	Reason  string    // why it failed
 	// Heard is the first trace a driver left from when the post began until its
 	// session's next one did: a run can act before the post that started it
@@ -65,8 +66,9 @@ func (p *Post) Pending() bool { return p.ended == 0 }
 // post overtook it, or the post that carried it failed.
 func (p *Post) Lost() bool { return p.lost }
 
-// Delivered says the webhook took it.
-func (p *Post) Delivered() bool { return p.HTTP != 0 }
+// Delivered says it reached the driver's door: the webhook took it, or it was
+// left for a session driver's listener.
+func (p *Post) Delivered() bool { return p.HTTP != 0 || p.Inbox }
 
 // Posts reads every post from the log, oldest first. A wake is the result of
 // its session's oldest posting still without one, as a session has one watch
@@ -115,9 +117,9 @@ func Posts(evs []Event) []Post {
 				newest[e.Session] = j
 			}
 			p := &out[j]
-			p.Ended, p.ended, p.HTTP, p.Reason, p.Jobs, p.Via = e.At, i, e.HTTP, e.Reason, e.Jobs, e.Via
+			p.Ended, p.ended, p.HTTP, p.Inbox, p.Reason, p.Jobs, p.Via = e.At, i, e.HTTP, e.Inbox, e.Reason, e.Jobs, e.Via
 			p.Block, p.Why, p.View, p.Note = orOf(e.Block, p.Block), orOf(e.Why, p.Why), orOf(e.View, p.View), orOf(e.Note, p.Note)
-			if e.HTTP == 0 && e.Via == "" && e.Session != "" {
+			if !e.Delivered() && e.Via == "" && e.Session != "" {
 				// The endings it carried went nowhere either: their own watches still run.
 				for s, q := range pending {
 					kept := q[:0]

@@ -1133,6 +1133,19 @@ func (w *Watches) Stop(name string) error {
 	return nil
 }
 
+func (w *Watches) Claim(name string) (bool, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if _, ok := w.Running[name]; ok {
+		return false, nil
+	}
+	if w.Running == nil {
+		w.Running = map[string][]string{}
+	}
+	w.Running[name] = []string{"(claimed)"}
+	return true, nil
+}
+
 func (w *Watches) Retire(name string) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()

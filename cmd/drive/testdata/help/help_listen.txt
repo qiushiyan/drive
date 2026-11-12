@@ -1,0 +1,32 @@
+Usage: drive listen [flags]
+
+Block until wakes wait for this Claude Code driver, then print where each woken session stands.
+
+A batch a Claude Code session drives (batch new, run from that session in
+Rex) is told of its sessions as a chat driver is: a minute after a turn
+ends, at once on a prompt or an error, and as the watchdog finds what needs
+it. Each wake waits in the batch until the listener takes it. Keep one
+listener running, in the background: it ends once wakes wait, taking them
+all, and prints each woken session as it stands now, its state, its view and
+next:, then the listener to start again. Read a session's reply before
+acting on it.
+
+When wakes wait and no listener runs, as after a Rex restart, the machine's
+watchdog types one line into the driver's own block, idle and with nothing
+typed in it, saying to start one. Only the driver's own session listens, and
+one listener at a time.
+
+Inherited flags:
+  -h, --help           Show context-sensitive help.
+      --batch=NAME     Act in this batch, as drive prints its name, instead of the driver's current
+                       one. It may stand anywhere on the line.
+      --driver=NAME    Act in the batch this driver drives now; a chat driver's name is its
+                       webhook's. It may stand anywhere on the line.
+
+Exit codes:
+  0    success
+  1    refused: nothing was done; next: says what to run instead
+  2    invalid arguments; nothing was run
+  3    tried and did not end as asked; the message says what did happen
+  4    the session's login was rejected; next: relaunches it on another account, or says to tell the
+       owner

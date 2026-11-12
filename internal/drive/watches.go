@@ -26,6 +26,9 @@ type Watches interface {
 	// sent from now on arms a new one. It says whether the watch was still
 	// on them: false when Stop got there first.
 	Retire(name string) bool
+	// Claim puts the calling process on the books as the watch name, such
+	// as a listener a driver runs itself; false when one already runs.
+	Claim(name string) (bool, error)
 }
 
 // Detached runs each watch as a process in a session of its own, under no
@@ -204,6 +207,20 @@ func (w Detached) Stop(name string) error {
 		return fmt.Errorf("stopping watch %s (pid %d): %w", name, p.pid, err)
 	}
 	return nil
+}
+
+func (w Detached) Claim(name string) (bool, error) {
+	if w.Alive(name) {
+		return false, nil
+	}
+	if err := os.MkdirAll(w.Dir, 0o755); err != nil {
+		return false, err
+	}
+	p, ok := identify(os.Getpid())
+	if !ok {
+		return false, fmt.Errorf("this process (pid %d) cannot be read from the process table", os.Getpid())
+	}
+	return true, writePidfile(w.pidfile(name), p)
 }
 
 func (w Detached) Retire(name string) bool {

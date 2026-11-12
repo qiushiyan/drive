@@ -65,7 +65,7 @@ func (d *Driver) Watch(ref string) (*Watched, error) {
 	if err != nil {
 		return nil, err
 	}
-	if b.Meta.Wake != "webhook" {
+	if !b.Meta.Wakes() {
 		return nil, &Refused{Reason: fmt.Sprintf("batch %s wakes no one (wake: %s)", b.Meta.Name, b.Meta.Wake),
 			Next: "wait for it yourself, in the background: " + d.run("wait", ref)}
 	}
@@ -130,6 +130,9 @@ func (e *noWebhook) next(then string) string {
 
 // canPost says whether a wake of the batch can reach its driver.
 func (d *Driver) canPost(b *batch.Batch) error {
+	if b.Meta.Wake == batch.WakeSession {
+		return nil // its wakes are left in the log, for its listener
+	}
 	if hook, err := d.Cfg.LoadWebhook(b.Meta.Webhook); err == nil && hook.URL != "" {
 		return nil
 	}
@@ -164,7 +167,7 @@ func (d *Driver) Due() (armed, later []Rearmed, err error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	if b.Meta.Wake != "webhook" {
+	if !b.Meta.Wakes() {
 		return nil, nil, &Refused{Reason: fmt.Sprintf("batch %s wakes no one (wake: %s)", b.Meta.Name, b.Meta.Wake)}
 	}
 	st, err := d.Status(false)
@@ -292,7 +295,7 @@ func (d *Driver) Timer(after time.Duration, note string) error {
 		return err
 	}
 	secs := fmt.Sprint(int(after.Seconds()))
-	if b.Meta.Wake != "webhook" {
+	if !b.Meta.Wakes() {
 		return &Refused{Reason: fmt.Sprintf("batch %s wakes no one (wake: %s)", b.Meta.Name, b.Meta.Wake),
 			Next: "wait it out yourself, in the background: sleep " + secs}
 	}
@@ -568,6 +571,7 @@ func (d *Driver) post(label string, e *Ending, note string, p posting) error {
 			}
 		}
 		e.Waiting = d.waiterLines(b, e.Label) // ahead of next:, which the wake ends on
+		e.Asks = openAsksOn(b, e.Label)
 		if e.Next == "" && e.State == Done {
 			e.Next = fmt.Sprintf("decide from its reply: %s; %s (when it waits on a decision that only the owner can make, record its ask and leave out --until); or %s",
 				d.run("send", view, text("…")), d.run("park", view, "--until", "WHEN", text("…")), d.run("close", view))
@@ -603,6 +607,9 @@ func (d *Driver) post(label string, e *Ending, note string, p posting) error {
 			payload["kind"], payload["output"] = "timer", d.briefLine()+"timer done: "+note
 		}
 		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindPosting, Why: p.why, Due: p.due, HeldBy: p.heldBy})
+	}
+	if b.Meta.Wake == batch.WakeSession {
+		return d.leave(b, label, e, note, p)
 	}
 	body, _ := json.Marshal(payload)
 	hook, _ := d.Cfg.LoadWebhook(b.Meta.Webhook)
@@ -647,6 +654,23 @@ func (d *Driver) post(label string, e *Ending, note string, p posting) error {
 	}
 	d.runAfterWake(b)
 	return nil
+}
+
+// leave delivers a wake to a session batch's driver: it stays in the log
+// until the driver's listener takes it, which reads each session afresh then,
+// so the wake keeps no reply. A timer's note and the watchdog's lines are
+// kept whole, as nothing reads them again.
+func (d *Driver) leave(b *batch.Batch, label string, e *Ending, note string, p posting) error {
+	ev := batch.Event{At: d.now(), Kind: batch.KindWake, Session: label, Inbox: true, Note: note, Why: p.why}
+	rows := []batch.Event{ev}
+	if e != nil {
+		rows[0].Block, rows[0].Outcome, rows[0].View, rows[0].Jobs = e.Block, string(e.State), e.View.String(), len(e.Jobs)
+		for _, c := range e.Also {
+			rows = append(rows, batch.Event{At: d.now(), Kind: batch.KindWake, Session: c.Label, Block: c.Block, Inbox: true,
+				Outcome: string(c.State), View: c.View, Via: e.Label, Jobs: c.Jobs, Why: c.post.why})
+		}
+	}
+	return b.Append(rows...)
 }
 
 // briefLine heads every wake: a routine's prompt, not the bot's persona,
@@ -732,6 +756,7 @@ type DueReport struct {
 	Later  []Rearmed
 	Posted string // what it woke the driver about; "" when nothing needed a model
 	Held   string // what needs the driver and waits, since the driver is not answering
+	Rang   string // what it typed into a session driver that had wakes waiting and no listener
 	Err    error
 }
 
@@ -747,7 +772,7 @@ func (d *Driver) DueAll() ([]DueReport, error) {
 	}
 	var out []DueReport
 	for _, b := range live {
-		if b.Meta.Wake != "webhook" {
+		if !b.Meta.Wakes() {
 			continue
 		}
 		in := *d
@@ -755,6 +780,11 @@ func (d *Driver) DueAll() ([]DueReport, error) {
 		r := DueReport{Batch: b.Meta.Name}
 		r.Armed, r.Later, r.Err = in.Due()
 		r.Posted, r.Held = in.postDue(b, r.Armed, r.Later)
+		if rang, err := in.Doorbell(b); err != nil {
+			r.Err = errors.Join(r.Err, fmt.Errorf("the driver's doorbell: %w", err))
+		} else {
+			r.Rang = rang
+		}
 		out = append(out, r)
 	}
 	return out, nil

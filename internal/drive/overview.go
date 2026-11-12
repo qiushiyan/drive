@@ -106,7 +106,7 @@ func (d *Driver) Overview(live bool) (*Overview, error) {
 // what the record holds and says what could not be read; without live,
 // nothing but the record is read.
 func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
-	ov := &Overview{Batch: &b.Meta, Zone: zoneOf(b), At: d.now(), Wakes: b.Meta.Wake == "webhook"}
+	ov := &Overview{Batch: &b.Meta, Zone: zoneOf(b), At: d.now(), Wakes: b.Meta.Wakes()}
 	evs, err := b.Events()
 	if err != nil {
 		return nil, err
@@ -114,7 +114,7 @@ func (d *Driver) overviewOf(b *batch.Batch, live bool) (*Overview, error) {
 	members := batch.Members(evs)
 	hearing := batch.Hearings(evs, d.now())
 	if ov.Wakes {
-		ov.Unheard = unheardLine(hearing, ov.Zone)
+		ov.Unheard = joinLines(unheardLine(hearing, ov.Zone), d.listenerLine(b, evs, ov.Zone))
 	}
 	ov.Leftovers = append(d.timersHeld(b, evs), d.leftoverLines(b)...)
 	grants, asks, notes := batch.Records(evs)

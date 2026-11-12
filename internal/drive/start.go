@@ -22,6 +22,8 @@ type Started struct {
 	StopErr    error        // why the rest of them were not
 	NoWebhook  *noWebhook   // its driver's webhook, which holds no URL yet
 	ThenArm    string       // what arms its wakes once the webhook is written
+	Driver     *batch.Event // for a session batch, the Claude Code session on record as its driver
+	Listen     string       // for a session batch, the listener its driver keeps running
 }
 
 var webhookName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -30,7 +32,7 @@ var webhookName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 // session it leaves out is the configuration's.
 type BatchOptions struct {
 	Name       string
-	Wake       string // webhook or none
+	Wake       string // webhook, session or none
 	Webhook    string // the chat driver's webhook file, for a batch that wakes one
 	Driver     string // the driver that starts it, as --driver named it
 	RexSession string
@@ -113,6 +115,10 @@ func (d *Driver) StartBatch(opt BatchOptions) (*Started, error) {
 			out.NoWebhook, _ = errors.AsType[*noWebhook](err)
 		}
 	}
+	if m.Wake == batch.WakeSession && (d.Caller.SID == "" || d.Caller.Block == "") {
+		return nil, &Refused{Reason: "a batch a Claude Code session drives is started from that session, in its Rex block",
+			Next: "run it from the driver's own session in Rex: " + again}
+	}
 	if m.RexSession != "" {
 		// Recorded by its label: an id, as $REX_SESSION gives it, names only
 		// the session that holds it, and a batch's sessions reopen under the
@@ -138,6 +144,14 @@ func (d *Driver) StartBatch(opt BatchOptions) (*Started, error) {
 	}
 	d.rebind()
 	out.Batch, out.Prev = b, prev
+	if m.Wake == batch.WakeSession {
+		reg := d.register()
+		if err := b.Append(reg); err != nil {
+			return nil, &Failed{What: fmt.Sprintf("batch %s started, but this session is not on record as its driver: %v", m.Name, err),
+				Next: "put it on record: " + d.runIn("", "batch", "use", m.Name)}
+		}
+		out.Driver, out.Listen = &reg, d.runIn(m.Name, "listen")
+	}
 	if out.NoWebhook != nil {
 		out.ThenArm = d.runIn(b.Meta.Name, "watch", "--due")
 	}
@@ -177,7 +191,26 @@ func (d *Driver) UseBatch(name string) (*batch.Batch, error) {
 		return nil, err
 	}
 	d.rebind()
+	if b.Meta.Wake == batch.WakeSession && d.Caller.SID != "" && d.Caller.Block != "" {
+		// The session that makes a session batch current drives it from now
+		// on: one relaunched under a new conversation, or another taking over.
+		evs, err := b.Events()
+		if err != nil {
+			return nil, err
+		}
+		if reg, ok := batch.Driving(evs); !ok || reg.SID != d.Caller.SID || reg.Block != d.Caller.Block {
+			if err := b.Append(d.register()); err != nil {
+				return nil, err
+			}
+		}
+	}
 	return b, nil
+}
+
+// register is the record that the Claude Code session this command runs in
+// drives a session batch.
+func (d *Driver) register() batch.Event {
+	return batch.Event{At: d.now(), Kind: batch.KindDriver, SID: d.Caller.SID, Block: d.Caller.Block, Account: d.Caller.Config}
 }
 
 // Ended reports a batch that ended.

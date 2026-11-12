@@ -7,13 +7,20 @@ stops the wakes of its driver's last batch, no other driver's. Start one per
 drive, never after a reset: `drive --driver DRIVER batch` names yours. It starts
 before the owner writes its webhook; no wake starts until then.
 
+Run from a Claude Code session in Rex without --webhook, the batch is that
+session's: it is driver claude unless --driver names another, every drive
+command the session runs acts in it without naming it, and each wake waits
+in the batch until the session's listener takes it (drive listen).
+
 Arguments:
   <name>                       The batch's name, such as the date.
 
 Flags:
       --webhook=DRIVER         Wake this chat driver by its webhook, the file
                                ~/.config/drive/webhooks/DRIVER that the owner writes; DRIVER is also
-                               the driver's name. Without it, the driver waits itself.
+                               the driver's name. Without it, a Claude Code session in Rex drives
+                               the batch, woken through drive listen, and anything else waits
+                               itself.
       --rex-session=SESSION    The Rex session new sessions open in, recorded by its label and
                                started whenever it is not running; defaults to the configuration's,
                                then the one drive runs in.

@@ -27,6 +27,7 @@ type CLI struct {
 	Status  StatusCmd  `cmd:"" help:"Print every session in the batch, live: its state, stage, pull request, wake and view."`
 	Read    ReadCmd    `cmd:"" help:"Print a session's newest reply, where it stands, its view, and next: where its state decides it."`
 	Wait    WaitCmd    `cmd:"" help:"Block until a session's turn ends, then print how it ended."`
+	Listen  ListenCmd  `cmd:"" help:"Block until wakes wait for this Claude Code driver, then print where each woken session stands."`
 	Send    SendCmd    `cmd:"" help:"Send a session its next step, decided on a view."`
 	Open    OpenCmd    `cmd:"" help:"Open a new Claude Code session in Rex, in the batch, with an optional first step."`
 	Respond RespondCmd `cmd:"" help:"Answer the prompt a session waits on."`
@@ -85,8 +86,10 @@ apart:
   drive --driver itell status          # the batch driver itell drives now
   drive --batch 2026-10-27 read search # one batch by name, as next: prints it
 
-A command that names neither acts in the batch of the driver with no name,
-and is refused while any named driver drives one.
+A Claude Code session that started its batch from Rex (batch new) names
+neither: its commands act in that batch. Any other command that names
+neither acts in the batch of the driver with no name, and is refused while
+any named driver drives one.
 
 A refusal or failure that leaves something to do ends with a next: line: a
 command that runs as written on the session as it stands, naming the batch
@@ -99,7 +102,11 @@ type wiring func(config.Config) *drive.Driver
 
 func machine(cfg config.Config) *drive.Driver {
 	self, _ := os.Executable()
-	return &drive.Driver{
+	caller := drive.Caller{SID: os.Getenv("CLAUDE_CODE_SESSION_ID"), Block: os.Getenv("REX_BLOCK"), Config: os.Getenv("CLAUDE_CONFIG_DIR")}
+	if caller.SID != "" && caller.Config == "" {
+		caller.Config = filepath.Join(cfg.Home, ".claude")
+	}
+	return &drive.Driver{Caller: caller,
 		Term: rex.CLI{}, Host: session.Machine{Home: cfg.Home}, Store: batch.Store{Dir: cfg.StateDir},
 		Cfg: cfg, Progress: progress.Tools{}, Pickups: drive.BriefCLI{Home: cfg.Home}, Watches: drive.Detached{Dir: filepath.Join(cfg.StateDir, "watches")}, Self: self,
 		Sampler: drive.DetachedSampler{Pidfile: filepath.Join(cfg.StateDir, "sampler.pid"), Log: filepath.Join(cfg.StateDir, "sampler.log"), Dir: cfg.Home},

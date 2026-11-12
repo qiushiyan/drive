@@ -94,7 +94,7 @@ func (d *Driver) Metrics() (*Metrics, error) {
 		}
 	}
 	m.asks(evs)
-	m.actions(evs, b.Meta.Wake == "webhook")
+	m.actions(evs, b.Meta.Wakes())
 	d.merges(m, b, evs)
 	if len(m.Merged) > 0 {
 		m.PerMerge = m.OwnerWait / time.Duration(len(m.Merged))
@@ -174,18 +174,18 @@ func (m *Metrics) actions(evs []batch.Event, wakes bool) {
 		case batch.KindFailure:
 			m.Failures = append(m.Failures, e.Session+": "+clip(e.Reason, 120))
 		case batch.KindWake:
-			if e.HTTP != 0 && e.Why != "" {
+			if e.Delivered() && e.Why != "" {
 				m.ByWhy[e.Why]++
 			}
 			if e.Session == "" { // a timer
-				if e.HTTP == 0 {
+				if !e.Delivered() {
 					m.WakeFails++
 				} else {
 					m.Timers++
 				}
 				continue
 			}
-			if e.HTTP == 0 {
+			if !e.Delivered() {
 				m.WakeFails++ // the driver never heard: the turn is still unwatched
 				continue
 			}

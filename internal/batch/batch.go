@@ -30,8 +30,11 @@ type Meta struct {
 	// Driver is who drives the batch, the name commands select it by
 	// (--driver): the webhook's name for a chat driver, or the name a
 	// driver that waits itself gave; DriverOf reads it.
-	Driver     string `json:"driver,omitempty"`
-	Wake       string `json:"wake"`        // "webhook": drive wakes a chat driver; "none": the driver waits itself
+	Driver string `json:"driver,omitempty"`
+	// Wake is how the driver is brought back: "webhook", a chat driver woken
+	// by a post; "session", a Claude Code session whose listener takes each
+	// wake from the log; "none", a driver that waits itself.
+	Wake       string `json:"wake"`
 	RexSession string `json:"rex_session"` // where its sessions open
 	TZ         string `json:"tz"`
 	// Webhook names the file that wakes this batch's driver, so two
@@ -40,6 +43,18 @@ type Meta struct {
 	// AfterWake runs after each wake is posted, such as archiving the chat it went to.
 	AfterWake []string `json:"after_wake,omitempty"`
 }
+
+// Wakes says drive wakes the batch's driver: it arms a session's wake when
+// an action touches it, and its watchdog keeps them coming. A driver that
+// waits itself is woken by nothing.
+func (m Meta) Wakes() bool { return m.Wake == WakeWebhook || m.Wake == WakeSession }
+
+// How a batch's driver is brought back (Meta.Wake).
+const (
+	WakeWebhook = "webhook"
+	WakeSession = "session"
+	WakeNone    = "none"
+)
 
 // Batch is one batch's directory.
 type Batch struct {

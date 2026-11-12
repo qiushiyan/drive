@@ -239,12 +239,12 @@ func stepOfAnswer(evs []batch.Event, answer *batch.Event) string {
 // One note a minute is plenty.
 func (d *Driver) Seen() {
 	b, err := d.Batch()
-	if err != nil || b.Meta.Wake != "webhook" {
+	if err != nil || !b.Meta.Wakes() {
 		return
 	}
 	evs, err := b.Events()
-	if err != nil {
-		return
+	if err != nil || !d.drives(b, evs) {
+		return // a read from any other shell would hide a driver that is not answering
 	}
 	if h := batch.Hearings(evs, d.now()); !h.Heard.IsZero() && d.now().Sub(h.Heard) < time.Minute {
 		return

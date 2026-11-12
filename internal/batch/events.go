@@ -20,7 +20,9 @@ const (
 	KindWatch      = "watch"        // a wake was armed
 	KindWakeStop   = "wake-stopped" // a wake was stopped, as before Rex's server restarts
 	KindPosting    = "posting"      // a watch began posting its wake
-	KindWake       = "wake"         // a wake was posted (HTTP set) or failed (Reason set)
+	KindWake       = "wake"         // a wake was posted (HTTP set), left for a session driver (Inbox set), or failed (Reason set)
+	KindTaken      = "taken"        // a session driver's listener took every wake left for it until then
+	KindDriver     = "driver"       // the Claude Code session that drives a session batch: SID, Block, Account (its config directory)
 	KindPark       = "park"
 	KindClose      = "close"
 	KindFree       = "free"    // a driver handed back a hold only a job of its holder kept: Hold, Session its holder, Reason the driver's
@@ -143,7 +145,7 @@ func Acted(e Event) bool {
 func Heard(e Event) bool {
 	switch e.Kind {
 	case KindSeen, KindSendIntent, KindSend, KindRespond, KindPark, KindClose, KindOpenIntent, KindOpen, KindAdopt,
-		KindRefused, KindAsk, KindAnswer, KindRestate, KindGrant, KindGoal, KindCleanup, KindFree:
+		KindRefused, KindAsk, KindAnswer, KindRestate, KindGrant, KindGoal, KindCleanup, KindFree, KindDriver:
 		return true
 	case KindNote:
 		return e.ID != "" // drive's own notes have no id
@@ -191,6 +193,9 @@ type Event struct {
 	Brief          string `json:"brief,omitempty"` // on an open-intent: the brief the session picks up
 	HTTP           int    `json:"http,omitempty"`
 	Try            int    `json:"try,omitempty"`
+	// Inbox, on a wake, says it was left in the batch's log for a Claude Code
+	// driver's listener to take, which is how that driver's wakes are delivered.
+	Inbox bool `json:"inbox,omitempty"`
 	// Via, on a posting or wake, is the session whose wake carried this one:
 	// several endings at once make one post.
 	Via    string `json:"via,omitempty"`
@@ -204,6 +209,10 @@ type Event struct {
 	Due    time.Time `json:"due,omitzero"`
 	HeldBy string    `json:"held_by,omitempty"`
 }
+
+// Delivered says a wake reached its driver's door: the webhook took it, or it
+// was left for a session driver's listener. Neither says a driver heard it.
+func (e Event) Delivered() bool { return e.HTTP != 0 || e.Inbox }
 
 // Member is a session that belongs to the batch.
 type Member struct {
@@ -257,6 +266,10 @@ type Member struct {
 // NoticePark is the watchdog telling a driver of a park nothing on record
 // ends, or one whose --until has come.
 const NoticePark = "park"
+
+// NoticeDoorbell is the watchdog typing into a session batch's driver that
+// wakes wait for it and no listener runs.
+const NoticeDoorbell = "doorbell"
 
 // Notice is something the watchdog told a driver of a session.
 type Notice struct {
@@ -431,14 +444,14 @@ func Hearings(evs []Event, now time.Time) Hearing {
 			h.Heard, h.Strikes, h.Since, h.Last = e.At, 0, time.Time{}, time.Time{}
 		case e.Kind == KindWake && e.Via == "":
 			p := result[i+1]
-			if p != nil && p.recorded && !h.Heard.IsZero() && !h.Heard.Before(p.Began) && e.HTTP != 0 {
+			if p != nil && p.recorded && !h.Heard.IsZero() && !h.Heard.Before(p.Began) && e.Delivered() {
 				continue // a run answered before its post returned
 			}
 			h.Last = e.At
-			if e.HTTP != 0 && e.Why == "" {
+			if e.Delivered() && e.Why == "" {
 				continue // an older drive posted it, and its runs left no trace of a read
 			}
-			if e.HTTP == 0 || now.Sub(e.At) >= HeardWithin {
+			if !e.Delivered() || now.Sub(e.At) >= HeardWithin {
 				if h.Strikes == 0 {
 					h.Since = e.At
 				}

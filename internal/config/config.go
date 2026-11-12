@@ -41,6 +41,9 @@ type Config struct {
 	Notice string `toml:"notice"`
 	// Brief is how a chat driver talks, which every wake points its run at.
 	Brief string `toml:"brief"`
+	// SessionBrief is how a Claude Code driver is woken and talks, which
+	// every listener's output points it back at once its context lost it.
+	SessionBrief string `toml:"session_brief"`
 	// RexSession is where new batches open their sessions: the session drive
 	// runs in ($REX_SESSION, an id a batch records by its label) when unset,
 	// and Rex's default when that is empty too.
@@ -75,14 +78,15 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	c := Config{
-		Home:        home,
-		ConfigDir:   envOr("DRIVE_CONFIG_DIR", filepath.Join(home, ".config/drive")),
-		StateDir:    envOr("DRIVE_STATE_DIR", filepath.Join(home, ".local/state/drive")),
-		Launcher:    "x",
-		PrimaryName: envOr("CLAUDE_PRIMARY_NAME", os.Getenv("HEADROOM_PRIMARY_NAME")),
-		LaunchEnv:   map[string]string{"PLANLAB_AGENT_NUDGES": "off"},
-		Notice:      filepath.Join(home, ".agents/skills/drive-session/NOTICE.md"),
-		Brief:       filepath.Join(home, ".agents/skills/drive-session/BOT.md"),
+		Home:         home,
+		ConfigDir:    envOr("DRIVE_CONFIG_DIR", filepath.Join(home, ".config/drive")),
+		StateDir:     envOr("DRIVE_STATE_DIR", filepath.Join(home, ".local/state/drive")),
+		Launcher:     "x",
+		PrimaryName:  envOr("CLAUDE_PRIMARY_NAME", os.Getenv("HEADROOM_PRIMARY_NAME")),
+		LaunchEnv:    map[string]string{"PLANLAB_AGENT_NUDGES": "off"},
+		Notice:       filepath.Join(home, ".agents/skills/drive-session/NOTICE.md"),
+		Brief:        filepath.Join(home, ".agents/skills/drive-session/BOT.md"),
+		SessionBrief: filepath.Join(home, ".agents/skills/drive-session/SESSION.md"),
 	}
 	path := filepath.Join(c.ConfigDir, "config.toml")
 	if _, err := toml.DecodeFile(path, &c); err != nil && !os.IsNotExist(err) {
@@ -90,6 +94,7 @@ func Load() (Config, error) {
 	}
 	c.Notice = Expand(home, c.Notice)
 	c.Brief = Expand(home, c.Brief)
+	c.SessionBrief = Expand(home, c.SessionBrief)
 	for i, w := range c.Sampler {
 		c.Sampler[i] = Expand(home, w)
 	}

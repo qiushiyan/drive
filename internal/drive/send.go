@@ -121,7 +121,7 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 // wake, which cannot hold a command open, and if so whether the session's
 // wake is armed. A Claude Code driver waits for a turn itself.
 func (d *Driver) wakes(o *Observation) (webhook, armed bool) {
-	if o.in == nil || o.in.Meta.Wake != "webhook" {
+	if o.in == nil || !o.in.Meta.Wakes() {
 		return false, false
 	}
 	return true, d.Watches != nil && d.Watches.Alive(watchName(o.in, o.Session.Block))

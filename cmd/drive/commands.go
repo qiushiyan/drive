@@ -377,6 +377,35 @@ func (c *RespondCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	return err
 }
 
+type ListenCmd struct{}
+
+func (c *ListenCmd) Help() string {
+	return `
+A batch a Claude Code session drives (batch new, run from that session in
+Rex) is told of its sessions as a chat driver is: a minute after a turn
+ends, at once on a prompt or an error, and as the watchdog finds what needs
+it. Each wake waits in the batch until the listener takes it. Keep one
+listener running, in the background: it ends once wakes wait, taking them
+all, and prints each woken session as it stands now, its state, its view and
+next:, then the listener to start again. Read a session's reply before
+acting on it.
+
+When wakes wait and no listener runs, as after a Rex restart, the machine's
+watchdog types one line into the driver's own block, idle and with nothing
+typed in it, saying to start one. Only the driver's own session listens, and
+one listener at a time.`
+}
+
+func (c *ListenCmd) Run(ctx *kong.Context, d *drive.Driver) error {
+	d.Seen() // the driver's run, which starts its listener once it acted
+	t, err := d.Listen()
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(ctx.Stdout, t.Text())
+	return err
+}
+
 type WatchCmd struct {
 	Session string `arg:"" optional:"" help:"The session whose wake to arm."`
 	Due     bool   `help:"Arm every session whose wakes stopped coming, and post once more a wake nobody acted on: a chat driver's watchdog in one command."`
@@ -979,7 +1008,7 @@ func (c *BatchShowCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 
 type BatchNewCmd struct {
 	Name       string `arg:"" help:"The batch's name, such as the date."`
-	Webhook    string `placeholder:"DRIVER" help:"Wake this chat driver by its webhook, the file ~/.config/drive/webhooks/DRIVER that the owner writes; DRIVER is also the driver's name. Without it, the driver waits itself."`
+	Webhook    string `placeholder:"DRIVER" help:"Wake this chat driver by its webhook, the file ~/.config/drive/webhooks/DRIVER that the owner writes; DRIVER is also the driver's name. Without it, a Claude Code session in Rex drives the batch, woken through drive listen, and anything else waits itself."`
 	RexSession string `placeholder:"SESSION" help:"The Rex session new sessions open in, recorded by its label and started whenever it is not running; defaults to the configuration's, then the one drive runs in."`
 	TZ         string `name:"tz" placeholder:"ZONE" help:"The zone drive prints the batch's times in, such as Europe/London; defaults to the configuration's, then the machine's."`
 	AfterWake  string `placeholder:"COMMAND" help:"A shell command to run after each wake is posted, such as archiving the chat it went to."`
@@ -990,7 +1019,12 @@ func (c *BatchNewCmd) Help() string {
 A new batch starts with no grants, however recently one was given, and
 stops the wakes of its driver's last batch, no other driver's. Start one per
 drive, never after a reset: ` + "`drive --driver DRIVER batch`" + ` names yours. It starts
-before the owner writes its webhook; no wake starts until then.`
+before the owner writes its webhook; no wake starts until then.
+
+Run from a Claude Code session in Rex without --webhook, the batch is that
+session's: it is driver claude unless --driver names another, every drive
+command the session runs acts in it without naming it, and each wake waits
+in the batch until the session's listener takes it (drive listen).`
 }
 
 func (c *BatchNewCmd) Validate() error {
@@ -1003,15 +1037,22 @@ func (c *BatchNewCmd) Validate() error {
 }
 
 func (c *BatchNewCmd) Run(ctx *kong.Context, d *drive.Driver) error {
-	wake := "none"
-	if c.Webhook != "" {
-		wake = "webhook"
+	wake, driver := batch.WakeNone, d.DriverName
+	switch {
+	case c.Webhook != "":
+		wake = batch.WakeWebhook
+	case d.Caller.SID != "" && d.Caller.Block != "":
+		// A Claude Code session in Rex drives it: its wakes wait for its listener.
+		wake = batch.WakeSession
+		if driver == "" {
+			driver = "claude"
+		}
 	}
 	var after []string
 	if c.AfterWake != "" {
 		after = []string{c.AfterWake}
 	}
-	st, err := d.StartBatch(drive.BatchOptions{Name: c.Name, Wake: wake, Webhook: c.Webhook, Driver: d.DriverName, RexSession: c.RexSession, TZ: c.TZ, AfterWake: after})
+	st, err := d.StartBatch(drive.BatchOptions{Name: c.Name, Wake: wake, Webhook: c.Webhook, Driver: driver, RexSession: c.RexSession, TZ: c.TZ, AfterWake: after})
 	if err != nil {
 		return err
 	}

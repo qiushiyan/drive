@@ -132,6 +132,10 @@ func DueText(reports []DueReport) string {
 			fmt.Fprintf(&b, "batch %s: waits for the driver to answer: %s\n", r.Batch, r.Held)
 			quiet = false
 		}
+		if r.Rang != "" {
+			fmt.Fprintf(&b, "batch %s: rang the driver: %s\n", r.Batch, r.Rang)
+			quiet = false
+		}
 		if quiet {
 			fmt.Fprintf(&b, "batch %s: nothing due\n", r.Batch)
 		}
@@ -462,13 +466,20 @@ func describe(e batch.Event, zone *time.Location) string {
 				what = clip(e.Note, 140)
 			}
 		}
-		if e.HTTP == 0 && e.Reason != "" {
+		if !e.Delivered() && e.Reason != "" {
 			return what + ", post failed: " + e.Reason
 		}
 		if e.Via != "" {
 			return fmt.Sprintf("%s, carried by %s's wake", what, e.Via)
 		}
+		if e.Inbox {
+			return what + ", left for the listener"
+		}
 		return fmt.Sprintf("%s, posted (http %d, try %d)", what, e.HTTP, e.Try)
+	case batch.KindTaken:
+		return "the listener took the wakes left for it"
+	case batch.KindDriver:
+		return fmt.Sprintf("Claude Code session %s in block %s drives this batch", e.SID, rex.Short(e.Block))
 	case batch.KindCleanup:
 		what := "branch " + e.Branch + ": " + e.Outcome
 		if e.Branch == "" {
@@ -590,6 +601,9 @@ func (st *Started) Text() string {
 	}
 	if nw := st.NoWebhook; nw != nil {
 		s += fmt.Sprintf("no wake can start until %s holds a URL\nnext: %s\n", nw.path, nw.next(st.ThenArm))
+	}
+	if r := st.Driver; r != nil {
+		s += fmt.Sprintf("this Claude Code session (%s, block %s) drives it: each wake waits in the batch for its listener\nnext: keep one listener running, in the background: %s\n", r.SID, rex.Short(r.Block), st.Listen)
 	}
 	return s
 }

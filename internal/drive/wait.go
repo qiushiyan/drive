@@ -32,6 +32,9 @@ type Ending struct {
 	// Waiting names the sessions waiting on a hold it held, each with the
 	// send to run once the hold is free: a wake sets it.
 	Waiting string
+	// Asks names the asks still open on the session, the owner's to answer
+	// whatever its reply says: a wake sets it.
+	Asks string
 	// Also is the other sessions whose turns ended by the time this wake
 	// posts: one post carries them all.
 	Also []Carried
@@ -232,6 +235,9 @@ func (e *Ending) Text() string {
 		fmt.Fprintf(&b, "--- screen (end) ---\n%s\n", e.Screen)
 	}
 	b.WriteString(e.Waiting)
+	if e.Asks != "" {
+		fmt.Fprintf(&b, "%s\n", e.Asks)
+	}
 	for _, c := range e.Also {
 		fmt.Fprintf(&b, "also ended, in this one wake: %s (%s), whose reply is not shown here: %s; view: %s", c.Label, rex.Short(c.Block), c.State, c.View)
 		if c.Next != "" {

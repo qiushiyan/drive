@@ -351,6 +351,8 @@ func batchOf(ov *Overview, title string, now time.Time) batchView {
 	bv := batchView{Name: m.Name, Title: title, Eyebrow: "Batch " + m.Name + " · started " + pageClock(m.Started, now, ov.Zone), Holds: append(append([]string{}, ov.Holds...), ov.Leftovers...)}
 	driver := batch.DriverOf(*m)
 	switch {
+	case driver != "" && m.Wake == batch.WakeSession:
+		bv.Driver = "Driven by " + driver + ", a Claude Code session"
 	case driver != "" && ov.Wakes:
 		bv.Driver = "Driven by " + driver + ", woken by webhook"
 	case driver != "":
