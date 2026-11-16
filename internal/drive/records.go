@@ -56,9 +56,16 @@ func (d *Driver) Ask(session, question, recommendation, ifUnanswered, replaces s
 // its change merged and the ask still holds something, such as a production
 // write or a message: status and the owner's page then read it as standing
 // again from now, in these words.
-func (d *Driver) Restate(ask, ifUnanswered string) error {
-	if strings.TrimSpace(ifUnanswered) == "" {
-		return &Refused{Reason: "a restate needs --if-unanswered: what the ask waits on now, as the owner reads it"}
+//
+// With session, the ask moves there: the session that holds its change now,
+// where its answer's step goes and whose wakes name it. A builder closed
+// once its review session opened left its asks on a closed session, and one
+// driver recorded each again with --replaces to move it, which the owner's
+// page and the batch's measures read as five questions withdrawn and five
+// new ones (2026-11-13).
+func (d *Driver) Restate(ask, ifUnanswered, session string) error {
+	if strings.TrimSpace(ifUnanswered) == "" && session == "" {
+		return &Refused{Reason: "a restate needs --if-unanswered, what the ask waits on now as the owner reads it, or --session, the session that holds its change now"}
 	}
 	b, err := d.Batch()
 	if err != nil {
@@ -68,8 +75,78 @@ func (d *Driver) Restate(ask, ifUnanswered string) error {
 		if refused := d.stillOpen(b, evs, ask); refused != nil {
 			return refused
 		}
-		return b.Append(batch.Event{At: d.now(), Kind: batch.KindRestate, Ref: ask, IfUnanswered: ifUnanswered})
+		if refused := d.takesAsks(evs, session); refused != nil {
+			return refused
+		}
+		return b.Append(batch.Event{At: d.now(), Kind: batch.KindRestate, Ref: ask, IfUnanswered: ifUnanswered, Session: session})
 	})
+}
+
+// takesAsks refuses to move an ask to a session that is not open in the
+// batch, where no step could follow its answer; "" moves nothing.
+func (d *Driver) takesAsks(evs []batch.Event, session string) *Refused {
+	if session == "" {
+		return nil
+	}
+	if m := batch.Find(batch.Members(evs), session); m == nil || m.Closed {
+		return &Refused{Reason: fmt.Sprintf("%s is not an open session of this batch, so no step could follow an answer there", session),
+			Next: d.run("status") + " lists the open sessions"}
+	}
+	return nil
+}
+
+// MoveAsks moves every open ask on the session from to the session to, and
+// says which: what a driver does as it closes a builder whose review session
+// holds the change from here.
+func (d *Driver) MoveAsks(from, to string) ([]string, error) {
+	b, err := d.Batch()
+	if err != nil {
+		return nil, err
+	}
+	var moved []string
+	err = b.Locked(func(evs []batch.Event) error {
+		if refused := d.takesAsks(evs, to); refused != nil {
+			return refused
+		}
+		_, asks, _ := batch.Records(evs)
+		var add []batch.Event
+		for _, a := range asks {
+			if a.Session == from && a.Answer == nil && from != to {
+				add = append(add, batch.Event{At: d.now(), Kind: batch.KindRestate, Ref: a.ID, Session: to})
+				moved = append(moved, a.ID)
+			}
+		}
+		if len(add) == 0 {
+			return nil
+		}
+		return b.Append(add...)
+	})
+	return moved, err
+}
+
+// AsksLeft says, of a session just closed, which asks stay open on it and
+// how one moves to the session that holds its change; "" when none does.
+func (d *Driver) AsksLeft(label string) string {
+	b, err := d.Batch()
+	if err != nil {
+		return ""
+	}
+	evs, err := b.Events()
+	if err != nil {
+		return ""
+	}
+	_, asks, _ := batch.Records(evs)
+	var open []string
+	for _, a := range asks {
+		if a.Session == label && a.Answer == nil {
+			open = append(open, a.ID)
+		}
+	}
+	if len(open) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s stay open on %s, which takes no step now; if another session holds its change, move each there: %s\n",
+		strings.Join(open, ", "), label, d.run("record", "restate", open[0], "--session", "LABEL"))
 }
 
 // stillOpen refuses a record about an ask that is not open: one never asked,

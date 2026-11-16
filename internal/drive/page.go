@@ -827,6 +827,9 @@ func entryOf(e batch.Event, asks map[string]*batch.Event, now time.Time, zone *t
 		}
 	case batch.KindRestate:
 		v.Kind, v.Head, v.Text = "you", e.Ref+" still waits:", e.IfUnanswered
+		if e.IfUnanswered == "" {
+			v.Head, v.Text = e.Ref+" still waits,", "now with this session, which holds its change"
+		}
 	case batch.KindAnswer:
 		head := answerHead(e)
 		v.Kind, v.Head, v.Text = "you", strings.ToUpper(head[:1])+head[1:], e.Source

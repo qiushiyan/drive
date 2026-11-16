@@ -26,9 +26,11 @@ Flags:
       --file=PATH       Send this file instead: your own request, or anything longer than a line.
       --snippet=KEY     Send the owner's TabType snippet KEY, as it resolves in the session's
                         directory.
-      --dir=DIR         The directory the session starts in (default: .).
+      --dir=DIR         The directory the session starts in (default: the current one).
       --resume=ID       Resume this Claude Code session id instead of starting fresh, such as a
-                        session relaunched on another account.
+                        session relaunched on another account. When it is this label's own
+                        conversation, what the command leaves unsaid is as it was: the directory it
+                        last stood in, its model and its effort.
       --account=NAME    Run it on this Claude account instead of the launcher's choice.
       --model=MODEL     Run it on this model, such as fable for a fresh judge.
       --effort=LEVEL    Run it at this effort level, for this session only; without it the owner's

@@ -30,6 +30,8 @@ type OpenOptions struct {
 	// Brief is a brief the session picks up: brief places its worktree,
 	// where the session opens, and composes its first prompt.
 	Brief string
+	// AnyDir says no directory was named: Dir is only where the command ran.
+	AnyDir bool
 }
 
 // Opened reports a new session.
@@ -41,6 +43,10 @@ type Opened struct {
 	Sent    *Sent   // the first step, when one was given
 	Placed  *Pickup // the brief brief placed for it, when it picked one up
 	Parked  string  // why, for a parked label whose own conversation was resumed with no step
+	// AsWas says what a resume of the label's own conversation took from its
+	// record, the command having left it unsaid: where it last stood, its
+	// model, its effort.
+	AsWas string
 }
 
 // Open starts a session in a new block under label and sends it its first
@@ -56,6 +62,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	if label == "" || strings.ContainsAny(label, " @/") {
 		return nil, &Refused{Reason: fmt.Sprintf("label %q: use a short name for its work, without spaces, '@' or '/', such as search-repairs", label)}
 	}
+	opt, asWas := d.asItWas(b, label, opt)
 	// An open from a note or a brief composes its first step once the brief
 	// is placed; what the driver gave goes in it after the opening line.
 	var n *note
@@ -221,7 +228,7 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 		SID: s.ID, Account: s.Account, Dir: s.Dir, Model: opt.Model, Effort: opt.Effort, Ref: opt.Resume}); err != nil {
 		return nil, d.unrecorded(label, block, err)
 	}
-	out = &Opened{Label: label, Block: block, Account: s.Account, Session: s.ID, Placed: placed}
+	out = &Opened{Label: label, Block: block, Account: s.Account, Session: s.ID, Placed: placed, AsWas: asWas}
 	if evs, err := b.Events(); err == nil && step.empty() {
 		if m := batch.Find(batch.Members(evs), label); m != nil {
 			out.Parked = m.Parked // a parked label's own conversation, brought back
@@ -251,6 +258,42 @@ func (d *Driver) Open(label string, step Step, opt OpenOptions) (out *Opened, er
 	}
 	out.Sent, err = a.send(p, SendOptions{Hold: opt.Hold}, a.o.View.String())
 	return out, err
+}
+
+// asItWas fills what a resume of label's own conversation left unsaid from
+// its record: the directory it last stood in, its model and its effort. A
+// driver that wrote the reopen by hand brought one session back on the main
+// checkout, not its worktree, and a review session back off the model it
+// was opened on (2026-11-13); the next: for a gone session names all three,
+// and this is that line's reading for a command that names fewer. The
+// account stays the launcher's choice, which knows which has room. It says
+// what it filled, "" when nothing.
+func (d *Driver) asItWas(b *batch.Batch, label string, opt OpenOptions) (OpenOptions, string) {
+	if opt.Resume == "" {
+		return opt, ""
+	}
+	evs, err := b.Events()
+	if err != nil {
+		return opt, ""
+	}
+	m := batch.Find(batch.Members(evs), label)
+	if m == nil || m.SID != opt.Resume {
+		return opt, ""
+	}
+	var took []string
+	if dir := d.workedIn(m, nil); opt.AnyDir && dir != "" {
+		opt.Dir, opt.AnyDir = dir, false
+		took = append(took, "in "+dir+", where it last stood")
+	}
+	if opt.Model == "" && m.Model != "" {
+		opt.Model = m.Model
+		took = append(took, "on "+m.Model+", the model it was opened on")
+	}
+	if opt.Effort == "" && m.Effort != "" {
+		opt.Effort = m.Effort
+		took = append(took, "at effort "+m.Effort)
+	}
+	return opt, strings.Join(took, ", ")
 }
 
 // openIntent is the record of an open as it was asked for, written before

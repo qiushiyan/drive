@@ -1,6 +1,9 @@
 package drive_test
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -87,5 +90,60 @@ func TestAStepNeverArrivesBehindTheITypedToLeaveNormalMode(t *testing.T) {
 	sent, err := r.d.Send(r.view("T1"), drive.Step{Line: "Go with option C."}, drive.SendOptions{})
 	if err != nil || sent.Outcome != "arrived" || got != "Go with option C." {
 		t.Fatalf("the step arrives as written: %q %+v %v", got, sent, err)
+	}
+}
+
+// A session whose worktree its closeout removed stands in a directory that
+// is no checkout any more, and a project's key resolved to nothing there
+// (2026-11-13: "no snippet merge-when-ready for …/.worktrees/.trash/…/1").
+// Its key resolves where the session was opened, and the send says so.
+func TestAKeyResolvesWhereTheSessionWasOpenedOnceItsWorktreeIsGone(t *testing.T) {
+	r := newRig(t, "none")
+	c := adopted(t, r, "T1")
+	opened := c.Cwd
+	if out, err := exec.Command("git", "-C", opened, "init", "-q").CombinedOutput(); err != nil {
+		t.Skipf("git init: %v %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(opened, ".tabtype.toml"), []byte("[[snippets]]\nkey = \"merge-when-ready\"\nexpand = \"Merge it once its checks pass.\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	trash := filepath.Join(r.w.Root, ".trash", "1")
+	c.Edit(func(c *testkit.Claude) { c.Cwd = trash })
+	sent, err := r.d.Send(r.view("T1"), drive.Step{Key: "merge-when-ready"}, drive.SendOptions{})
+	if err != nil || !strings.Contains(sent.Text(), ".tabtype.toml, read for "+opened+", where it was opened, since its own directory "+trash+" is no longer a checkout") {
+		t.Fatalf("the key resolves in the directory it was opened in, and says so: %v %+v", err, sent)
+	}
+}
+
+// A resume of a label's own conversation that names less than drive's own
+// reopen line opens as that line would: where the session last stood, on
+// the model it was opened on. Written by hand on 2026-11-13, one reopen
+// brought a session back on the main checkout and another brought a review
+// session back off its model.
+func TestAResumeOfALabelsOwnConversationOpensAsItWas(t *testing.T) {
+	r := newRig(t, "none")
+	var launched []string
+	r.d.Term = &recordingTerm{World: r.w, run: func(cmd []string) { launched = cmd }}
+	work := filepath.Join(r.w.Root, "work")
+	o, err := r.d.Open("sr-search", drive.Step{}, drive.OpenOptions{Dir: work, Model: "fable", Effort: "xhigh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.d.Close(r.view("sr-search")); err != nil {
+		t.Fatal(err)
+	}
+	again, err := r.d.Open("sr-search", drive.Step{}, drive.OpenOptions{Dir: r.w.Root, AnyDir: true, Resume: o.Session})
+	if err != nil || len(launched) != 3 || !strings.Contains(launched[2], "--model fable --effort xhigh --resume "+o.Session) {
+		t.Fatalf("it resumes on its model and effort: %v %q", err, launched)
+	}
+	if !strings.Contains(again.Text(), "it is sr-search's own conversation, so it opened as it was: in "+work+", where it last stood, on fable, the model it was opened on, at effort xhigh") {
+		t.Fatalf("and says what it took from the record: %s", again.Text())
+	}
+	// Another conversation under the label is opened as the command says.
+	if err := r.d.Close(r.view("sr-search")); err != nil {
+		t.Fatal(err)
+	}
+	if other, err := r.d.Open("sr-search", drive.Step{}, drive.OpenOptions{Dir: r.w.Root, AnyDir: true, Resume: "some-other-session"}); err == nil && other.AsWas != "" {
+		t.Fatalf("only its own conversation opens as it was: %+v", other)
 	}
 }

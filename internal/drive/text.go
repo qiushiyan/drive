@@ -58,6 +58,9 @@ func (s *Sent) Text() string {
 func (o *Opened) Text() string {
 	var s strings.Builder
 	s.WriteString(fmt.Sprintf("opened %s in block %s on account %s (session %s)\n", o.Label, rex.Short(o.Block), o.Account, o.Session))
+	if o.AsWas != "" {
+		s.WriteString(fmt.Sprintf("it is %s's own conversation, so it opened as it was: %s\n", o.Label, o.AsWas))
+	}
 	if pk := o.Placed; pk != nil {
 		how := map[string]string{"created": "a new branch", "checked-out": "its existing branch checked out", "tracking": "its remote branch checked out",
 			"resumed": "the worktree it already had, where another session may be working", "review": "the checkout of the branch it reviews"}[pk.Placement]
@@ -530,6 +533,12 @@ func describe(e batch.Event, zone *time.Location) string {
 		}
 		return e.ID + " " + e.Question + " (recommends: " + e.Recommendation + "; unanswered: " + e.IfUnanswered + replaces + ")"
 	case batch.KindRestate:
+		switch {
+		case e.Session != "" && e.IfUnanswered != "":
+			return e.Ref + " moved to " + e.Session + "; unanswered: " + e.IfUnanswered
+		case e.Session != "":
+			return e.Ref + " moved to " + e.Session
+		}
 		return e.Ref + " unanswered: " + e.IfUnanswered
 	case batch.KindAnswer:
 		ex := ""

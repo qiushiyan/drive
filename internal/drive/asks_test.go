@@ -104,7 +104,7 @@ func TestAnAskOvertakenByACloseOrAMergeIsJudgedAgain(t *testing.T) {
 
 	// Still holding the production repair, it is restated, and stands again from then.
 	r.w.Clock.Sleep(time.Minute)
-	if err := r.d.Restate(a1, "The repair script is built; the production run waits for your word."); err != nil {
+	if err := r.d.Restate(a1, "The repair script is built; the production run waits for your word.", ""); err != nil {
 		t.Fatal(err)
 	}
 	st = status()
@@ -129,10 +129,55 @@ func TestAnAskOvertakenByACloseOrAMergeIsJudgedAgain(t *testing.T) {
 	}
 
 	// A restatement, like an answer, is for an open ask only.
-	if err := r.d.Restate("A9", "it waits"); !isRefused(err) {
+	if err := r.d.Restate("A9", "it waits", ""); !isRefused(err) {
 		t.Errorf("restating an ask never asked: got %v, want a refusal", err)
 	}
-	if err := r.d.Restate(a2, " "); !isRefused(err) {
+	if err := r.d.Restate(a2, " ", ""); !isRefused(err) {
 		t.Errorf("restating with no words: got %v, want a refusal", err)
+	}
+}
+
+// An ask moves with its change. A builder closed once its review session
+// opened left its asks on a closed session; recorded again with --replaces,
+// each read as a question withdrawn and a new one asked (2026-11-13: 13 of
+// 15 moot asks). Moved, it is the same question, on the session its
+// answer's step goes to.
+func TestAnOpenAskMovesToTheSessionThatHoldsItsChange(t *testing.T) {
+	r := newRig(t, "none")
+	adopted(t, r, "search")
+	adopted(t, r, "sr-search")
+	a1, err := r.d.Ask("search", "Rank by recency or by score?", "By score.", "It builds by score; the merge waits.", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2, _ := r.d.Ask("search", "Keep the flag?", "No.", "It ships without.", "")
+	if _, err := r.d.MoveAsks("search", "elsewhere"); !isRefused(err) || !strings.Contains(err.Error(), "not an open session of this batch") {
+		t.Fatalf("an ask moves only to a session a step can reach: %v", err)
+	}
+	moved, err := r.d.MoveAsks("search", "sr-search")
+	if err != nil || len(moved) != 2 || moved[0] != a1 || moved[1] != a2 {
+		t.Fatalf("every open ask of the session moves: %v %v", moved, err)
+	}
+	evs, err := r.b.Events()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, asks, _ := batch.Records(evs)
+	if len(asks) != 2 {
+		t.Fatalf("two asks: %+v", asks)
+	}
+	for _, a := range asks {
+		if a.Session != "sr-search" || a.Answer != nil || a.IfUnanswered == "" {
+			t.Fatalf("it is the same open question, on the review session: %+v", a)
+		}
+	}
+	if left := r.d.AsksLeft("search"); left != "" {
+		t.Fatalf("nothing stays on the builder: %q", left)
+	}
+	if err := r.d.Restate(a1, "", "search"); err != nil {
+		t.Fatalf("one ask moves by itself: %v", err)
+	}
+	if left := r.d.AsksLeft("search"); !strings.Contains(left, a1+" stay open on search") || !strings.Contains(left, "drive --batch b1 record restate "+a1+" --session LABEL") {
+		t.Fatalf("a close says what stays, and how it moves: %q", left)
 	}
 }

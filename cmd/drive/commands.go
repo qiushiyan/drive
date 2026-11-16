@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -307,8 +308,8 @@ func (c *SendCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 type OpenCmd struct {
 	Label   string `arg:"" help:"The label the new session gets in the batch and on its Rex block: a name for its work, such as search-repairs."`
 	Step    `embed:""`
-	Dir     string  `type:"existingdir" default:"." help:"The directory the session starts in."`
-	Resume  string  `placeholder:"ID" help:"Resume this Claude Code session id instead of starting fresh, such as a session relaunched on another account."`
+	Dir     string  `type:"existingdir" placeholder:"DIR" help:"The directory the session starts in (default: the current one)."`
+	Resume  string  `placeholder:"ID" help:"Resume this Claude Code session id instead of starting fresh, such as a session relaunched on another account. When it is this label's own conversation, what the command leaves unsaid is as it was: the directory it last stood in, its model and its effort."`
 	Account string  `placeholder:"NAME" help:"Run it on this Claude account instead of the launcher's choice."`
 	Model   string  `placeholder:"MODEL" help:"Run it on this model, such as fable for a fresh judge."`
 	Effort  *string `enum:"low,medium,high,xhigh,max" placeholder:"LEVEL" help:"Run it at this effort level, for this session only; without it the owner's settings decide."`
@@ -345,7 +346,7 @@ drive open sonnet-failover --dir ~/dev/planlab/main --brief model-failover-sonne
 func (c *OpenCmd) Validate() error { return c.atMostOne() }
 
 func (c *OpenCmd) Run(ctx *kong.Context, d *drive.Driver) error {
-	opt := drive.OpenOptions{Dir: c.Dir, Resume: c.Resume, Account: c.Account, Model: c.Model, Hold: c.Hold, Goal: c.Goal, From: c.From, Brief: c.Brief}
+	opt := drive.OpenOptions{Dir: cmp.Or(c.Dir, "."), AnyDir: c.Dir == "", Resume: c.Resume, Account: c.Account, Model: c.Model, Hold: c.Hold, Goal: c.Goal, From: c.From, Brief: c.Brief}
 	if c.Effort != nil {
 		opt.Effort = *c.Effort
 	}
@@ -578,6 +579,7 @@ func (c *ParkCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 type CloseCmd struct {
 	View    string `arg:"" help:"The view the close was decided on; a gone session, which has none, by its label."`
 	Cleanup bool   `help:"Then remove its branch and worktree once merged, as drive cleanup does."`
+	AsksTo  string `placeholder:"LABEL" help:"First move its open asks to this session, which holds its change from here, as a review session does for the builder it follows."`
 }
 
 func (c *CloseCmd) Help() string {
@@ -594,6 +596,15 @@ too. It prints the open that brings the session back.`
 
 func (c *CloseCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	label := sessionOf(c.View)
+	if c.AsksTo != "" {
+		moved, err := d.MoveAsks(label, c.AsksTo)
+		if err != nil {
+			return err
+		}
+		if len(moved) > 0 {
+			fmt.Fprintf(ctx.Stdout, "%s wait with %s now\n", strings.Join(moved, ", "), c.AsksTo)
+		}
+	}
 	if label == c.View {
 		out, err := d.CloseGone(label)
 		if err != nil {
@@ -605,6 +616,7 @@ func (c *CloseCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	} else {
 		fmt.Fprintf(ctx.Stdout, "closed %s\n", label)
 	}
+	fmt.Fprint(ctx.Stdout, d.AsksLeft(label))
 	if !c.Cleanup {
 		return nil
 	}
@@ -734,7 +746,8 @@ func (c *AskCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 
 type RestateCmd struct {
 	Ask          string `arg:"" help:"The open ask, such as A3."`
-	IfUnanswered string `required:"" help:"What happens while nobody answers, as it stands now."`
+	IfUnanswered string `help:"What happens while nobody answers, as it stands now."`
+	Session      string `placeholder:"LABEL" help:"Move the ask to this session, which holds its change now: its wakes name the ask, and the answer's step goes there."`
 }
 
 func (c *RestateCmd) Help() string {
@@ -742,11 +755,20 @@ func (c *RestateCmd) Help() string {
 When status gives an ask a "since" line and the ask still holds something,
 such as a production write or a message, restate it: say what it waits on
 now, as the owner reads it on the page. One that holds nothing is moot
-instead (record answer --took moot).`
+instead (record answer --took moot).
+
+An ask whose change passed to another session, as a builder's does to its
+review session, moves with --session and stays the question it was; give
+--if-unanswered too when what it waits on changed. close --asks-to moves
+every open ask of the session it closes.`
 }
 
 func (c *RestateCmd) Run(ctx *kong.Context, d *drive.Driver) error {
-	if err := d.Restate(c.Ask, c.IfUnanswered); err != nil {
+	if err := d.Restate(c.Ask, c.IfUnanswered, c.Session); err != nil {
+		return err
+	}
+	if c.Session != "" {
+		_, err := fmt.Fprintf(ctx.Stdout, "recorded restate %s: it waits with %s now\n", c.Ask, c.Session)
 		return err
 	}
 	_, err := fmt.Fprintf(ctx.Stdout, "recorded restate %s\n", c.Ask)

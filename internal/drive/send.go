@@ -136,9 +136,13 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 	if err := d.ready(o, opt, step); err != nil {
 		return nil, err
 	}
-	p, err := d.plan(o.Session.Dir, o.Session.Config, step, o.Member == nil || !o.Member.Noticed && !o.Member.Resumed, opt.Queue)
+	dir, gone := d.snippetDir(o, step)
+	p, err := d.plan(dir, o.Session.Config, step, o.Member == nil || !o.Member.Noticed && !o.Member.Resumed, opt.Queue)
 	if err != nil {
 		return nil, err
+	}
+	if gone != "" {
+		p.from += fmt.Sprintf(", read for %s, where it was opened, since its own directory %s is no longer a checkout", dir, gone)
 	}
 	if p.command != "" && opt.Queue {
 		return nil, &Refused{Reason: fmt.Sprintf("%s starts only when typed, and the file it attaches attaches nothing typed mid-turn", strings.Fields(p.command)[0]),
@@ -167,6 +171,27 @@ func (d *Driver) whenTurnEnds(o *Observation) string {
 		return "its wake comes when its turn ends"
 	}
 	return "arm its wake, which comes when its turn ends: " + d.run("watch", o.Label)
+}
+
+// snippetDir is where a session's snippet keys resolve: its own directory,
+// as the owner's would there. A session whose worktree its closeout removed
+// stands in a directory that is no checkout any more, where a project's key
+// resolves to nothing: merge-when-ready did not, for a session sent on to a
+// follow-up after its closeout (2026-11-13), and its text went by hand. The
+// key then resolves where the session was opened, which is its project's
+// checkout; gone is the directory passed over.
+func (d *Driver) snippetDir(o *Observation, step Step) (dir, gone string) {
+	dir = o.Session.Dir
+	if step.Key == "" || o.Member == nil || o.Member.Dir == "" || o.Member.Dir == dir || snippet.Checkout(dir) {
+		return dir, ""
+	}
+	if _, err := os.Stat(dir); err == nil && !snippet.Checkout(o.Member.Dir) {
+		return dir, "" // neither is a checkout: the session's own directory stands
+	}
+	if _, err := os.Stat(o.Member.Dir); err != nil {
+		return dir, ""
+	}
+	return o.Member.Dir, dir
 }
 
 // seqTail is the end of a terminal sequence drawn as text, such as "?2026l"

@@ -33,7 +33,8 @@ const (
 	KindAnswer     = "answer"
 	// KindRestate is what an open ask (Ref) waits on now, in IfUnanswered,
 	// once its session closed or its change merged and it still holds
-	// something.
+	// something, and, with Session, the session it moved to: the one that
+	// holds its change now, as a review session does once its builder closes.
 	KindRestate = "restate"
 	KindNote    = "note"
 	KindGoal    = "goal" // what a session sets out to do, for the owner; the latest per label stands
@@ -716,7 +717,13 @@ func Records(evs []Event) (grants []Event, asks []*Ask, notes []Event) {
 		case KindRestate:
 			if a := byID[e.Ref]; a != nil {
 				r := e
-				a.Restated, a.IfUnanswered = &r, e.IfUnanswered
+				a.Restated = &r
+				if e.IfUnanswered != "" {
+					a.IfUnanswered = e.IfUnanswered
+				}
+				if e.Session != "" {
+					a.Session = e.Session // the ask moved to the session that holds its change now
+				}
 			}
 		case KindNote:
 			notes = append(notes, e)

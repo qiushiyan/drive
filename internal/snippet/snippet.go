@@ -46,6 +46,15 @@ func git(dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// Checkout says whether dir is inside a git working tree. A worktree that
+// was removed, or moved to a trash folder with its git link cut, is not.
+func Checkout(dir string) bool {
+	if _, err := os.Stat(dir); err != nil {
+		return false
+	}
+	return git(dir, "rev-parse", "--show-toplevel") != ""
+}
+
 // Layers lists the files TabType reads for a directory, lowest precedence first.
 func Layers(home, dir string) []string {
 	conf := filepath.Join(home, ".config/tabtype")
