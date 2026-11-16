@@ -81,29 +81,31 @@ func (d *Driver) Respond(view, response string) (res *Responded, err error) {
 			return nil, &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: what reads as typed text is the prompt's options", o.Label, before.promptKind()),
 				Next: d.answerNext(o.Label, o.View.String(), before)}
 		}
-		if o.Input != turn.InputTyped {
+		if o.Input != turn.InputTyped && a.redrew == "" {
 			return nil, &Refused{Reason: fmt.Sprintf("%s's input box holds nothing typed", o.Label)}
 		}
 	}
 	var uncleared *Failed
-	redrawn := false
-	if response == "clear" {
-		kind, typed, wasDrawn, err := a.clearBox(again)
+	// What a redraw removed was never in the box, so there is nothing to delete.
+	redrawn := response == "clear" && a.redrew != ""
+	if response == "clear" && !redrawn {
+		kind, typed, err := a.clearBox(again)
 		if err != nil {
 			return nil, err
 		}
-		redrawn = wasDrawn
 		// Cleared only once the box is seen empty.
 		if kind != turn.InputEmpty && kind != turn.InputSuggestion {
 			what := "its screen shows no input box"
 			if kind == turn.InputTyped {
 				what = fmt.Sprintf("its input box still holds %q", clip(typed, 80))
 			}
-			uncleared = &Failed{What: fmt.Sprintf("pressed ctrl+u in %s, then had it redraw its screen, and %s", o.Label, what),
+			uncleared = &Failed{What: fmt.Sprintf("had %s redraw its screen, then pressed ctrl+u, and %s", o.Label, what),
 				Next: "look at its screen: " + d.run("read", o.Label, "--screen")}
 		}
-	} else if err := a.press(keys...); err != nil {
-		return nil, unsent(err, again) // its one key, which Rex did not press
+	} else if response != "clear" {
+		if err := a.press(keys...); err != nil {
+			return nil, unsent(err, again) // its one key, which Rex did not press
+		}
 	}
 	// Rex hears nothing of a deny or an interrupt, so the session's own record
 	// says whether it moved: its turn state, or a new entry in its transcript.
@@ -292,10 +294,9 @@ func (d *Driver) closable(o *Observation, view string) error {
 	case state.onPrompt():
 		return &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: its turn has not ended", o.Label, state.promptKind()),
 			Next: d.answerNext(o.Label, view, state)}
-	case o.Input == turn.InputTyped && d.leftover(o) == "":
+	case o.Input == turn.InputTyped:
 		// The owner's word, or a step of the driver's own that never went out,
-		// lets the line go: a clear leaves the view as it was. What drive or
-		// the terminal left on screen is no one's line, and goes with the block.
+		// lets the line go: a clear leaves the view as it was.
 		return &Refused{Reason: fmt.Sprintf("%s's input box holds an unsent line: %q", o.Label, clip(o.Typed, 80)),
 			Next: "leave the block, as the line may be the owner's: ask them about it (" + d.askAbout(o.Label, o.Label+"'s input box holds a line nobody sent; is it yours?", "the line stays unsent") +
 				"), then park it: " + park("an unsent line in its input box") +

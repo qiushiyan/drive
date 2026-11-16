@@ -24,6 +24,7 @@ type action struct {
 	o       *Observation  // the session as the action read it
 	evs     []batch.Event // the batch's log as of that read
 	touched bool          // the action typed or pressed into the session
+	redrew  string        // what the input box showed until its screen was drawn again
 }
 
 // driverHere names the live session batch whose driver runs in block now,
@@ -113,7 +114,39 @@ func (a *action) read(v turn.View, promptOnly bool) error {
 		return err
 	}
 	a.o = o
+	a.redraw()
 	return a.d.checkView(o, v, promptOnly, a.evs)
+}
+
+// redraw has Claude Code draw its screen again (ctrl+l) when the input box
+// reads as holding typed text, and reads the box after that. Text the box
+// holds is drawn again. What an earlier drawing left on its line is painted
+// over, and no key ever removed it: the tail of a terminal sequence
+// ("?2026l") and the end of a line typed an hour earlier stood in three
+// sessions on 2026-11-14 and refused every send and close; seen live on
+// 11-16, in INSERT and in NORMAL. So whose text it is is never judged by
+// what it looks like: what is there after the redraw is in the box, and
+// may be its owner's. A redraw changes nothing a wake waits on, so it does
+// not count as reaching the session.
+func (a *action) redraw() {
+	o, d := a.o, a.d
+	if o.Input != turn.InputTyped || d.Term.Key(a.block, "ctrl+l") != nil {
+		return
+	}
+	for range 4 {
+		d.sleep(d.poll() / 4)
+		screen, err := d.Term.Capture(a.block, true)
+		if err != nil {
+			continue
+		}
+		switch kind, typed := turn.InputBox(screen); kind {
+		case turn.InputEmpty, turn.InputSuggestion:
+			a.redrew, o.Input, o.Typed = o.Typed, kind, typed
+			return
+		case turn.InputTyped:
+			o.Typed = typed
+		}
+	}
 }
 
 // started puts on record that Claude Code runs in a member's block, when the
@@ -183,38 +216,27 @@ func (a *action) insert() error {
 // clearBox empties an input box that holds typed text, and says what it
 // holds afterwards. ctrl+u deletes what stands before the cursor, so it goes
 // from the line's end, in INSERT mode: a "?25h" left with the cursor at its
-// start outlived two clears on 10-28. Text no key removes is no text in the
-// box: cells the screen kept from an earlier drawing, which Claude Code's
-// redraw paints over, so redrawn says the box was empty all along. again is
-// the command that asked for the clear, for an error met before any key.
-func (a *action) clearBox(again string) (kind turn.InputKind, typed string, redrawn bool, err error) {
+// start outlived two clears on 10-28. again is the command that asked for
+// the clear, for an error met before any key.
+func (a *action) clearBox(again string) (kind turn.InputKind, typed string, err error) {
 	d, block := a.d, a.o.Session.Block
 	kind = turn.InputUnknown
 	if err := a.insert(); err != nil {
-		return kind, "", false, unsent(err, again)
+		return kind, "", unsent(err, again)
 	}
-	empty := func() bool { return kind == turn.InputEmpty || kind == turn.InputSuggestion }
-	look := func() {
+	for i := 0; i < 5 && kind != turn.InputEmpty && kind != turn.InputSuggestion; i++ {
+		if err := a.press("end", "ctrl+u"); err != nil && i == 0 {
+			return kind, typed, unsent(err, again)
+		} else if err != nil {
+			return kind, typed, &Failed{What: fmt.Sprintf("pressed ctrl+u in %s %d times, then Rex failed: %v", a.o.Label, i, err),
+				Next: "look at its box: " + d.run("read", a.o.Label, "--screen")}
+		}
 		d.sleep(d.poll() / 4)
 		if screen, err := d.Term.Capture(block, true); err == nil {
 			kind, typed = turn.InputBox(screen)
 		}
 	}
-	for i := 0; i < 5 && !empty(); i++ {
-		if err := a.press("end", "ctrl+u"); err != nil && i == 0 {
-			return kind, typed, false, unsent(err, again)
-		} else if err != nil {
-			return kind, typed, false, &Failed{What: fmt.Sprintf("pressed ctrl+u in %s %d times, then Rex failed: %v", a.o.Label, i, err),
-				Next: "look at its box: " + d.run("read", a.o.Label, "--screen")}
-		}
-		look()
-	}
-	if kind == turn.InputTyped && a.press("ctrl+l") == nil {
-		if look(); empty() {
-			redrawn = true
-		}
-	}
-	return kind, typed, redrawn, nil
+	return kind, typed, nil
 }
 
 func (a *action) press(keys ...string) error {

@@ -45,8 +45,8 @@ func (s *Sent) Text() string {
 	}
 	var out strings.Builder
 	out.WriteString(fmt.Sprintf("%s %s: %s%s\n", s.Outcome, s.Label, what, extra))
-	if s.Cleared != "" {
-		out.WriteString(fmt.Sprintf("its input box was cleared first: it showed %q, %s, not a line someone typed\n", clip(s.Cleared, 80), s.clearedWhat))
+	if s.Redrew != "" {
+		out.WriteString(fmt.Sprintf("its input box showed %q, which an earlier drawing of its screen left: it went once the screen was drawn again, and nothing was typed there\n", clip(s.Redrew, 80)))
 	}
 	for _, h := range s.Freed {
 		out.WriteString(fmt.Sprintf("%s is free: the step %s took it for has ended, and this one went without --hold %s, so another session's step can take it meanwhile\n", h, s.Label, h))
@@ -207,6 +207,13 @@ func (r Rearmed) LaterText() string {
 	return fmt.Sprintf("%s is %s: a run that acts on it first makes that moot\n", r.Label, r.Why)
 }
 
+// unsentText says what a read saw in a session's input box. A read presses
+// nothing, so it cannot tell a line in the box from what an earlier drawing
+// left on screen, and says what the step that can tell does.
+func unsentText(typed string) string {
+	return fmt.Sprintf("input box shows text nobody sent: %q; a send or a close has its screen drawn again first, and refuses only if the text is still there", typed)
+}
+
 // Text is what a read prints: the text, where the session stands, its view
 // and next.
 func (r *Reading) Text() string {
@@ -215,11 +222,7 @@ func (r *Reading) Text() string {
 	fmt.Fprintf(&b, "%s is %s on account %s (session %s)", r.Label, r.State, orDash(r.Account), orDash(r.SID))
 	switch r.Input {
 	case "typed":
-		if r.Leftover != "" {
-			fmt.Fprintf(&b, "; its input box shows %q, %s, which a send clears and a close passes", r.Typed, r.Leftover)
-		} else {
-			fmt.Fprintf(&b, "; its input box holds typed text nobody sent: %q", r.Typed)
-		}
+		fmt.Fprintf(&b, "; its %s", unsentText(r.Typed))
 	case "suggestion":
 		b.WriteString("; its input box shows only Claude Code's suggestion")
 	}
@@ -298,10 +301,8 @@ func (st *Status) Text(now time.Time) string {
 		if r.Next != "" {
 			fmt.Fprintf(&b, "%s is gone: %s\n", r.Label, r.Next)
 		}
-		if r.Input == "typed" && r.Leftover != "" {
-			fmt.Fprintf(&b, "%s's input box shows %q, %s, which a send clears and a close passes\n", r.Label, r.Typed, r.Leftover)
-		} else if r.Input == "typed" {
-			fmt.Fprintf(&b, "%s's input box holds typed text nobody sent: %q\n", r.Label, r.Typed)
+		if r.Input == "typed" {
+			fmt.Fprintf(&b, "%s's %s\n", r.Label, unsentText(r.Typed))
 		}
 		for _, j := range r.Jobs {
 			fmt.Fprintf(&b, "%s runs a background job since %s: %s\n", r.Label, clock(j.Started, st.Zone, now), clip(j.Command, 100))

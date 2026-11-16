@@ -285,9 +285,10 @@ func (c *SendCmd) Help() string {
 The send is refused, and nothing reaches the session, when the session has
 moved past the view, when it waits on a prompt (answer it first), when its
 input box holds a line someone may have typed, or when another session
-holds what --hold names. What drive or the terminal left in the box is
-cleared first, and the send says so. It prints how the step arrived; in a
-batch that wakes a chat driver it arms the session's wake.`
+holds what --hold names. Its screen is drawn again before the box is
+judged, so what an earlier drawing left there refuses nothing, and the send
+says so. It prints how the step arrived; in a batch that wakes a chat
+driver it arms the session's wake.`
 }
 
 func (c *SendCmd) HelpSections() []clikit.Section { return stepSections }
@@ -371,11 +372,10 @@ question, approve takes the option ❯ points at and deny dismisses it, after
 which a send can answer in words; read --screen shows the options. It prints
 what the session reads afterwards.
 
-A clear is for a line that may be someone's. What drive itself left in a
-box, the end of a line it typed earlier or of a terminal sequence, needs
-none: a send clears it and goes, and a close goes past it. Text no key
-removes was never in the box, and the clear has Claude Code draw its screen
-again.`
+A clear is for a line the box holds, which may be someone's. What an earlier
+drawing of the screen left on its line, such as the end of a terminal
+sequence, needs none: a send, a close and a clear have Claude Code draw its
+screen again before they judge the box, and that removes it.`
 }
 
 func (c *RespondCmd) Run(ctx *kong.Context, d *drive.Driver) error {

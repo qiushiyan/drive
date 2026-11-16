@@ -17,69 +17,76 @@ import (
 // "/drive/batches/2026-11-13/sends/sr-loopy-agent-misc-4.md", the end of a
 // line drive had sent an hour earlier. ctrl+u, ctrl+a ctrl+k and vim's dG
 // all left it, since the box held nothing: the screen kept cells from an
-// earlier drawing. Claude Code's redraw paints them over, and the clear says
-// the box was empty.
-func TestAClearRedrawsTextNoKeyRemoves(t *testing.T) {
+// earlier drawing, which Claude Code's redraw paints over (seen live on
+// 11-16, in INSERT and in NORMAL). Every send and close was refused over a
+// line that "may be the owner's". So a send, a close and a clear have the
+// screen drawn again before they judge what the box holds.
+func TestWhatAnEarlierDrawingLeftGoesWithARedrawBeforeTheBoxIsJudged(t *testing.T) {
 	r := newRig(t, "none")
 	c := adopted(t, r, "T1")
 	c.VimMode()
 	c.Edit(func(c *testkit.Claude) { c.Smear = "?2026l" })
+	// A read presses nothing, so it says what a send will do about it.
+	const says = `input box shows text nobody sent: "?2026l"; a send or a close has its screen drawn again first, and refuses only if the text is still there`
+	if rd, err := r.d.Read("T1", drive.ReadLast, 0); err != nil || !strings.Contains(rd.Text(), "its "+says) {
+		t.Fatalf("a read says what shows and what a send does: %v\n%s", err, rd.Text())
+	}
+	if st, err := r.d.Status(false); err != nil || !strings.Contains(st.Text(r.w.Clock.Now()), "T1's "+says) {
+		t.Fatalf("status says it too: %v\n%s", err, st.Text(r.w.Clock.Now()))
+	}
+	sent, err := r.d.Send(r.view("T1"), drive.Step{Line: "Then write the changelog."}, drive.SendOptions{})
+	if err != nil || sent.Outcome != "arrived" || sent.Redrew != "?2026l" || !strings.Contains(sent.Text(), `its input box showed "?2026l", which an earlier drawing of its screen left`) {
+		t.Fatalf("the step goes once the screen is drawn again, and says so: %+v %v", sent, err)
+	}
+	c.Edit(func(c *testkit.Claude) {
+		if c.Smear != "" || !slices.Contains(c.Keys, "ctrl+l") || slices.Contains(c.Keys, "ctrl+u") {
+			t.Fatalf("the screen was drawn again, and nothing was deleted: %q %v", c.Smear, c.Keys)
+		}
+		c.Smear = "/sends/T1-4.md"
+	})
 	res, err := r.d.Respond(r.view("T1"), "clear")
 	if err != nil || !res.Redrawn || !strings.Contains(res.Text(), "its box was empty already") {
-		t.Fatalf("cleared by a redraw, and said so: %+v %v", res, err)
-	}
-	c.Edit(func(c *testkit.Claude) {
-		if c.Smear != "" || !slices.Contains(c.Keys, "ctrl+l") {
-			t.Fatalf("the screen was drawn again: %q %v", c.Smear, c.Keys)
-		}
-	})
-	// Text the box does hold needs no redraw.
-	c.Edit(func(c *testkit.Claude) { c.Input, c.Keys = "a line of mine", nil })
-	res, err = r.d.Respond(r.view("T1"), "clear")
-	c.Edit(func(c *testkit.Claude) {
-		if err != nil || res.Redrawn || slices.Contains(c.Keys, "ctrl+l") {
-			t.Fatalf("typed text goes with ctrl+u alone: %+v %v %v", res, err, c.Keys)
-		}
-	})
-}
-
-// What drive or the terminal left on a session's screen is no one's line. A
-// send clears it and goes; a close goes past it. Text that could be the
-// owner's is still refused, for them to say.
-func TestASendAndACloseGoPastALeftoverThatIsNoOnesLine(t *testing.T) {
-	r := newRig(t, "none")
-	c := adopted(t, r, "T1")
-	first, err := r.d.Send(r.view("T1"), drive.Step{Line: "# land the pull request, then stop at ready to merge"}, drive.SendOptions{})
-	if err != nil || first.Path == "" {
-		t.Fatalf("a line with a leading # goes as a file: %+v %v", first, err)
-	}
-	tail := first.Path[len(first.Path)/2:]
-	c.Edit(func(c *testkit.Claude) { c.Smear = tail })
-	sent, err := r.d.Send(r.view("T1"), drive.Step{Line: "Then write the changelog."}, drive.SendOptions{})
-	if err != nil || sent.Outcome != "arrived" || sent.Cleared != tail || !strings.Contains(sent.Text(), "its input box was cleared first") || !strings.Contains(sent.Text(), "the end of a line drive typed into it earlier") {
-		t.Fatalf("the step goes once the leftover is cleared, and says so: %+v %v", sent, err)
+		t.Fatalf("a clear finds the box empty once it is drawn again, and says so: %+v %v", res, err)
 	}
 	c.Edit(func(c *testkit.Claude) { c.Smear = "?25h" })
-	// A read and status say what it is, so no one is asked whose line it is.
-	const says = `its input box shows "?25h", the end of a terminal sequence, which a send clears and a close passes`
-	if rd, err := r.d.Read("T1", drive.ReadLast, 0); err != nil || !strings.Contains(rd.Text(), says) || strings.Contains(rd.Text(), "nobody sent") {
-		t.Fatalf("a read names the leftover: %v\n%s", err, rd.Text())
-	}
-	if st, err := r.d.Status(false); err != nil || !strings.Contains(st.Text(r.w.Clock.Now()), "T1's "+says[4:]) {
-		t.Fatalf("status names it too: %v\n%s", err, st.Text(r.w.Clock.Now()))
-	}
 	if err := r.d.Close(r.view("T1")); err != nil {
-		t.Fatalf("a close goes past a terminal sequence's tail: %v", err)
+		t.Fatalf("a close goes once the redraw shows an empty box: %v", err)
 	}
+}
 
-	c2 := adopted(t, r, "T2")
-	c2.Edit(func(c *testkit.Claude) { c.Input = "ask it about the migration first" })
-	if _, err := r.d.Send(r.view("T2"), drive.Step{Line: "Then write the changelog."}, drive.SendOptions{}); !isRefused(err) || !strings.Contains(err.Error(), "it may be the owner's") {
-		t.Fatalf("a line someone may have typed stays: %v", err)
+// Whose text a box holds is never judged by what it looks like. A step the
+// owner recalls into the box to edit reads as the end of a line drive sent,
+// and a few characters of theirs can read as the tail of a terminal
+// sequence: both are in the box after a redraw, so both stay until someone
+// says they can go.
+func TestTextTheBoxHoldsStaysWhateverItLooksLike(t *testing.T) {
+	r := newRig(t, "none")
+	c := adopted(t, r, "T1")
+	const step = "Then write the changelog for the release."
+	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: step}, drive.SendOptions{}); err != nil {
+		t.Fatal(err)
 	}
-	if err := r.d.Close(r.view("T2")); !isRefused(err) || !strings.Contains(err.Error(), "holds an unsent line") {
-		t.Fatalf("and keeps its block open: %v", err)
+	for _, typed := range []string{step, "?25h"} {
+		c.Edit(func(c *testkit.Claude) { c.Input = typed })
+		if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "Now cut the release."}, drive.SendOptions{}); !isRefused(err) || !strings.Contains(err.Error(), "it may be the owner's") {
+			t.Fatalf("%q is in the box, so the send is refused: %v", typed, err)
+		}
+		if err := r.d.Close(r.view("T1")); !isRefused(err) || !strings.Contains(err.Error(), "holds an unsent line") {
+			t.Fatalf("%q keeps the block open: %v", typed, err)
+		}
+		c.Edit(func(c *testkit.Claude) {
+			if c.Input != typed {
+				t.Fatalf("the line is as it was: %q, want %q", c.Input, typed)
+			}
+		})
 	}
+	// On someone's word it goes, by the keys that delete it.
+	res, err := r.d.Respond(r.view("T1"), "clear")
+	c.Edit(func(c *testkit.Claude) {
+		if err != nil || res.Redrawn || c.Input != "" || !slices.Contains(c.Keys, "ctrl+u") {
+			t.Fatalf("a clear deletes what the box holds: %+v %v %q %v", res, err, c.Input, c.Keys)
+		}
+	})
 }
 
 // On 2026-11-15 three steps reached one session as "iGo with option C: …":
