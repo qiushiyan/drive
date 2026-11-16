@@ -393,7 +393,7 @@ acting on it.
 When wakes wait and no listener runs, as after a Rex restart, the machine's
 watchdog types one line into the driver's own block, idle and with nothing
 typed in it, saying to start one. Only the driver's own session listens, and
-one listener at a time.`
+one listener at a time: a second says so and exits, starting nothing.`
 }
 
 func (c *ListenCmd) Run(ctx *kong.Context, d *drive.Driver) error {

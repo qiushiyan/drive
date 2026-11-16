@@ -44,6 +44,7 @@ type Reading struct {
 	// DrivenBy is, for a session outside the batch, the live batch of
 	// another driver's that drives it, which alone acts on it.
 	DrivenBy string
+	now      time.Time
 }
 
 // Read reads a session and returns the view to act on.
@@ -64,7 +65,7 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 		return nil, err
 	}
 	d.noteLimit(o.in, o) // a driver that reads a limit and relaunches leaves no watch to find it
-	r := &Reading{Label: o.Label, SID: o.Session.ID, State: o.State(), Account: o.Session.Account, Input: o.Input, Typed: o.Typed, View: o.View}
+	r := &Reading{Label: o.Label, SID: o.Session.ID, State: o.State(), Account: o.Session.Account, Input: o.Input, Typed: o.Typed, View: o.View, now: d.now()}
 	if o.Member != nil {
 		r.Goal = o.Member.Goal
 	}

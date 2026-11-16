@@ -93,9 +93,15 @@ func TestOnlyTheDriverListensAndOneListenerAtATime(t *testing.T) {
 	if ok, _ := r.watches.Claim(listenWatch); !ok {
 		t.Fatal("claim")
 	}
-	_, err := r.d.Listen()
-	if !isRefused(err) || !strings.Contains(err.Error(), "a listener already runs") || strings.Contains(err.Error(), "drive --batch b1 listen") {
-		t.Fatalf("a second listener is refused, with no next: that starts it again: %v", err)
+	// A driver starts a listener at the end of every turn, and a turn its
+	// owner began finds the last one still running: nine of those read as
+	// failures in one batch (2026-11-13). It starts nothing and fails nothing.
+	took, err := r.d.Listen()
+	if err != nil || !took.Running || !strings.Contains(took.Text(), "a listener already runs for batch b1, so none was started") || strings.Contains(took.Text(), "next:") {
+		t.Fatalf("a second listener starts nothing, takes nothing and names nothing to run: %+v %v", took, err)
+	}
+	if len(r.events(batch.KindTaken)) != 0 {
+		t.Fatal("it took no wake")
 	}
 }
 

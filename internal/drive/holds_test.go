@@ -328,3 +328,19 @@ func TestAFreeHoldIsToldOnceToWhoeverWaits(t *testing.T) {
 		t.Fatalf("free again after it was taken, it is told again: %d %q", l.count(), posted)
 	}
 }
+
+// A read says how long a session's background job has run. On 2026-11-14 a
+// review session reported "about eleven minutes in" beside a test suite that
+// had run since 07:33; its read named the job with no age, and the driver
+// asked about it only at the 13:45 wake.
+func TestAReadSaysHowLongABackgroundJobHasRun(t *testing.T) {
+	r, _, _ := holding(t, "webhook", evalRunsOn)
+	r.w.Clock.Sleep(2*time.Hour + 12*time.Minute)
+	rd, err := r.d.Read("S2", drive.ReadLast, 0)
+	if err != nil || !strings.Contains(rd.Text(), "a background job of its runs, 2h12m so far: uv run eval --suite search") {
+		t.Fatalf("the read gives the job's age: %v\n%s", err, rd.Text())
+	}
+	if !strings.Contains(rd.Next, "if the job, 2h12m so far, should have ended") {
+		t.Fatalf("and so does what to run about it: %s", rd.Next)
+	}
+}

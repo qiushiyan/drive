@@ -36,7 +36,10 @@ type Taken struct {
 	Lines []string // a line per session, timer or watchdog report
 	Brief string   // the file a driver reads again once its context lost it, "" when there is none
 	Ended string   // the batch stopped being live while the listener waited: why
-	Next  string
+	// Running says a listener already ran, so this one started nothing and
+	// took nothing.
+	Running bool
+	Next    string
 }
 
 // Listen waits for wakes left for the batch's driver and takes them. Only
@@ -76,8 +79,9 @@ func (d *Driver) Listen() (*Taken, error) {
 		return nil, err
 	}
 	if !claimed {
-		return nil, &Refused{Reason: fmt.Sprintf("a listener already runs for batch %s", b.Meta.Name),
-			Next: "leave it running: it ends with the next wake, and prints it"}
+		// Nothing to do, and no failure: a driver starts one at the end of
+		// every turn, and a turn its owner began finds the last still running.
+		return &Taken{Batch: b.Meta.Name, At: d.now(), Zone: b.Zone(), Running: true}, nil
 	}
 	defer d.Watches.Retire(name)
 	if evs, err := b.Events(); err == nil && len(batch.Untaken(evs)) == 0 {
@@ -220,6 +224,9 @@ func (d *Driver) sessionBrief() string {
 
 // Text renders what a listener took.
 func (t *Taken) Text() string {
+	if t.Running {
+		return fmt.Sprintf("a listener already runs for batch %s, so none was started: it ends with the next wake and prints it\n", t.Batch)
+	}
 	var out strings.Builder
 	if t.Ended != "" {
 		fmt.Fprintf(&out, "%s; no listener is needed for it\n", t.Ended)

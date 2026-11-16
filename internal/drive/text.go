@@ -13,6 +13,7 @@ import (
 
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/rex"
+	"github.com/qiushiyan/drive/internal/session"
 	"github.com/qiushiyan/drive/internal/turn"
 )
 
@@ -209,7 +210,7 @@ func (r *Reading) Text() string {
 		b.WriteString("; its input box shows only Claude Code's suggestion")
 	}
 	for _, j := range r.Jobs {
-		b.WriteString("; a background job of its runs: " + clip(j.Command, 100))
+		b.WriteString("; a background job of its runs" + jobAge(j, r.now) + ": " + clip(j.Command, 100))
 	}
 	b.WriteString("\n")
 	if r.Goal != "" {
@@ -353,6 +354,17 @@ func clock(t time.Time, zone *time.Location, now time.Time) string {
 		return t.Format("15:04")
 	}
 	return t.Format("01-02 15:04")
+}
+
+// jobAge is how long a background job has run, after "a background job of
+// its runs": a reply that says "eleven minutes in" beside a job two hours
+// old is a job to ask about, and one driver heard of a hung suite six hours
+// late for want of it (2026-11-14). "" when either time is unknown.
+func jobAge(j session.Shell, now time.Time) string {
+	if j.Started.IsZero() || now.IsZero() {
+		return ""
+	}
+	return ", " + ago(now.Sub(j.Started)) + " so far"
 }
 
 // ago is how long ago something was, as status's FOR column and every

@@ -29,6 +29,7 @@ type Ending struct {
 	View    turn.View
 	Account string
 	Next    string // what the driver does about it, where the ending decides that
+	now     time.Time
 	// Waiting names the sessions waiting on a hold it held, each with the
 	// send to run once the hold is free: a wake sets it.
 	Waiting string
@@ -132,7 +133,7 @@ func (d *Driver) wait(ref string, planFor func(o *Observation, t Turn, stable ti
 		if ended {
 			e := &Ending{Label: o.Label, Block: o.Session.Block, State: state, Msg: st.Msg, Error: o.Frontier.Error,
 				Shells: t.Shells, Orphans: t.Orphans, Capped: t.Shells > 0, Pending: o.Frontier.Pending, View: o.View,
-				Account: o.Session.Account, Jobs: d.Host.Shells(o.Session.Status.PID)}
+				Account: o.Session.Account, Jobs: d.Host.Shells(o.Session.Status.PID), now: d.now()}
 			if a, local := o.Frontier.Answer(); a != nil {
 				e.Reply = tail(answerText(o.Frontier, a, local), replyTail)
 			}
@@ -179,15 +180,15 @@ func (d *Driver) nextFor(o *Observation, state State, jobs []session.Shell) stri
 	case state == Interrupted:
 		return fmt.Sprintf("its turn was interrupted; read where it stopped (%s) before its next step", d.run("read", o.Label))
 	case state == Done && len(jobs) > 0 && replyReads(o) == turn.ReadsAsking:
-		return fmt.Sprintf("its reply asks something, whatever its job does: answer with its next step (%s); if the job should have ended, have the session stop it: %s",
-			d.run("send", o.View.String(), text("…")), d.stopJob(o.View.String(), jobs[0]))
+		return fmt.Sprintf("its reply asks something, whatever its job does: answer with its next step (%s); if the job%s should have ended, have the session stop it: %s",
+			d.run("send", o.View.String(), text("…")), d.jobAged(jobs[0]), d.stopJob(o.View.String(), jobs[0]))
 	case state == Done && len(jobs) > 0:
 		again := "run only " + d.run("watch", o.Label) + ", which tells drive this run heard the wake: it stays armed and comes again when that turn ends"
 		if webhook, _ := d.wakes(o); !webhook {
 			again = "wait for it again (" + d.run("wait", o.Label) + ")"
 		}
-		return fmt.Sprintf("if the reply says it waits on its job, %s; if the job should have ended, have the session stop it: %s; otherwise send its next step",
-			again, d.stopJob(o.View.String(), jobs[0]))
+		return fmt.Sprintf("if the reply says it waits on its job, %s; if the job%s should have ended, have the session stop it: %s; otherwise send its next step",
+			again, d.jobAged(jobs[0]), d.stopJob(o.View.String(), jobs[0]))
 	}
 	return ""
 }
@@ -198,6 +199,14 @@ func lastLines(s string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// jobAged is a job's age set off inside a sentence: ", 2h12m so far,".
+func (d *Driver) jobAged(j session.Shell) string {
+	if age := jobAge(j, d.now()); age != "" {
+		return age + ","
+	}
+	return ""
 }
 
 // Text renders an ending for a reader deciding the next step.
@@ -217,7 +226,7 @@ func (e *Ending) Text() string {
 		fmt.Fprintf(&b, "error: %s — %q (account %s)\n", e.Error.Kind, e.Error.Text, e.Account)
 	}
 	for _, j := range e.Jobs {
-		fmt.Fprintf(&b, "a background job of its runs: %s\n", clip(j.Command, 100))
+		fmt.Fprintf(&b, "a background job of its runs%s: %s\n", jobAge(j, e.now), clip(j.Command, 100))
 	}
 	if e.Pending != nil && e.State.blocked() {
 		fmt.Fprintf(&b, "pending %s: %s\n", e.Pending.Name, clip(e.Pending.Input, 400))
