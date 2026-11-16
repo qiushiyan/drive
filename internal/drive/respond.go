@@ -19,6 +19,9 @@ type Responded struct {
 	Call    string // the tool call the prompt asked about
 	After   State  // the state the session reached
 	Watched bool   // its wake is armed
+	// Redrawn says a clear found the box empty once the screen was drawn
+	// again: what read as typed text was left from an earlier drawing.
+	Redrawn bool
 }
 
 // Respond answers what a session waits on, decided on view: approve or deny
@@ -83,33 +86,20 @@ func (d *Driver) Respond(view, response string) (res *Responded, err error) {
 		}
 	}
 	var uncleared *Failed
+	redrawn := false
 	if response == "clear" {
-		kind, typed := turn.InputUnknown, ""
-		// ctrl+u deletes what stands before the cursor, so it goes from the
-		// line's end, in INSERT mode: a "?25h" left with the cursor at its
-		// start outlived two clears on 10-28.
-		if err := a.insert(); err != nil {
-			return nil, unsent(err, again)
+		kind, typed, wasDrawn, err := a.clearBox(again)
+		if err != nil {
+			return nil, err
 		}
-		for i := 0; i < 5 && kind != turn.InputEmpty && kind != turn.InputSuggestion; i++ {
-			if err := a.press("end", "ctrl+u"); err != nil && i == 0 {
-				return nil, unsent(err, again)
-			} else if err != nil {
-				return nil, &Failed{What: fmt.Sprintf("pressed ctrl+u in %s %d times, then Rex failed: %v", o.Label, i, err),
-					Next: "look at its box: " + d.run("read", o.Label, "--screen")}
-			}
-			d.sleep(d.poll() / 4)
-			if screen, err := d.Term.Capture(block, true); err == nil {
-				kind, typed = turn.InputBox(screen)
-			}
-		}
+		redrawn = wasDrawn
 		// Cleared only once the box is seen empty.
 		if kind != turn.InputEmpty && kind != turn.InputSuggestion {
 			what := "its screen shows no input box"
 			if kind == turn.InputTyped {
 				what = fmt.Sprintf("its input box still holds %q", clip(typed, 80))
 			}
-			uncleared = &Failed{What: fmt.Sprintf("pressed ctrl+u in %s and %s", o.Label, what),
+			uncleared = &Failed{What: fmt.Sprintf("pressed ctrl+u in %s, then had it redraw its screen, and %s", o.Label, what),
 				Next: "look at its screen: " + d.run("read", o.Label, "--screen")}
 		}
 	} else if err := a.press(keys...); err != nil {
@@ -117,7 +107,7 @@ func (d *Driver) Respond(view, response string) (res *Responded, err error) {
 	}
 	// Rex hears nothing of a deny or an interrupt, so the session's own record
 	// says whether it moved: its turn state, or a new entry in its transcript.
-	out := &Responded{Label: o.Label, Action: response, Call: call, After: before}
+	out := &Responded{Label: o.Label, Action: response, Call: call, After: before, Redrawn: redrawn}
 	moved := response == "clear"
 	for end := d.now().Add(10 * time.Second); !moved && d.now().Before(end); {
 		d.sleep(d.poll() / 2)
@@ -237,9 +227,10 @@ func (d *Driver) Close(view string) (err error) {
 	case state.onPrompt():
 		return &Refused{Reason: fmt.Sprintf("%s waits on a %s prompt: its turn has not ended", o.Label, state.promptKind()),
 			Next: d.answerNext(o.Label, view, state)}
-	case o.Input == turn.InputTyped:
+	case o.Input == turn.InputTyped && d.leftover(o) == "":
 		// The owner's word, or a step of the driver's own that never went out,
-		// lets the line go: a clear leaves the view as it was.
+		// lets the line go: a clear leaves the view as it was. What drive or
+		// the terminal left on screen is no one's line, and goes with the block.
 		return &Refused{Reason: fmt.Sprintf("%s's input box holds an unsent line: %q", o.Label, clip(o.Typed, 80)),
 			Next: "leave the block, as the line may be the owner's: ask them about it (" + d.askAbout(o.Label, o.Label+"'s input box holds a line nobody sent; is it yours?", "the line stays unsent") +
 				"), then park it: " + park("an unsent line in its input box") +

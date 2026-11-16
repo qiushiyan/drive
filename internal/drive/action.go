@@ -165,11 +165,56 @@ func (a *action) insert() error {
 	if kind, _ := turn.InputBox(screen); kind == turn.InputUnknown || kind == turn.InputPrompt {
 		return nil
 	}
+	_, before := turn.InputBox(screen)
 	if err := a.typeInto("i"); err != nil {
 		return err
 	}
 	a.d.sleep(a.d.poll() / 4)
+	// A box already in INSERT mode, its status line not saying so, takes the
+	// i as text, and the step would arrive behind it: take it back.
+	if after, err := a.d.Term.Capture(o.Session.Block, true); err == nil {
+		if _, typed := turn.InputBox(after); typed == before+"i" {
+			return a.press("backspace")
+		}
+	}
 	return nil
+}
+
+// clearBox empties an input box that holds typed text, and says what it
+// holds afterwards. ctrl+u deletes what stands before the cursor, so it goes
+// from the line's end, in INSERT mode: a "?25h" left with the cursor at its
+// start outlived two clears on 10-28. Text no key removes is no text in the
+// box: cells the screen kept from an earlier drawing, which Claude Code's
+// redraw paints over, so redrawn says the box was empty all along. again is
+// the command that asked for the clear, for an error met before any key.
+func (a *action) clearBox(again string) (kind turn.InputKind, typed string, redrawn bool, err error) {
+	d, block := a.d, a.o.Session.Block
+	kind = turn.InputUnknown
+	if err := a.insert(); err != nil {
+		return kind, "", false, unsent(err, again)
+	}
+	empty := func() bool { return kind == turn.InputEmpty || kind == turn.InputSuggestion }
+	look := func() {
+		d.sleep(d.poll() / 4)
+		if screen, err := d.Term.Capture(block, true); err == nil {
+			kind, typed = turn.InputBox(screen)
+		}
+	}
+	for i := 0; i < 5 && !empty(); i++ {
+		if err := a.press("end", "ctrl+u"); err != nil && i == 0 {
+			return kind, typed, false, unsent(err, again)
+		} else if err != nil {
+			return kind, typed, false, &Failed{What: fmt.Sprintf("pressed ctrl+u in %s %d times, then Rex failed: %v", a.o.Label, i, err),
+				Next: "look at its box: " + d.run("read", a.o.Label, "--screen")}
+		}
+		look()
+	}
+	if kind == turn.InputTyped && a.press("ctrl+l") == nil {
+		if look(); empty() {
+			redrawn = true
+		}
+	}
+	return kind, typed, redrawn, nil
 }
 
 func (a *action) press(keys ...string) error {

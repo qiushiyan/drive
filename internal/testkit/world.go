@@ -118,7 +118,16 @@ type Claude struct {
 	// which, and ctrl+u deletes only what stands before the cursor (as seen
 	// live, 2.1.312).
 	Vim, Normal bool
-	AtStart     bool // the cursor stands at the start of the box's line
+	// HideMode leaves INSERT off the status line while the box is in INSERT
+	// mode: a step arrived as "iGo with option C" three times in one session
+	// (2026-11-15), the i typed to leave a NORMAL mode the box was not in.
+	HideMode bool
+	// Smear is text the screen shows on the box's line that the box does not
+	// hold: cells a redraw skipped, such as the end of a line sent earlier or
+	// a terminal sequence's tail ("?2026l"). No key removes it; Claude Code's
+	// redraw (ctrl+l) does (2026-11-14, three sessions).
+	Smear   string
+	AtStart bool // the cursor stands at the start of the box's line
 	// Screen, when set, is what the block shows in place of the input box,
 	// such as a full-screen view drawn over it: no ❯ line.
 	Screen    string
@@ -689,10 +698,12 @@ func (w *World) Capture(block string, vt bool) (string, error) {
 		return "Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No, and tell Claude what to do differently (esc)\r\n", nil
 	}
 	status := ""
-	if c.Vim && !c.Normal {
+	if c.Vim && !c.Normal && !c.HideMode {
 		status = "  -- INSERT -- ⏵⏵ auto mode on\r\n"
 	}
 	switch {
+	case c.Smear != "":
+		return "╭───\n❯ " + c.Input + c.Smear + "\r\n╰───\n" + status, nil
 	case c.Input != "":
 		return "╭───\n❯ " + c.Input + "\r\n╰───\n" + status, nil
 	case c.Suggestion != "" && vt:
@@ -879,6 +890,12 @@ func (w *World) Key(block string, keys ...string) error {
 				c.Input = c.Input[len(c.Input)-1:]
 			case !c.AtStart:
 				c.Input = ""
+			}
+		case "ctrl+l":
+			c.Smear = "" // the redraw paints every cell again
+		case "backspace":
+			if c.Input != "" && !c.AtStart {
+				c.Input = c.Input[:len(c.Input)-1]
 			}
 		case "home":
 			c.AtStart = true

@@ -366,7 +366,13 @@ func (c *RespondCmd) Help() string {
 A deny ends the turn, and the session takes its next step as usual. On a
 question, approve takes the option ❯ points at and deny dismisses it, after
 which a send can answer in words; read --screen shows the options. It prints
-what the session reads afterwards.`
+what the session reads afterwards.
+
+A clear is for a line that may be someone's. What drive itself left in a
+box, the end of a line it typed earlier or of a terminal sequence, needs
+none: a send clears it and goes, and a close goes past it. Text no key
+removes was never in the box, and the clear has Claude Code draw its screen
+again.`
 }
 
 func (c *RespondCmd) Run(ctx *kong.Context, d *drive.Driver) error {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -57,7 +58,12 @@ type Sent struct {
 	// Freed are the holds this session took for an earlier step, which had
 	// ended, and this step went without: each is free from here.
 	Freed []string
-	line  string // the step's own line, when the notice rode it
+	// Cleared is what the session's input box showed before the step went
+	// in, when that was no one's line: the end of a line drive typed
+	// earlier, or of a terminal sequence.
+	Cleared     string
+	clearedWhat string
+	line        string // the step's own line, when the notice rode it
 }
 
 // The line a file step is typed as: its path as an @-mention, which Claude
@@ -106,6 +112,27 @@ func (d *Driver) Send(view string, step Step, opt SendOptions) (sent *Sent, err 
 		}
 	}()
 	o := a.o
+	cleared, left := "", ""
+	if left = d.leftover(o); left != "" {
+		// Not a line someone typed, so no one is asked about it: the box is
+		// cleared, and the step goes into it.
+		kind, typed, _, err := a.clearBox(d.sendCommand(view, step, opt))
+		if err != nil {
+			return nil, err
+		}
+		if kind != turn.InputEmpty && kind != turn.InputSuggestion {
+			return nil, &Failed{What: fmt.Sprintf("%s's input box shows %q, %s, and neither ctrl+u nor a redraw of its screen removed it; the step was not sent", o.Label, clip(typed, 80), left),
+				Next: "look at its screen: " + d.run("read", o.Label, "--screen")}
+		}
+		cleared = o.Typed
+		o.Input, o.Typed = kind, typed
+		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindRespond, Session: o.Label, Action: "clear", View: v.String(), Outcome: string(o.State())})
+	}
+	defer func() {
+		if sent != nil && cleared != "" {
+			sent.Cleared, sent.clearedWhat = cleared, left
+		}
+	}()
 	if err := d.ready(o, opt, step); err != nil {
 		return nil, err
 	}
@@ -140,6 +167,39 @@ func (d *Driver) whenTurnEnds(o *Observation) string {
 		return "its wake comes when its turn ends"
 	}
 	return "arm its wake, which comes when its turn ends: " + d.run("watch", o.Label)
+}
+
+// seqTail is the end of a terminal sequence drawn as text, such as "?2026l"
+// or "?25h": its escape and bracket went to the terminal and the rest to the
+// screen.
+var seqTail = regexp.MustCompile(`^\??[0-9][0-9;]*[A-Za-z]$`)
+
+// leftover says what a session's unsent text is when it is no one's line:
+// the end of a line drive typed into it earlier, or of a terminal sequence.
+// Both were left on screen in three sessions on 2026-11-14, where every send
+// and close was refused over a line that "may be the owner's" and the driver
+// went to Rex's keys to remove it. "" for anything else, which may be the
+// owner's and stays theirs.
+func (d *Driver) leftover(o *Observation) string {
+	typed := strings.TrimSpace(o.Typed)
+	switch {
+	case o.Input != turn.InputTyped || typed == "":
+		return ""
+	case seqTail.MatchString(typed):
+		return "the end of a terminal sequence"
+	case o.in == nil || len(typed) < 12:
+		return ""
+	}
+	evs, err := o.in.Events()
+	if err != nil {
+		return ""
+	}
+	for _, e := range evs {
+		if (e.Kind == batch.KindSendIntent || e.Kind == batch.KindSend) && e.Session == o.Label && strings.HasSuffix(strings.TrimSpace(e.Text), typed) {
+			return "the end of a line drive typed into it earlier"
+		}
+	}
+	return ""
 }
 
 // ready refuses a send the session cannot take as it stands. --queue lets a
