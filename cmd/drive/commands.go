@@ -275,7 +275,7 @@ type SendCmd struct {
 	View  string `arg:"" help:"The view the step was decided on, as read, wait, status or a wake printed it (search@3fa91c07)."`
 	Step  `embed:""`
 	Queue bool   `help:"Send to a working session, which takes the step mid-turn: the view then needs only that no prompt came since. A session on a prompt takes nothing until it is answered."`
-	Hold  string `placeholder:"NAME" help:"Name what this step uses that only one session may use at a time, such as a release or commits into a shared checkout. A second send or open naming it is refused, saying why, while this session works, later steps included, waits on a prompt, or runs a background job it started."`
+	Hold  string `placeholder:"NAME" help:"Name what this step uses that only one session may use at a time, such as a release or commits into a shared checkout. A second send or open naming it is refused, saying why, while this step's turn runs, waits on a prompt, or runs a background job it started. The hold covers this step: a later step that still does the held work names it again."`
 	As    string `placeholder:"LABEL" help:"The label a session outside the batch joins it under, on its first send: a name for its work, such as search."`
 }
 

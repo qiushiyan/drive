@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/drive"
 	"github.com/qiushiyan/drive/internal/testkit"
 )
@@ -242,9 +243,34 @@ func TestABackgroundJobIsShownAndStoppedBySession(t *testing.T) {
 	_ = b
 }
 
-// A hold its holder keeps through a later step says so: a follow-up to a
-// closeout is still the closeout.
-func TestAHoldKeptForALaterStepSaysSo(t *testing.T) {
+// A hold covers the step sent with it. On 2026-11-13 a recap and a closeout
+// sent after a release each kept the next session's release waiting, and a
+// follow-up pull request kept another session's closeout out of the main
+// checkout for two hours: the holder was working, on something else. A step
+// sent to the holder once the held one has ended, without the hold, records
+// it free and says so; one sent with the hold takes it again.
+func TestAHoldEndsWithTheStepThatTookIt(t *testing.T) {
+	r := newRig(t, "none")
+	a := adopted(t, r, "T1")
+	adopted(t, r, "T2")
+	closeout := drive.Step{Line: "close it out"}
+	if _, err := r.d.Send(r.view("T1"), closeout, drive.SendOptions{Hold: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	a.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} })
+	sent, err := r.d.Send(r.view("T1"), drive.Step{Line: "now the follow-up, in a worktree of its own"}, drive.SendOptions{})
+	if err != nil || len(sent.Freed) != 1 || sent.Freed[0] != "main" || !strings.Contains(sent.Text(), "main is free: the step T1 took it for has ended, and this one went without --hold main") {
+		t.Fatalf("the later step frees the hold and says so: %+v %v", sent, err)
+	}
+	if frees := r.events(batch.KindFree); len(frees) != 1 || frees[0].Session != "T1" || frees[0].Hold != "main" || !strings.Contains(frees[0].Reason, "without --hold main") {
+		t.Fatalf("the log keeps it: %+v", frees)
+	}
+	if _, err := r.d.Send(r.view("T2"), closeout, drive.SendOptions{Hold: "main"}); err != nil {
+		t.Fatalf("free while its last holder works on something else: %v", err)
+	}
+}
+
+func TestALaterStepSentWithTheHoldKeepsIt(t *testing.T) {
 	r := newRig(t, "none")
 	a := adopted(t, r, "T1")
 	adopted(t, r, "T2")
@@ -252,11 +278,12 @@ func TestAHoldKeptForALaterStepSaysSo(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.Edit(func(c *testkit.Claude) { c.Reply = func(*testkit.Claude, string) {} })
-	if _, err := r.d.Send(r.view("T1"), drive.Step{Line: "skip the push"}, drive.SendOptions{}); err != nil {
-		t.Fatal(err)
+	sent, err := r.d.Send(r.view("T1"), drive.Step{Line: "skip the push"}, drive.SendOptions{Hold: "main"})
+	if err != nil || len(sent.Freed) != 0 || len(r.events(batch.KindFree)) != 0 {
+		t.Fatalf("a follow-up to the closeout names the hold again: %+v %v", sent, err)
 	}
-	if _, err := r.d.Send(r.view("T2"), drive.Step{Line: "close it out"}, drive.SendOptions{Hold: "main"}); !isRefused(err) || !strings.Contains(err.Error(), "later step") {
-		t.Fatalf("the hold stands while its holder works on, and says why: %v", err)
+	if _, err := r.d.Send(r.view("T2"), drive.Step{Line: "close it out"}, drive.SendOptions{Hold: "main"}); !isRefused(err) || !strings.Contains(err.Error(), "main is held by T1") {
+		t.Fatalf("the hold stands: %v", err)
 	}
 }
 

@@ -148,7 +148,7 @@ func TestAFreeNamesEverySessionThatWaits(t *testing.T) {
 }
 
 // A hold its holder's turn still needs stays held: free is refused while the
-// turn runs, a later step included, while it waits on a prompt, while its
+// turn runs, a step that reached it while a job kept the hold included, while it waits on a prompt, while its
 // send is under way, and while it cannot be read, each time saying why and
 // what to run instead.
 func TestAHoldItsHoldersTurnNeedsIsNotFreed(t *testing.T) {
@@ -165,12 +165,12 @@ func TestAHoldItsHoldersTurnNeedsIsNotFreed(t *testing.T) {
 			[]string{"S2's wake comes when its turn ends", "drive --batch b1 free release '" + why + "'"}},
 		{"its turn still runs, for a driver that waits itself", "none", runsOn, nil, "whose turn is still running",
 			[]string{"drive --batch b1 wait S2", "drive --batch b1 free release '" + why + "'"}},
-		{"it works on a later step", "webhook", evalRunsOn, func(r *rig, holder *testkit.Claude) {
+		{"it works on a step sent while a job kept the hold", "webhook", evalRunsOn, func(r *rig, holder *testkit.Claude) {
 			holder.Edit(func(c *testkit.Claude) { c.Reply = runsOn })
 			if _, err := r.d.Send(r.view("S2"), drive.Step{Line: "and tag it"}, drive.SendOptions{}); err != nil {
 				r.t.Fatal(err)
 			}
-		}, "who works on a later step", []string{"S2's wake comes when its turn ends"}},
+		}, "who works on a step sent before the one that took it had ended", []string{"S2's wake comes when its turn ends"}},
 		{"it waits on a prompt", "webhook", func(c *testkit.Claude, _ string) { c.Ask("git push --tags") }, nil, "who waits on a prompt",
 			[]string{"drive --batch b1 read S2 --pending", " approve", " deny"}},
 		{"it cannot be read", "webhook", evalRunsOn, func(r *rig, _ *testkit.Claude) { r.w.StatusFails = 1 }, "whose session cannot be read",

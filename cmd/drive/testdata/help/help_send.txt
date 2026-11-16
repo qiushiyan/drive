@@ -22,8 +22,9 @@ Flags:
                        is answered.
       --hold=NAME      Name what this step uses that only one session may use at a time, such as a
                        release or commits into a shared checkout. A second send or open naming it is
-                       refused, saying why, while this session works, later steps included, waits on
-                       a prompt, or runs a background job it started.
+                       refused, saying why, while this step's turn runs, waits on a prompt, or runs
+                       a background job it started. The hold covers this step: a later step that
+                       still does the held work names it again.
       --as=LABEL       The label a session outside the batch joins it under, on its first send: a
                        name for its work, such as search.
 

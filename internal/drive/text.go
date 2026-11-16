@@ -42,7 +42,11 @@ func (s *Sent) Text() string {
 	if s.Watched {
 		extra += "; wake armed"
 	}
-	return fmt.Sprintf("%s %s: %s%s\n", s.Outcome, s.Label, what, extra)
+	out := fmt.Sprintf("%s %s: %s%s\n", s.Outcome, s.Label, what, extra)
+	for _, h := range s.Freed {
+		out += fmt.Sprintf("%s is free: the step %s took it for has ended, and this one went without --hold %s, so another session's step can take it meanwhile\n", h, s.Label, h)
+	}
+	return out
 }
 
 // Text is what an open prints: the block it opened, then its first step.

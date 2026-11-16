@@ -54,7 +54,10 @@ type Sent struct {
 	Watched bool
 	From    string // the snippet's file
 	AsFile  string // why a line went as a file: what typing it would have lost
-	line    string // the step's own line, when the notice rode it
+	// Freed are the holds this session took for an earlier step, which had
+	// ended, and this step went without: each is free from here.
+	Freed []string
+	line  string // the step's own line, when the notice rode it
 }
 
 // The line a file step is typed as: its path as an @-mention, which Claude
@@ -409,8 +412,10 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 	d, b, o := a.d, a.b, a.o
 	intent := newIntent()
 	var noticeLine, noticeIntent string
+	var freed []string
 	err := b.Locked(func(evs []batch.Event) error {
 		members := batch.Members(evs)
+		freed = nil
 		if opt.Answer != nil {
 			if _, refused := d.openAsk(b, evs, opt.Answer.Ask); refused != nil {
 				return refused // another run answered it since this one read
@@ -428,6 +433,18 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 			}
 		}
 		var add []batch.Event
+		for _, h := range batch.Holds(evs) {
+			// A hold covers the step sent with it. One whose step has ended is
+			// free already; a step sent to its holder without it puts that on
+			// record, since the holder working again would otherwise read as
+			// the held work going on.
+			if h.Session != o.Label || h.Name == opt.Hold || d.holder(evs, members, h.Name, "").held() {
+				continue
+			}
+			freed = append(freed, h.Name)
+			add = append(add, batch.Event{At: d.now(), Kind: batch.KindFree, Session: o.Label, Hold: h.Name, Intent: h.Intent,
+				Reason: fmt.Sprintf("the step that took it had ended, and %s's next went without --hold %s", o.Label, h.Name)})
+		}
 		if batch.Find(members, o.Label) == nil {
 			label := o.Label
 			if opt.Label != "" {
@@ -559,7 +576,7 @@ func (a *action) send(p *plan, opt SendOptions, view string) (*Sent, error) {
 		o, a.o = after, after
 	}
 	outcome, err := a.deliver(p.typed)
-	sent := &Sent{Label: o.Label, Outcome: outcome, Typed: p.typed, Path: p.path, Notice: p.notice, From: p.from, AsFile: p.asFile, line: p.line}
+	sent := &Sent{Label: o.Label, Outcome: outcome, Typed: p.typed, Path: p.path, Notice: p.notice, From: p.from, AsFile: p.asFile, Freed: freed, line: p.line}
 	if outcome != "" {
 		record(batch.Event{Kind: batch.KindSend, Outcome: outcome, Mode: p.mode(), Text: p.typed, Path: p.path, Key: p.key, Notice: p.notice && !p.alone})
 	}

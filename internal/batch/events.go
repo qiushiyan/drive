@@ -25,7 +25,7 @@ const (
 	KindDriver     = "driver"       // the Claude Code session that drives a session batch: SID, Block, Account (its config directory)
 	KindPark       = "park"
 	KindClose      = "close"
-	KindFree       = "free"    // a driver handed back a hold only a job of its holder kept: Hold, Session its holder, Reason the driver's
+	KindFree       = "free"    // a hold handed back: by a driver, when only a job of its holder kept it, or by a step sent to its holder without it once the held step had ended: Hold, Session its holder, Reason
 	KindRefused    = "refused" // an action drive would not take, and why
 	KindFailure    = "failure" // an action that went wrong in the session
 	KindGrant      = "grant"   // authority the owner handed over
@@ -544,7 +544,8 @@ func Unresolved(evs []Event, session string) []Event {
 }
 
 // Hold is a taking of a resource: a session holds it from the moment its send
-// is admitted until the turn that send started has ended.
+// is admitted until the turn that send started has ended, and no longer once
+// a later step reaches it without the hold.
 type Hold struct {
 	Name    string
 	Session string

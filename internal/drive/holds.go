@@ -121,7 +121,7 @@ const (
 	holdFree    holdKind = iota // nothing keeps it: its holder's turn ended, never took the step, or is gone or closed
 	holdSending                 // the send that took it is under way
 	holdWorking                 // its holder's turn still runs
-	holdLater                   // its holder works on a step sent after the one that took it
+	holdLater                   // its holder works on a step that reached it before the one that took the hold had ended
 	holdPrompt                  // its holder waits on a prompt
 	holdJob                     // its holder's turn ended, and a background job it started still runs
 	holdUnread                  // its holder cannot be read, so nothing says where its turn stands
@@ -149,7 +149,7 @@ func (h heldBy) why() string {
 	case holdSending:
 		return "whose send is still under way"
 	case holdLater:
-		return "who works on a later step"
+		return "who works on a step sent before the one that took it had ended"
 	case holdPrompt:
 		return "who waits on a prompt"
 	case holdJob:
@@ -161,11 +161,15 @@ func (h heldBy) why() string {
 }
 
 // holder says how the hold name stands for a session other than label. It is
-// held while the send that took it is under way, while its holder works,
-// later steps included, since a follow-up to a closeout is still the
-// closeout, while it waits on a prompt, and while background jobs it started
-// since run. A holder that cannot be read holds; only one that is gone or
-// never received the send does not.
+// held while the send that took it is under way, while the turn that send
+// started runs, while it waits on a prompt, and while background jobs it
+// started since run. A hold covers the step sent with it: once that step has
+// ended, a step sent to its holder without the hold records it free (send),
+// as a recap after a release kept the next release waiting (2026-11-13). A
+// step that reaches the holder before then, queued mid-turn or sent while a
+// job keeps the hold, leaves it held while the holder works on. A holder
+// that cannot be read holds; only one that is gone or never received the
+// send does not.
 func (d *Driver) holder(evs []batch.Event, members []*batch.Member, name, label string) heldBy {
 	for _, h := range batch.Holds(evs) {
 		if h.Name != name || h.Session == label {
