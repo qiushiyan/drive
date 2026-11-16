@@ -17,8 +17,8 @@ Arguments:
 
 Flags:
       --cleanup          Then remove its branch and worktree once merged, as drive cleanup does.
-      --asks-to=LABEL    First move its open asks to this session, which holds its change from here,
-                         as a review session does for the builder it follows.
+      --asks-to=LABEL    Once it is closed, move its open asks to this session, which holds its
+                         change from here, as a review session does for the builder it follows.
 
 Inherited flags:
   -h, --help             Show context-sensitive help.

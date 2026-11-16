@@ -199,22 +199,87 @@ func (d *Driver) Park(view, reason string, until time.Time) (err error) {
 // view: refused while it works, waits on a prompt, runs a background job,
 // or holds typed text. A session that is gone has no view, and CloseGone
 // closes it by its label.
-func (d *Driver) Close(view string) (err error) {
+func (d *Driver) Close(view string) error {
+	_, err := d.CloseTo(view, "")
+	return err
+}
+
+// CloseTo closes a session as Close does and then moves its open asks to
+// the session asksTo, which holds its change from here; moved says which.
+// The close and the move are one step: a close that is refused has moved
+// nothing, since asks moved off a builder that then stays open would have
+// their answers' steps sent to a session that does not hold the work yet.
+func (d *Driver) CloseTo(view, asksTo string) (moved []string, err error) {
 	v, err := turn.ParseView(view)
 	if err != nil {
-		return &Refused{Reason: err.Error()}
+		return nil, &Refused{Reason: err.Error()}
 	}
 	again := d.run("close", view)
 	b, err := d.inBatch()
 	if err != nil {
-		return unsent(err, again)
+		return nil, unsent(err, again)
 	}
 	a, err := d.onView(b, v, func(label string) string { return "closing " + label }, false, again)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer a.finish(&err)
 	o := a.o
+	if err := d.asksCanGo(b, asksTo); err != nil {
+		return nil, err
+	}
+	if err := d.closable(o, view); err != nil {
+		return nil, err
+	}
+	if err := d.Term.Close(o.Session.Block); err != nil {
+		return nil, &Refused{Reason: fmt.Sprintf("Rex did not close %s's block: %v", o.Label, err), Next: "try it again: " + d.run("close", view)}
+	}
+	if d.Watches != nil && b != nil {
+		_ = d.Watches.Stop(watchName(b, o.Session.Block))
+	}
+	if b != nil {
+		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindClose, Session: o.Label, Block: o.Session.Block, View: v.String()})
+	}
+	return d.handAsks(o.Label, asksTo)
+}
+
+// asksCanGo refuses, before a close changes anything, a session to move the
+// closed one's asks to that no step could reach.
+func (d *Driver) asksCanGo(b *batch.Batch, to string) error {
+	if to == "" {
+		return nil
+	}
+	if b == nil {
+		_, err := d.Batch()
+		return err
+	}
+	evs, err := b.Events()
+	if err != nil {
+		return err
+	}
+	if refused := d.takesAsks(evs, to); refused != nil {
+		return refused
+	}
+	return nil
+}
+
+// handAsks moves a closed session's open asks to the session to. The close
+// has happened by now, so a move that fails says both.
+func (d *Driver) handAsks(from, to string) ([]string, error) {
+	if to == "" {
+		return nil, nil
+	}
+	moved, err := d.MoveAsks(from, to)
+	if err != nil {
+		return nil, &Failed{What: fmt.Sprintf("closed %s, but its open asks did not move to %s: %v", from, to, err),
+			Next: "move each of them: " + d.run("record", "restate", "ID", "--session", to)}
+	}
+	return moved, nil
+}
+
+// closable refuses the close of a session that works, waits on a prompt,
+// holds a line someone typed, or runs a background job.
+func (d *Driver) closable(o *Observation, view string) error {
 	st, state := o.Session.Status, o.State()
 	// A session left open is left untouched, so no wake of its own comes:
 	// one that waits on something is parked with why, and with what ends it.
@@ -245,23 +310,15 @@ func (d *Driver) Close(view string) (err error) {
 		}
 		return &Refused{Reason: fmt.Sprintf("%s still runs a background job: %s", o.Label, clip(job.Command, 120)), Next: next}
 	}
-	if err := d.Term.Close(o.Session.Block); err != nil {
-		return &Refused{Reason: fmt.Sprintf("Rex did not close %s's block: %v", o.Label, err), Next: "try it again: " + d.run("close", view)}
-	}
-	if d.Watches != nil && b != nil {
-		_ = d.Watches.Stop(watchName(b, o.Session.Block))
-	}
-	if b != nil {
-		_ = b.Append(batch.Event{At: d.now(), Kind: batch.KindClose, Session: o.Label, Block: o.Session.Block, View: v.String()})
-	}
 	return nil
 }
 
 // ClosedGone is what closing a gone session did.
 type ClosedGone struct {
 	Label string
-	Block string // what became of its block
-	Back  string // the open that brings its conversation back
+	Block string   // what became of its block
+	Back  string   // the open that brings its conversation back
+	Moved []string // its open asks, moved to the session that holds its change
 }
 
 // CloseGone puts on record the close of a member whose session is gone: its
@@ -272,7 +329,11 @@ type ClosedGone struct {
 // left. A block left running only a shell, as a restart of Rex's server
 // leaves one, is closed with it; one with another program in front is left.
 // Its conversation stays, for the open that brings it back.
-func (d *Driver) CloseGone(label string) (out *ClosedGone, err error) {
+func (d *Driver) CloseGone(label string) (*ClosedGone, error) { return d.CloseGoneTo(label, "") }
+
+// CloseGoneTo closes a gone session as CloseGone does and then moves its
+// open asks to the session asksTo, as CloseTo does.
+func (d *Driver) CloseGoneTo(label, asksTo string) (out *ClosedGone, err error) {
 	again := d.run("close", label)
 	b, err := d.inBatch()
 	if err != nil {
@@ -312,6 +373,9 @@ func (d *Driver) CloseGone(label string) (out *ClosedGone, err error) {
 		return nil, &Refused{Reason: fmt.Sprintf("%s is not gone: %s", m.Label, openingWords(busy)),
 			Next: fmt.Sprintf("let it finish; once it is done, %s shows where it stands", d.run("read", m.Label))}
 	}
+	if err := d.asksCanGo(b, asksTo); err != nil {
+		return nil, err
+	}
 	_, read := d.observe(b, members, m.Label)
 	switch {
 	case read == nil:
@@ -344,6 +408,9 @@ func (d *Driver) CloseGone(label string) (out *ClosedGone, err error) {
 			return nil, &Failed{What: fmt.Sprintf("closed the shell left in %s's block, but the close was not recorded: %v", m.Label, err), Next: "record it: " + again}
 		}
 		return nil, unsent(err, again)
+	}
+	if out.Moved, err = d.handAsks(m.Label, asksTo); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

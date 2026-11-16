@@ -9,6 +9,7 @@ import (
 	"github.com/qiushiyan/drive/internal/batch"
 	"github.com/qiushiyan/drive/internal/drive"
 	"github.com/qiushiyan/drive/internal/progress"
+	"github.com/qiushiyan/drive/internal/testkit"
 )
 
 // A question that replaces another settles it in the same write. On
@@ -179,5 +180,54 @@ func TestAnOpenAskMovesToTheSessionThatHoldsItsChange(t *testing.T) {
 	}
 	if left := r.d.AsksLeft("search"); !strings.Contains(left, a1+" stay open on search") || !strings.Contains(left, "drive --batch b1 record restate "+a1+" --session LABEL") {
 		t.Fatalf("a close says what stays, and how it moves: %q", left)
+	}
+}
+
+// A builder closes and its asks move in one step, so a close that is
+// refused has moved nothing: its asks stay with the session that is still
+// open and still holds the work.
+func TestACloseThatIsRefusedLeavesTheAsksWhereTheyWere(t *testing.T) {
+	r := newRig(t, "webhook")
+	c := adopted(t, r, "search")
+	adopted(t, r, "sr-search")
+	a1, err := r.d.Ask("search", "Rank by recency or by score?", "By score.", "It builds by score; the merge waits.", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	on := func() string {
+		t.Helper()
+		evs, err := r.b.Events()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, asks, _ := batch.Records(evs)
+		if len(asks) != 1 || asks[0].ID != a1 {
+			t.Fatalf("one ask: %+v", asks)
+		}
+		return asks[0].Session
+	}
+	c.Edit(func(c *testkit.Claude) { c.Input = "a line of the owner's" })
+	if _, err := r.d.CloseTo(r.view("search"), "sr-search"); !isRefused(err) || !strings.Contains(err.Error(), "unsent line") {
+		t.Fatalf("a typed line refuses the close: %v", err)
+	}
+	if got := on(); got != "search" {
+		t.Fatalf("the refused close moved its ask to %s", got)
+	}
+	c.Edit(func(c *testkit.Claude) { c.Input = "" })
+	if _, err := r.d.CloseTo(r.view("search"), "elsewhere"); !isRefused(err) || !strings.Contains(err.Error(), "not an open session of this batch") {
+		t.Fatalf("asks move only to a session a step can reach: %v", err)
+	}
+	if blocks, _ := r.w.Blocks(""); len(blocks) != 2 {
+		t.Fatalf("and that refusal closed nothing: %+v", blocks)
+	}
+	moved, err := r.d.CloseTo(r.view("search"), "sr-search")
+	if err != nil || len(moved) != 1 || moved[0] != a1 {
+		t.Fatalf("the close moves its open ask: %v %v", moved, err)
+	}
+	if got := on(); got != "sr-search" {
+		t.Fatalf("the ask waits with %s, want the review session", got)
+	}
+	if blocks, _ := r.w.Blocks(""); len(blocks) != 1 {
+		t.Fatalf("the builder's block is closed: %+v", blocks)
 	}
 }

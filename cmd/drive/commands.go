@@ -581,7 +581,7 @@ func (c *ParkCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 type CloseCmd struct {
 	View    string `arg:"" help:"The view the close was decided on; a gone session, which has none, by its label."`
 	Cleanup bool   `help:"Then remove its branch and worktree once merged, as drive cleanup does."`
-	AsksTo  string `placeholder:"LABEL" help:"First move its open asks to this session, which holds its change from here, as a review session does for the builder it follows."`
+	AsksTo  string `placeholder:"LABEL" help:"Once it is closed, move its open asks to this session, which holds its change from here, as a review session does for the builder it follows."`
 }
 
 func (c *CloseCmd) Help() string {
@@ -598,25 +598,23 @@ too. It prints the open that brings the session back.`
 
 func (c *CloseCmd) Run(ctx *kong.Context, d *drive.Driver) error {
 	label := sessionOf(c.View)
-	if c.AsksTo != "" {
-		moved, err := d.MoveAsks(label, c.AsksTo)
-		if err != nil {
-			return err
-		}
-		if len(moved) > 0 {
-			fmt.Fprintf(ctx.Stdout, "%s wait with %s now\n", strings.Join(moved, ", "), c.AsksTo)
-		}
-	}
+	var moved []string
 	if label == c.View {
-		out, err := d.CloseGone(label)
+		out, err := d.CloseGoneTo(label, c.AsksTo)
 		if err != nil {
 			return err
 		}
 		fmt.Fprint(ctx.Stdout, out.Text())
-	} else if err := d.Close(c.View); err != nil {
-		return err
+		moved = out.Moved
 	} else {
+		var err error
+		if moved, err = d.CloseTo(c.View, c.AsksTo); err != nil {
+			return err
+		}
 		fmt.Fprintf(ctx.Stdout, "closed %s\n", label)
+	}
+	if len(moved) > 0 {
+		fmt.Fprintf(ctx.Stdout, "%s wait with %s now\n", strings.Join(moved, ", "), c.AsksTo)
 	}
 	fmt.Fprint(ctx.Stdout, d.AsksLeft(label))
 	if !c.Cleanup {
