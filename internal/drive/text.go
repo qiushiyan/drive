@@ -215,7 +215,11 @@ func (r *Reading) Text() string {
 	fmt.Fprintf(&b, "%s is %s on account %s (session %s)", r.Label, r.State, orDash(r.Account), orDash(r.SID))
 	switch r.Input {
 	case "typed":
-		fmt.Fprintf(&b, "; its input box holds typed text nobody sent: %q", r.Typed)
+		if r.Leftover != "" {
+			fmt.Fprintf(&b, "; its input box shows %q, %s, which a send clears and a close passes", r.Typed, r.Leftover)
+		} else {
+			fmt.Fprintf(&b, "; its input box holds typed text nobody sent: %q", r.Typed)
+		}
 	case "suggestion":
 		b.WriteString("; its input box shows only Claude Code's suggestion")
 	}
@@ -294,7 +298,9 @@ func (st *Status) Text(now time.Time) string {
 		if r.Next != "" {
 			fmt.Fprintf(&b, "%s is gone: %s\n", r.Label, r.Next)
 		}
-		if r.Input == "typed" {
+		if r.Input == "typed" && r.Leftover != "" {
+			fmt.Fprintf(&b, "%s's input box shows %q, %s, which a send clears and a close passes\n", r.Label, r.Typed, r.Leftover)
+		} else if r.Input == "typed" {
 			fmt.Fprintf(&b, "%s's input box holds typed text nobody sent: %q\n", r.Label, r.Typed)
 		}
 		for _, j := range r.Jobs {

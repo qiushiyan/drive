@@ -36,11 +36,15 @@ type Reading struct {
 	Account string
 	Input   turn.InputKind
 	Typed   string
-	Body    string // what was read: the reply, the prompts, the pending call or the screen
-	View    turn.View
-	At      time.Time       // when the text was written
-	Next    string          // what to run, where the state decides it
-	Jobs    []session.Shell // background jobs it runs
+	// Leftover says what Typed is when it is no one's line, which a send
+	// clears and a close passes: the end of a line drive typed earlier, or
+	// of a terminal sequence.
+	Leftover string
+	Body     string // what was read: the reply, the prompts, the pending call or the screen
+	View     turn.View
+	At       time.Time       // when the text was written
+	Next     string          // what to run, where the state decides it
+	Jobs     []session.Shell // background jobs it runs
 	// DrivenBy is, for a session outside the batch, the live batch of
 	// another driver's that drives it, which alone acts on it.
 	DrivenBy string
@@ -65,7 +69,7 @@ func (d *Driver) Read(ref string, mode ReadMode, n int) (*Reading, error) {
 		return nil, err
 	}
 	d.noteLimit(o.in, o) // a driver that reads a limit and relaunches leaves no watch to find it
-	r := &Reading{Label: o.Label, SID: o.Session.ID, State: o.State(), Account: o.Session.Account, Input: o.Input, Typed: o.Typed, View: o.View, now: d.now()}
+	r := &Reading{Label: o.Label, SID: o.Session.ID, State: o.State(), Account: o.Session.Account, Input: o.Input, Typed: o.Typed, Leftover: d.leftover(o), View: o.View, now: d.now()}
 	if o.Member != nil {
 		r.Goal = o.Member.Goal
 	}
@@ -188,6 +192,7 @@ type Row struct {
 	Account  string
 	Input    turn.InputKind
 	Typed    string
+	Leftover string // what Typed is when it is no one's line (Reading.Leftover)
 	Stage    string
 	StageAt  time.Time        // when its stage's newest step was taken
 	Labels   []progress.Label // every stage, with its newest step's time
@@ -641,7 +646,7 @@ func (d *Driver) rowAt(b *batch.Batch, members []*batch.Member, label, block str
 	}
 	r.Block, r.SID, r.State, r.Since, r.Account = o.Session.Block, o.Session.ID, o.State(), o.Session.Since(), o.Session.Account
 	r.For = d.now().Sub(r.Since)
-	r.Input, r.Typed, r.View = o.Input, o.Typed, o.View
+	r.Input, r.Typed, r.Leftover, r.View = o.Input, o.Typed, d.leftover(o), o.View
 	r.Jobs = d.Host.Shells(o.Session.Status.PID)
 	stable := r.Since
 	if m := o.Member; m != nil && m.Wake.Armed().After(stable) {

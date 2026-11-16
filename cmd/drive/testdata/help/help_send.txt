@@ -3,9 +3,11 @@ Usage: drive send <view> [<line> ...] [flags]
 Send a session its next step, decided on a view.
 
 The send is refused, and nothing reaches the session, when the session has
-moved past the view, when it waits on a prompt (answer it first), or when
-another session holds what --hold names. It prints how the step arrived; in
-a batch that wakes a chat driver it arms the session's wake.
+moved past the view, when it waits on a prompt (answer it first), when its
+input box holds a line someone may have typed, or when another session
+holds what --hold names. What drive or the terminal left in the box is
+cleared first, and the send says so. It prints how the step arrived; in a
+batch that wakes a chat driver it arms the session's wake.
 
 Arguments:
   <view>               The view the step was decided on, as read, wait, status or a wake printed it

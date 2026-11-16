@@ -283,9 +283,11 @@ type SendCmd struct {
 func (c *SendCmd) Help() string {
 	return `
 The send is refused, and nothing reaches the session, when the session has
-moved past the view, when it waits on a prompt (answer it first), or when
-another session holds what --hold names. It prints how the step arrived; in
-a batch that wakes a chat driver it arms the session's wake.`
+moved past the view, when it waits on a prompt (answer it first), when its
+input box holds a line someone may have typed, or when another session
+holds what --hold names. What drive or the terminal left in the box is
+cleared first, and the send says so. It prints how the step arrived; in a
+batch that wakes a chat driver it arms the session's wake.`
 }
 
 func (c *SendCmd) HelpSections() []clikit.Section { return stepSections }

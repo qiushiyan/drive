@@ -60,6 +60,14 @@ func TestASendAndACloseGoPastALeftoverThatIsNoOnesLine(t *testing.T) {
 		t.Fatalf("the step goes once the leftover is cleared, and says so: %+v %v", sent, err)
 	}
 	c.Edit(func(c *testkit.Claude) { c.Smear = "?25h" })
+	// A read and status say what it is, so no one is asked whose line it is.
+	const says = `its input box shows "?25h", the end of a terminal sequence, which a send clears and a close passes`
+	if rd, err := r.d.Read("T1", drive.ReadLast, 0); err != nil || !strings.Contains(rd.Text(), says) || strings.Contains(rd.Text(), "nobody sent") {
+		t.Fatalf("a read names the leftover: %v\n%s", err, rd.Text())
+	}
+	if st, err := r.d.Status(false); err != nil || !strings.Contains(st.Text(r.w.Clock.Now()), "T1's "+says[4:]) {
+		t.Fatalf("status names it too: %v\n%s", err, st.Text(r.w.Clock.Now()))
+	}
 	if err := r.d.Close(r.view("T1")); err != nil {
 		t.Fatalf("a close goes past a terminal sequence's tail: %v", err)
 	}
