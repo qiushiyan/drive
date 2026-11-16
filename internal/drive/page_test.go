@@ -908,6 +908,35 @@ func TestEachKindOfRecordReadsAsWhatHappened(t *testing.T) {
 	}
 }
 
+// An ask that moved with its change shows its question on the session it
+// moved to, where the owner reads it: "A1 still waits, now with this
+// session" named a question whose words were on a closed session's card.
+func TestAMovedAskShowsItsQuestionWhereItNowWaits(t *testing.T) {
+	now := time.Date(2026, 11, 16, 13, 17, 0, 0, time.UTC)
+	at := func(m int) time.Time { return now.Add(time.Duration(m-60) * time.Minute) }
+	builder := drive.Card{Member: &batch.Member{Label: "search", Closed: true, ClosedAt: at(3)}, History: []batch.Event{
+		{At: at(1), Kind: batch.KindAsk, Session: "search", ID: "A1", Question: "Rank by recency or by score?"},
+		{At: at(3), Kind: batch.KindClose, Session: "search"},
+	}}
+	review := drive.Card{Member: &batch.Member{Label: "sr-search", Closed: true, ClosedAt: at(9)}, History: []batch.Event{
+		{At: at(2), Kind: batch.KindOpen, Session: "sr-search", SID: "sid"},
+		{At: at(3), Kind: batch.KindRestate, Session: "sr-search", Ref: "A1"},
+		{At: at(8), Kind: batch.KindAnswer, Session: "sr-search", Ref: "A1", Took: "recommended"},
+		{At: at(9), Kind: batch.KindClose, Session: "sr-search"},
+	}}
+	ov := &drive.Overview{Batch: &batch.Meta{Name: "b"}, Zone: time.UTC, At: now, Live: "only the batch's record was read",
+		Groups: []drive.Group{{Title: drive.GroupClosed, Cards: []drive.Card{builder, review}}}}
+	page := string(drive.PageHTML([]*drive.Overview{ov}, now))
+	for _, want := range []string{
+		`<span class="kind">A1 still waits,</span> now with this session, which holds its change: Rank by recency or by score?`,
+		`<span class="kind">You took the recommendation on A1</span> Rank by recency or by score?`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page says %q", want)
+		}
+	}
+}
+
 // Every link on a page of several batches lands on an element, and every
 // session or question it names sits under the batch its anchor names: the
 // script picks the tab by that, so a bot's link opens the right batch.

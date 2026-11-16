@@ -724,10 +724,16 @@ func stripOf(ov *Overview, c Card, group string, now time.Time) stripView {
 		s.Labels = append(s.Labels, lv)
 	}
 
-	asks := map[string]*batch.Event{} // the asks about it, for the answers to name what they answer
-	for i := range c.History {
-		if e := &c.History[i]; e.Kind == batch.KindAsk {
-			asks[e.ID] = e
+	// The batch's asks, for an answer or a move to name its question: an ask
+	// that moved here was put about the session that held the change before.
+	asks := map[string]*batch.Event{}
+	for _, g := range ov.Groups {
+		for _, card := range g.Cards {
+			for i := range card.History {
+				if e := &card.History[i]; e.Kind == batch.KindAsk {
+					asks[e.ID] = e
+				}
+			}
 		}
 	}
 	for _, h := range slices.Backward(c.History) {
@@ -829,6 +835,9 @@ func entryOf(e batch.Event, asks map[string]*batch.Event, now time.Time, zone *t
 		v.Kind, v.Head, v.Text = "you", e.Ref+" still waits:", e.IfUnanswered
 		if e.IfUnanswered == "" {
 			v.Head, v.Text = e.Ref+" still waits,", "now with this session, which holds its change"
+			if a := asks[e.Ref]; a != nil {
+				v.Text += ": " + a.Question
+			}
 		}
 	case batch.KindAnswer:
 		head := answerHead(e)
